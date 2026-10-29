@@ -39,6 +39,7 @@ export interface ProjectEtaSummary {
   completedPlates: number;
   activePrintingPlates: number;
   outstandingPlates: number;
+  cancelledPlates: number;
   estimatedCompletionMs: number | null; // Max endMs of all outstanding plates (parallel-aware!)
   deadlineEndOfDayMs: number | null;
   isDeadlineExceeded: boolean;
@@ -104,7 +105,7 @@ export function getLiveRemainingSeconds(
   const effMinutes = getEffectivePrintMinutes(job, machine);
   const totalEstSeconds = effMinutes * 60;
 
-  if (job.stage === 'Completed') return 0;
+  if (job.stage === 'Completed' || job.stage === 'Cancelled') return 0;
   if (job.stage !== 'Printing') return totalEstSeconds;
 
   if (job.isPaused) {
@@ -184,7 +185,7 @@ export function computeGlobalSchedule(
   });
 
   // Step 1: Anchor all currently Printing jobs onto their assigned machines first (strictly non-overlapping)
-  const printingJobs = relevantJobs.filter((j) => j.stage === 'Printing');
+  const printingJobs = relevantJobs.filter((j) => !j.archived && j.stage === 'Printing');
   for (const job of printingJobs) {
     const proj = projectMap.get(job.projectId);
     const machine = workspace.machines.find((m) => m.id === job.machineId) || null;
@@ -238,8 +239,15 @@ export function computeGlobalSchedule(
 
   // Step 2: Sort all outstanding queued jobs across ALL projects globally by:
   // Stage readiness (Ready to Print before Planned before Failed/Reprint) -> Project Priority -> Earliest Project Deadline -> Plate Number
+  // Cancelled and Archived plates are strictly excluded from active machine scheduling.
   const queuedJobs = relevantJobs
-    .filter((j) => j.stage !== 'Completed' && j.stage !== 'Printing')
+    .filter(
+      (j) =>
+        !j.archived &&
+        j.stage !== 'Completed' &&
+        j.stage !== 'Printing' &&
+        j.stage !== 'Cancelled'
+    )
     .sort((a, b) => {
       const stageRank = (st: ProductionJob['stage']) =>
         st === 'Ready to Print' ? 0 : st === 'Planned' ? 1 : 2;
@@ -403,9 +411,13 @@ export function computeGlobalSchedule(
     .filter((p) => p.status !== 'Archived')
     .map((proj) => {
       const pJobs = workspace.jobs.filter((j) => j.projectId === proj.id);
+      // Completed plates remain counted even when archived to preserve production history & progress
       const completed = pJobs.filter((j) => j.stage === 'Completed');
-      const active = pJobs.filter((j) => j.stage === 'Printing');
-      const outstanding = pJobs.filter((j) => j.stage !== 'Completed');
+      const active = pJobs.filter((j) => !j.archived && j.stage === 'Printing');
+      const outstanding = pJobs.filter(
+        (j) => !j.archived && j.stage !== 'Completed' && j.stage !== 'Cancelled'
+      );
+      const cancelled = pJobs.filter((j) => j.stage === 'Cancelled');
 
       let maxEndMs: number | null = null;
       let unschedulable = 0;
@@ -436,10 +448,11 @@ export function computeGlobalSchedule(
 
       return {
         project: proj,
-        totalPlates: pJobs.length,
+        totalPlates: completed.length + outstanding.length,
         completedPlates: completed.length,
         activePrintingPlates: active.length,
         outstandingPlates: outstanding.length,
+        cancelledPlates: cancelled.length,
         estimatedCompletionMs: maxEndMs,
         deadlineEndOfDayMs: deadlineMs,
         isDeadlineExceeded: isExceeded,

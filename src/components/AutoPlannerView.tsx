@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ABC,
   CHARM_BY_ID,
@@ -27,9 +27,11 @@ import {
   ProductionWorkspaceV5,
 } from '../types';
 import {
+  computeColorPlanningState,
   computeIntelligentPlates,
   DraftPlatePreview,
   inferPlateMode,
+  isValidProductionAllocationJob,
 } from '../utils/productionEngine';
 import { DurationHMInput } from './DurationHMInput';
 
@@ -49,7 +51,14 @@ interface AutoPlannerViewProps {
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
     confirmedPlates: DraftPlatePreview[];
+    preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
+  }) => void;
+  onClearCarryForward?: (params: {
+    projectId: string;
+    colorId: string;
+    mode: PlateGenerationMode;
+    trimTargetRemainder: boolean;
   }) => void;
   onAlert: (msg: string, title?: string) => void;
 }
@@ -79,6 +88,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   onSavePreset,
   onDeletePreset,
   onCommitGeneratedPlates,
+  onClearCarryForward,
   onAlert,
 }) => {
   const activeProjects = workspace.projects.filter((p) => p.status !== 'Archived');
@@ -105,6 +115,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   const [draftCharms, setDraftCharms] = useState<Record<CharmId, number>>(() =>
     emptyCharmsMap()
   );
+  const [hasUnsavedGridEdits, setHasUnsavedGridEdits] = useState<boolean>(false);
+  const [preserveQueuedPlates, setPreserveQueuedPlates] = useState<boolean>(false);
   const [presetName, setPresetName] = useState<string>('');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('');
 
@@ -114,39 +126,64 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     'carry_forward'
   );
 
-  // Sync draft letters & draft charms when project or filament color changes
+  const prevContextKeyRef = useRef<string>('');
+
+  // Synchronize draft letters & charms when project/color changes OR when external queue
+  // mutations (delete, cancel, archive, restore, clear carry-forward) update valid planning state.
   useEffect(() => {
     if (!currentProject) return;
     if (!projectColors.some((c) => c.id === selectedColorId) && projectColors[0]) {
       setSelectedColorId(projectColors[0].id);
       return;
     }
-    setPlateCapacity(currentProject.plateCapacity || DEFAULT_PLATE_CAPACITY);
 
-    const existingJobs = workspace.jobs.filter(
-      (j) =>
-        j.projectId === currentProject.id &&
-        j.colorId === selectedColorId &&
-        j.stage !== 'Failed / Reprint'
+    const contextKey = `${currentProject.id}:${selectedColorId}`;
+    const isContextSwitch = prevContextKeyRef.current !== contextKey;
+    if (isContextSwitch) {
+      prevContextKeyRef.current = contextKey;
+      setHasUnsavedGridEdits(false);
+      setPreserveQueuedPlates(false);
+      setPlateCapacity(currentProject.plateCapacity || DEFAULT_PLATE_CAPACITY);
+      setStagedPlates(null);
+    } else if (hasUnsavedGridEdits) {
+      return;
+    }
+
+    const state = computeColorPlanningState(
+      workspace.jobs,
+      currentProject,
+      selectedColorId
     );
 
-    const savedTargetLetters = currentProject.targetsByColor?.[selectedColorId];
-    if (savedTargetLetters && countLetters(savedTargetLetters) > 0) {
-      setDraftLetters(normalizeAlphabetMap(savedTargetLetters));
-    } else {
-      setDraftLetters(sumAlphabetMaps(existingJobs.map((j) => j.letters)));
-    }
+    setDraftLetters(
+      normalizeAlphabetMap(
+        sumAlphabetMaps([state.validAllocatedLetters, state.carryForwardLetters])
+      )
+    );
+    setDraftCharms(
+      normalizeCharmsMap(
+        sumCharmsMaps([state.validAllocatedCharms, state.carryForwardCharms])
+      )
+    );
 
-    const savedTargetCharms = currentProject.charmTargetsByColor?.[selectedColorId];
-    if (savedTargetCharms && countCharms(savedTargetCharms) > 0) {
-      setDraftCharms(normalizeCharmsMap(savedTargetCharms));
-    } else {
-      const summedJobCharms = sumCharmsMaps(existingJobs.map((j) => j.charms));
-      setDraftCharms(summedJobCharms);
+    if (!isContextSwitch) {
+      setStagedPlates(null);
     }
+  }, [
+    currentProject,
+    selectedColorId,
+    projectColors,
+    workspace.jobs,
+    hasUnsavedGridEdits,
+  ]);
 
-    setStagedPlates(null);
-  }, [currentProject?.id, selectedColorId, projectColors]);
+  const colorPlanningState = useMemo(() => {
+    if (!currentProject) return null;
+    return computeColorPlanningState(workspace.jobs, currentProject, selectedColorId);
+  }, [workspace.jobs, currentProject, selectedColorId]);
+
+  const effectivePreserveQueued =
+    Boolean(preserveQueuedPlates) && (colorPlanningState?.queuedPlatesCount || 0) > 0;
 
   const distribution = useMemo(() => {
     if (!currentProject) return null;
@@ -160,6 +197,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       {
         requestedCharms: draftCharms,
         mode: generationMode,
+        preserveQueuedPlates: effectivePreserveQueued,
       }
     );
   }, [
@@ -171,9 +209,10 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     plateCapacity,
     defaultPlateMinutes,
     generationMode,
+    effectivePreserveQueued,
   ]);
 
-  if (!currentProject) {
+  if (!currentProject || !colorPlanningState) {
     return (
       <div className="bg-white dark:bg-[#171522] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8 text-center">
         <p className="text-sm text-neutral-600 dark:text-neutral-300">
@@ -183,25 +222,59 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     );
   }
 
-  const carryForwardLettersSaved =
-    currentProject.carryForwardByColor?.[selectedColorId] || emptyAlphabetMap();
-  const carryForwardCharmsSaved =
-    currentProject.charmCarryForwardByColor?.[selectedColorId] || emptyCharmsMap();
+  // Carry-forward is always derived from the current valid planning state (never a stale snapshot)
+  const carryForwardLettersDerived = colorPlanningState.carryForwardLetters;
+  const carryForwardCharmsDerived = colorPlanningState.carryForwardCharms;
 
   const carryForwardLettersCount =
-    generationMode === 'charm_only' ? 0 : countLetters(carryForwardLettersSaved);
+    generationMode === 'charm_only' ? 0 : colorPlanningState.carryForwardLettersCount;
   const carryForwardCharmsCount =
-    generationMode === 'alphabet_only' ? 0 : countCharms(carryForwardCharmsSaved);
+    generationMode === 'alphabet_only' ? 0 : colorPlanningState.carryForwardCharmsCount;
   const carryForwardTotal = carryForwardLettersCount + carryForwardCharmsCount;
+
+  // Determine how much of the active carry-forward is NOT yet included in the current grid
+  // so clicking Merge Carry-Forward never double-adds carry-forward on top of saved targets.
+  const missingCarryLetters = emptyAlphabetMap();
+  if (generationMode !== 'charm_only' && carryForwardLettersCount > 0) {
+    for (const letter of ABC) {
+      const carryVal = carryForwardLettersDerived[letter] || 0;
+      if (carryVal > 0) {
+        const expectedMin =
+          (colorPlanningState.validAllocatedLetters[letter] || 0) + carryVal;
+        missingCarryLetters[letter] = Math.max(
+          0,
+          expectedMin - (draftLetters[letter] || 0)
+        );
+      }
+    }
+  }
+  const missingCarryCharms: CharmsMap = {};
+  if (generationMode !== 'alphabet_only' && carryForwardCharmsCount > 0) {
+    for (const charmId of CHARM_IDS) {
+      const carryVal = carryForwardCharmsDerived[charmId] || 0;
+      if (carryVal > 0) {
+        const expectedMin =
+          (colorPlanningState.validAllocatedCharms[charmId] || 0) + carryVal;
+        const diff = Math.max(0, expectedMin - (draftCharms[charmId] || 0));
+        if (diff > 0) {
+          missingCarryCharms[charmId] = diff;
+        }
+      }
+    }
+  }
+  const missingCarryTotal =
+    countLetters(missingCarryLetters) + countCharms(missingCarryCharms);
 
   const handleSetLetterQty = (letter: string, rawVal: string) => {
     const val = Math.max(0, Math.floor(Number(rawVal) || 0));
+    setHasUnsavedGridEdits(true);
     setDraftLetters((prev) => ({ ...prev, [letter]: val }));
     setStagedPlates(null);
   };
 
   const handleSetCharmQty = (charmId: CharmId, nextVal: number) => {
     const safeVal = Math.max(0, Math.floor(Number.isFinite(nextVal) ? nextVal : 0));
+    setHasUnsavedGridEdits(true);
     setDraftCharms((prev) => ({ ...prev, [charmId]: safeVal }));
     setStagedPlates(null);
   };
@@ -211,8 +284,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       (j) =>
         j.projectId === currentProject.id &&
         j.colorId === selectedColorId &&
-        j.stage !== 'Failed / Reprint'
+        isValidProductionAllocationJob(j)
     );
+    setHasUnsavedGridEdits(true);
     setDraftLetters(sumAlphabetMaps(jobsForPair.map((j) => j.letters)));
     setStagedPlates(null);
   };
@@ -222,18 +296,21 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       (j) =>
         j.projectId === currentProject.id &&
         j.colorId === selectedColorId &&
-        j.stage !== 'Failed / Reprint'
+        isValidProductionAllocationJob(j)
     );
+    setHasUnsavedGridEdits(true);
     setDraftCharms(sumCharmsMaps(jobsForPair.map((j) => j.charms)));
     setStagedPlates(null);
   };
 
   const handleIncludeCarryForward = () => {
-    if (generationMode !== 'charm_only' && carryForwardLettersCount > 0) {
-      setDraftLetters((prev) => sumAlphabetMaps([prev, carryForwardLettersSaved]));
+    if (missingCarryTotal === 0) return;
+    setHasUnsavedGridEdits(true);
+    if (generationMode !== 'charm_only' && countLetters(missingCarryLetters) > 0) {
+      setDraftLetters((prev) => sumAlphabetMaps([prev, missingCarryLetters]));
     }
-    if (generationMode !== 'alphabet_only' && carryForwardCharmsCount > 0) {
-      setDraftCharms((prev) => sumCharmsMaps([prev, carryForwardCharmsSaved]));
+    if (generationMode !== 'alphabet_only' && countCharms(missingCarryCharms) > 0) {
+      setDraftCharms((prev) => sumCharmsMaps([prev, missingCarryCharms]));
     }
     setStagedPlates(null);
   };
@@ -241,6 +318,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   const handleApplyPreset = () => {
     const preset = workspace.presets.find((p) => p.id === selectedPresetId);
     if (!preset) return;
+    setHasUnsavedGridEdits(true);
     setDraftLetters(normalizeAlphabetMap(preset.letters));
     if (preset.plateCapacity > 0) {
       setPlateCapacity(preset.plateCapacity);
@@ -302,9 +380,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         .filter((j) => j.projectId === currentProject.id && j.colorId === selectedColorId)
         .forEach((j) => {
           if (
+            Boolean(j.archived) ||
             j.stage === 'Completed' ||
             j.stage === 'Printing' ||
             j.stage === 'Failed / Reprint' ||
+            j.stage === 'Cancelled' ||
+            (effectivePreserveQueued &&
+              (j.stage === 'Planned' || j.stage === 'Ready to Print')) ||
             (generationMode === 'alphabet_only' &&
               countLetters(j.letters) === 0 &&
               countCharms(j.charms) > 0) ||
@@ -492,14 +574,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       remainderMode === 'carry_forward' && generationMode !== 'charm_only'
         ? distribution.remainder
         : generationMode === 'charm_only'
-        ? compactLettersMap(carryForwardLettersSaved)
+        ? compactLettersMap(carryForwardLettersDerived)
         : emptyAlphabetMap();
 
     const carryForwardCharmsToSave =
       remainderMode === 'carry_forward' && generationMode !== 'alphabet_only'
         ? distribution.remainderCharms
         : generationMode === 'alphabet_only'
-        ? compactCharmsMap(carryForwardCharmsSaved)
+        ? compactCharmsMap(carryForwardCharmsDerived)
         : {};
 
     // Reconcile targets with confirmed staged plates + locked plates + carry-forward so manual edits stay accurate,
@@ -510,7 +592,10 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     const committedTargetLetters =
       generationMode === 'charm_only'
         ? compactLettersMap(
-            currentProject.targetsByColor?.[selectedColorId] || emptyAlphabetMap()
+            sumAlphabetMaps([
+              colorPlanningState.validAllocatedLetters,
+              carryForwardLettersToSave,
+            ])
           )
         : compactLettersMap(
             sumAlphabetMaps([
@@ -522,7 +607,12 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
     const committedTargetCharms =
       generationMode === 'alphabet_only'
-        ? compactCharmsMap(currentProject.charmTargetsByColor?.[selectedColorId] || {})
+        ? compactCharmsMap(
+            sumCharmsMaps([
+              colorPlanningState.validAllocatedCharms,
+              carryForwardCharmsToSave,
+            ])
+          )
         : compactCharmsMap(
             sumCharmsMaps([
               distribution.lockedCharms,
@@ -541,7 +631,11 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       carryForwardLetters: carryForwardLettersToSave,
       carryForwardCharms: carryForwardCharmsToSave,
       confirmedPlates: stagedPlates,
-      onSuccess: () => setStagedPlates(null),
+      preserveQueuedPlates: effectivePreserveQueued,
+      onSuccess: () => {
+        setHasUnsavedGridEdits(false);
+        setStagedPlates(null);
+      },
     });
   };
 
@@ -719,20 +813,104 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
         </div>
 
-        {/* Bambu Studio Physical Fit Notice */}
-        <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+        {/* 4-Metric Color Plate & Carry-Forward Breakdown */}
+        <div className="rounded-xl border border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/70 dark:bg-[#12101b] grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200/70 dark:divide-neutral-800">
+          <div className="p-3">
+            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+              Current Planner Input
+            </div>
+            <div className="text-sm font-bold font-mono-data text-neutral-900 dark:text-white mt-0.5">
+              {(totalAlphabetRequested + totalCharmsRequested).toLocaleString()} pcs
+            </div>
+            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {totalAlphabetRequested} A–Z · {totalCharmsRequested} Charm
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+              Completed Production
+            </div>
+            <div className="text-sm font-bold font-mono-data text-emerald-700 dark:text-emerald-400 mt-0.5">
+              {colorPlanningState.completedTotal.toLocaleString()} pcs
+            </div>
+            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {colorPlanningState.completedPlatesCount} completed plate(s)
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+              Generated Active Plates
+            </div>
+            <div className="text-sm font-bold font-mono-data text-neutral-900 dark:text-white mt-0.5">
+              {colorPlanningState.activePlatesTotal.toLocaleString()} pcs
+            </div>
+            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {colorPlanningState.queuedPlatesCount} queued ·{' '}
+              {colorPlanningState.printingPlatesCount} printing
+            </div>
+          </div>
+
+          <div className="p-3">
+            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+              Session Carry-Forward
+            </div>
+            <div
+              className={`text-sm font-bold font-mono-data mt-0.5 ${
+                carryForwardTotal > 0
+                  ? 'text-[#5b3cc4] dark:text-[#c7b8ff]'
+                  : 'text-neutral-900 dark:text-white'
+              }`}
+            >
+              {carryForwardTotal.toLocaleString()} pcs
+            </div>
+            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {carryForwardTotal > 0
+                ? 'Active incomplete-plate remainder'
+                : 'No unplated remainder'}
+            </div>
+          </div>
+        </div>
+
+        {/* Bambu Studio Physical Fit Notice & Carry-Forward Controls */}
+        <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2.5">
           <div>
             <span className="font-semibold">Numerical Capacity vs. Bambu Studio Physical Fit:</span>{' '}
             Each letter and charm counts as 1 physical keycap toward {plateCapacity} pcs/plate (default 138 pcs). Wide letters (M, W) and sculpted charms (♥, ★, ✿, #, @) must always have their physical bed fit verified separately in Bambu Studio.
           </div>
           {carryForwardTotal > 0 && (
-            <button
-              type="button"
-              onClick={handleIncludeCarryForward}
-              className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold whitespace-nowrap"
-            >
-              + Add Carry-Forward ({carryForwardTotal} pcs)
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {missingCarryTotal > 0 ? (
+                <button
+                  type="button"
+                  onClick={handleIncludeCarryForward}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold whitespace-nowrap"
+                >
+                  + Merge Carry-Forward ({missingCarryTotal} pcs)
+                </button>
+              ) : (
+                <span className="px-2.5 py-1 rounded-lg bg-white/80 dark:bg-[#191726] border border-amber-300/80 dark:border-amber-800/70 text-[11px] font-medium text-amber-900 dark:text-amber-200 whitespace-nowrap">
+                  Carry-forward ({carryForwardTotal} pcs) included in target grid
+                </span>
+              )}
+              {onClearCarryForward && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onClearCarryForward({
+                      projectId: currentProject.id,
+                      colorId: selectedColorId,
+                      mode: generationMode,
+                      trimTargetRemainder: true,
+                    })
+                  }
+                  className="px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-950/40 font-medium whitespace-nowrap"
+                >
+                  Dismiss Carry-Forward
+                </button>
+              )}
+            </div>
           )}
         </div>
       </section>
@@ -754,15 +932,27 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               </span>
               {generationMode === 'charm_only' && (
                 <span className="text-[11px] px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-medium">
-                  Excluded in Charm Only mode · Saved A–Z targets preserved
+                  Excluded in Charm Only mode · Existing A–Z plates preserved
                 </span>
               )}
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              Enter target quantity per letter for this filament color. Unrequested letters are never added automatically.
+              Enter custom quantity per letter for this filament color. Unrequested letters are never added automatically.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {hasUnsavedGridEdits && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHasUnsavedGridEdits(false);
+                  setStagedPlates(null);
+                }}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#dfd7fb] dark:border-[#3e3366] bg-[#faf8ff] dark:bg-[#221c38] text-[#5b3cc4] dark:text-[#d5c8ff] whitespace-nowrap"
+              >
+                Reset to Active Queue
+              </button>
+            )}
             <button
               type="button"
               onClick={handleLoadAlphabetFromQueue}
@@ -774,6 +964,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               type="button"
               onClick={() => {
                 if (distribution) {
+                  setHasUnsavedGridEdits(true);
                   setDraftLetters({ ...distribution.lockedTotals });
                   setStagedPlates(null);
                 }
@@ -877,7 +1068,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               </span>
               {generationMode === 'alphabet_only' && (
                 <span className="text-[11px] px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-medium">
-                  Excluded in Alphabet Only mode · Saved Charm targets preserved
+                  Excluded in Alphabet Only mode · Existing Charm plates preserved
                 </span>
               )}
             </div>
@@ -898,6 +1089,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               type="button"
               onClick={() => {
                 if (distribution) {
+                  setHasUnsavedGridEdits(true);
                   setDraftCharms({ ...distribution.lockedCharms });
                   setStagedPlates(null);
                 }
@@ -999,22 +1191,62 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 Auto Plate Generator ({MODE_OPTIONS.find((m) => m.id === generationMode)?.label})
               </h2>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                Completed, Failed, and Printing plate history is strictly preserved. Existing saved targets are never changed without confirmation.
+                Completed, Failed, and Printing plate history is strictly preserved. Deleted plates and missing letters or charms are never recreated automatically.
               </p>
             </div>
 
-            <div className="text-xs font-mono-data text-neutral-700 dark:text-neutral-300">
-              Mode Target: <b>{activeModeTargetTotal}</b> pcs
-              {generationMode === 'mixed' && (
-                <span className="text-neutral-500">
-                  {' '}
-                  ({totalAlphabetRequested} A–Z + {totalCharmsRequested} Charm)
-                </span>
-              )}{' '}
-              · Locked: <b>{activeModeLockedCount}</b> pcs · Net to Plate:{' '}
-              <b>{distribution.totalNetCount}</b> pcs · Full Plates:{' '}
-              <b>{distribution.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
-              <b>{distribution.remainderCount}</b> pcs
+            <div className="flex flex-wrap items-center gap-3">
+              {colorPlanningState.queuedPlatesCount > 0 && (
+                <div
+                  role="group"
+                  aria-label="Queue preservation mode"
+                  className="inline-flex items-center gap-1 p-1 rounded-xl bg-neutral-100 dark:bg-[#111018] border border-neutral-200/80 dark:border-neutral-800"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreserveQueuedPlates(false);
+                      setStagedPlates(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                      !effectivePreserveQueued
+                        ? 'bg-[#6c4ce6] text-white'
+                        : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    Regenerate Queue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreserveQueuedPlates(true);
+                      setStagedPlates(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                      effectivePreserveQueued
+                        ? 'bg-[#6c4ce6] text-white'
+                        : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    Queue Remaining Demand Only ({colorPlanningState.queuedPlatesCount} kept)
+                  </button>
+                </div>
+              )}
+
+              <div className="text-xs font-mono-data text-neutral-700 dark:text-neutral-300">
+                Mode Target: <b>{activeModeTargetTotal}</b> pcs
+                {generationMode === 'mixed' && (
+                  <span className="text-neutral-500">
+                    {' '}
+                    ({totalAlphabetRequested} A–Z + {totalCharmsRequested} Charm)
+                  </span>
+                )}{' '}
+                · {effectivePreserveQueued ? 'Allocated' : 'Locked'}:{' '}
+                <b>{activeModeLockedCount}</b> pcs · Net to Plate:{' '}
+                <b>{distribution.totalNetCount}</b> pcs · Full Plates:{' '}
+                <b>{distribution.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
+                <b>{distribution.remainderCount}</b> pcs
+              </div>
             </div>
           </div>
 

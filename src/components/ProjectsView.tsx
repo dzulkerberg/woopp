@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import {
-  countCharms,
+  computeProjectPlateProgress,
   countLetters,
-  countPlateKeycaps,
   DEFAULT_PLATE_CAPACITY,
   emptyAlphabetMap,
-  getProjectTotalTargetQuantity,
   PRIORITIES,
   SALES_CHANNELS,
 } from '../constants';
@@ -66,7 +64,6 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       productType: workspace.settings.defaultProductType || '3D Clicker Keycap',
       plateCapacity: workspace.settings.defaultPlateCapacity || DEFAULT_PLATE_CAPACITY,
       assignedColorIds: defaultColors,
-      targetQuantity: 414,
       targetsByColor,
       carryForwardByColor,
       allocatedStockByColor,
@@ -114,26 +111,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       if (!allocatedStockByColor[cid]) allocatedStockByColor[cid] = emptyAlphabetMap();
     }
 
-    const plannedTargetSum = editingProject.assignedColorIds.reduce(
-      (sum, cid) =>
-        sum +
-        countLetters(targetsByColor[cid]) +
-        countCharms(editingProject.charmTargetsByColor?.[cid]),
-      0
-    );
-
-    const finalTargetQty =
-      plannedTargetSum > 0
-        ? plannedTargetSum
-        : Math.max(0, Math.floor(Number(editingProject.targetQuantity) || 0));
-
     onSaveProject(
       {
         ...editingProject,
         name: trimmedName,
         productType: editingProject.productType.trim() || '3D Clicker Keycap',
         plateCapacity: Math.floor(editingProject.plateCapacity),
-        targetQuantity: finalTargetQty,
         targetsByColor,
         carryForwardByColor,
         allocatedStockByColor,
@@ -319,52 +302,32 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">
-                Assigned Colors
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {workspace.colors.map((c) => {
-                  const selected = editingProject.assignedColorIds.includes(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => toggleAssignedColor(c.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-2 whitespace-nowrap ${
-                        selected
-                          ? 'border-[#6c4ce6] bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff]'
-                          : 'border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
-                      }`}
-                    >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      <span>{c.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                Initial Target Quantity (auto-updates from A–Z &amp; Charm Planner)
-              </label>
-              <input
-                type="number"
-                min={0}
-                value={editingProject.targetQuantity}
-                onChange={(e) =>
-                  setEditingProject({
-                    ...editingProject,
-                    targetQuantity: Math.max(0, Number(e.target.value) || 0),
-                  })
-                }
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white font-mono-data"
-              />
+          <div>
+            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">
+              Assigned Colors
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {workspace.colors.map((c) => {
+                const selected = editingProject.assignedColorIds.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleAssignedColor(c.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-2 whitespace-nowrap ${
+                      selected
+                        ? 'border-[#6c4ce6] bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff]'
+                        : 'border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                    }`}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: c.hex }}
+                    />
+                    <span>{c.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -417,37 +380,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {visibleProjects.map((project) => {
-            const pJobs = workspace.jobs.filter((j) => j.projectId === project.id);
-            const completedJobs = pJobs.filter((j) => j.stage === 'Completed');
-            const printingJobs = pJobs.filter((j) => j.stage === 'Printing');
-            const producedPcs = completedJobs.reduce(
-              (sum, j) => sum + countPlateKeycaps(j),
-              0
-            );
-            const producedLettersPcs = completedJobs.reduce(
-              (sum, j) => sum + countLetters(j.letters),
-              0
-            );
-            const producedCharmsPcs = completedJobs.reduce(
-              (sum, j) => sum + countCharms(j.charms),
-              0
-            );
+            const progress = computeProjectPlateProgress(workspace.jobs, project.id);
             const allocatedPcs = Object.values(project.allocatedStockByColor || {}).reduce(
               (sum, m) => sum + countLetters(m),
               0
             );
-            const plannedJobsPcs = pJobs.reduce(
-              (sum, j) => sum + countPlateKeycaps(j),
-              0
-            );
-            const targetPcs =
-              getProjectTotalTargetQuantity(project) || plannedJobsPcs;
-            const targetCharmsPcs = project.assignedColorIds.reduce(
-              (sum, cid) => sum + countCharms(project.charmTargetsByColor?.[cid]),
-              0
-            );
-            const progressPct =
-              targetPcs > 0 ? Math.min(100, Math.round((producedPcs / targetPcs) * 100)) : 0;
 
             const isSelected = project.id === selectedProjectId;
 
@@ -475,28 +412,31 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     </span>
                   </div>
 
-                  {/* Progress Bar */}
+                  {/* Progress Bar (driven strictly by valid plate records) */}
                   <div className="mt-4">
                     <div className="flex items-center justify-between text-xs mb-1.5">
                       <span className="text-neutral-600 dark:text-neutral-300">
-                        Printed Progress ({completedJobs.length}/{pJobs.length} plates)
+                        Printed Progress ({progress.completedPlates}/{progress.totalValidPlates} plates)
                       </span>
                       <span className="font-mono-data font-semibold text-neutral-900 dark:text-white">
-                        {producedPcs.toLocaleString()} / {targetPcs.toLocaleString()} pcs ({progressPct}%)
+                        {progress.producedKeycaps.toLocaleString()} / {progress.plannedKeycaps.toLocaleString()} pcs ({progress.progressPct}%)
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
                       <div
                         className="h-full bg-[#6c4ce6]"
-                        style={{ width: `${progressPct}%` }}
+                        style={{ width: `${progress.progressPct}%` }}
                       />
                     </div>
-                    {(targetCharmsPcs > 0 || producedCharmsPcs > 0) && (
+                    {(progress.plannedCharms > 0 || progress.producedCharms > 0) && (
                       <div className="mt-1.5 text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center justify-between gap-2">
-                        <span>Alphabet A–Z: {producedLettersPcs.toLocaleString()} printed</span>
+                        <span>
+                          Alphabet A–Z: {progress.producedLetters.toLocaleString()} /{' '}
+                          {progress.plannedLetters.toLocaleString()} printed
+                        </span>
                         <span className="text-[#5b3cc4] dark:text-[#c7b8ff]">
-                          Charms: {producedCharmsPcs.toLocaleString()} /{' '}
-                          {(targetCharmsPcs || producedCharmsPcs).toLocaleString()} printed
+                          Charms: {progress.producedCharms.toLocaleString()} /{' '}
+                          {progress.plannedCharms.toLocaleString()} printed
                         </span>
                       </div>
                     )}
@@ -530,7 +470,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       .map((cid) => workspace.colors.find((c) => c.id === cid)?.name)
                       .filter(Boolean)
                       .join(', ') || 'None'}
-                    {printingJobs.length > 0 && ` · ${printingJobs.length} currently printing`}
+                    {progress.printingPlates > 0 && ` · ${progress.printingPlates} currently printing`}
                   </div>
 
                   {project.notes && (

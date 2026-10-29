@@ -10,6 +10,7 @@ import {
   KanbanStage,
   MachineStatus,
   PrinterMachine,
+  ProductionJob,
   ProductionWorkspaceV5,
 } from '../types';
 import {
@@ -23,6 +24,8 @@ import { PlateCompositionSummary } from './PlateCompositionSummary';
 interface MachinesViewProps {
   workspace: ProductionWorkspaceV5;
   schedule: GlobalScheduleResult;
+  isAdmin?: boolean;
+  busyJobIds?: ReadonlySet<string>;
   onAddMachine: (name: string, model: string, capacity: number) => boolean;
   onUpdateMachine: (
     machineId: string,
@@ -52,17 +55,21 @@ interface MachinesViewProps {
     nextStage: KanbanStage,
     opts?: { machineId?: string | null; actualMinutes?: number; failureReason?: string }
   ) => void;
+  onRequestCancelPrinting?: (job: ProductionJob) => void;
 }
 
 export const MachinesView: React.FC<MachinesViewProps> = ({
   workspace,
   schedule,
+  isAdmin = true,
+  busyJobIds,
   onAddMachine,
   onUpdateMachine,
   onRemoveMachine,
   onAssignAndStartJob,
   onPauseOrResume,
   onTransitionStage,
+  onRequestCancelPrinting,
 }) => {
   const [newName, setNewName] = useState('');
   const [newModel, setNewModel] = useState('Bambu Lab A1');
@@ -71,7 +78,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
   const [maintHoursDraft, setMaintHoursDraft] = useState<Record<string, number>>({});
 
   const readyOrPlannedJobs = workspace.jobs.filter(
-    (j) => j.stage === 'Ready to Print' || j.stage === 'Planned'
+    (j) => !j.archived && (j.stage === 'Ready to Print' || j.stage === 'Planned')
   );
 
   const totalFleetMinutes = workspace.machines.reduce(
@@ -368,6 +375,16 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                       >
                         Fail
                       </button>
+                      {onRequestCancelPrinting && (
+                        <button
+                          type="button"
+                          disabled={!isAdmin || Boolean(busyJobIds?.has(activeJob.id))}
+                          onClick={() => onRequestCancelPrinting(activeJob)}
+                          className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#171522] disabled:opacity-45 whitespace-nowrap"
+                        >
+                          Cancel
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (

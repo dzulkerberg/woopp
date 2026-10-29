@@ -1,4 +1,5 @@
 import {
+  ActiveKanbanStage,
   AlphabetPreset,
   CharmDefinition,
   CharmId,
@@ -9,6 +10,7 @@ import {
   LegacyTrackerState,
   LettersMap,
   MachineStatus,
+  PlanningSessionRecord,
   PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
@@ -22,6 +24,7 @@ import { DEFAULT_TIMEZONE, formatDateTimeDDMMYYYY } from './utils/dateFormat';
 export const STORAGE_KEY_V5 = 'woopp-print-tracker-v5';
 export const STORAGE_KEY_V1 = 'woopp-print-tracker-v1';
 export const DEFAULT_PLATE_CAPACITY = 138;
+export const PRIMARY_ADMIN_EMAIL = 'hellodzul@gmail.com';
 export const ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
 export const CHARM_DEFINITIONS: readonly CharmDefinition[] = [
@@ -58,12 +61,17 @@ export const SALES_CHANNELS: SalesChannel[] = [
 
 export const PRIORITIES: ProjectPriority[] = ['Critical', 'High', 'Normal', 'Low'];
 
-export const KANBAN_STAGES: KanbanStage[] = [
+export const ACTIVE_KANBAN_STAGES: ActiveKanbanStage[] = [
   'Planned',
   'Ready to Print',
   'Printing',
   'Completed',
   'Failed / Reprint',
+];
+
+export const KANBAN_STAGES: KanbanStage[] = [
+  ...ACTIVE_KANBAN_STAGES,
+  'Cancelled',
 ];
 
 export const MACHINE_STATUSES: MachineStatus[] = [
@@ -226,18 +234,77 @@ export function countPlateKeycaps(item: {
   return countLetters(item.letters) + countCharms(item.charms);
 }
 
+export interface ProjectPlateProgress {
+  completedPlates: number;
+  totalValidPlates: number;
+  printingPlates: number;
+  queuedPlates: number;
+  producedKeycaps: number;
+  plannedKeycaps: number;
+  producedLetters: number;
+  plannedLetters: number;
+  producedCharms: number;
+  plannedCharms: number;
+  progressPct: number;
+}
+
 /**
- * Computes total planned keycaps (Alphabet + Charm) across assigned colors for a project,
- * falling back to `project.targetQuantity` when per-color maps are still unpopulated.
+ * Computes project production progress strictly from actual valid plate records
+ * (`Completed` plates, including archived Completed history, plus active non-archived,
+ * non-cancelled pipeline plates).
  */
-export function getProjectTotalTargetQuantity(project: ProductionProject): number {
-  const colorIds = project.assignedColorIds || [];
-  let sum = 0;
-  for (const cid of colorIds) {
-    sum += countLetters(project.targetsByColor?.[cid]);
-    sum += countCharms(project.charmTargetsByColor?.[cid]);
-  }
-  return sum > 0 ? sum : Math.max(0, Math.floor(Number(project.targetQuantity) || 0));
+export function computeProjectPlateProgress(
+  jobs: ProductionJob[],
+  projectId: string
+): ProjectPlateProgress {
+  const pJobs = jobs.filter((j) => j.projectId === projectId);
+  const completedJobs = pJobs.filter((j) => j.stage === 'Completed');
+  const printingJobs = pJobs.filter((j) => !j.archived && j.stage === 'Printing');
+  const queuedJobs = pJobs.filter(
+    (j) => !j.archived && (j.stage === 'Planned' || j.stage === 'Ready to Print')
+  );
+  const validJobs = pJobs.filter(
+    (j) => j.stage === 'Completed' || (!j.archived && j.stage !== 'Cancelled')
+  );
+
+  const producedLetters = completedJobs.reduce(
+    (sum, j) => sum + countLetters(j.letters),
+    0
+  );
+  const producedCharms = completedJobs.reduce(
+    (sum, j) => sum + countCharms(j.charms),
+    0
+  );
+  const producedKeycaps = producedLetters + producedCharms;
+
+  const plannedLetters = validJobs.reduce(
+    (sum, j) => sum + countLetters(j.letters),
+    0
+  );
+  const plannedCharms = validJobs.reduce(
+    (sum, j) => sum + countCharms(j.charms),
+    0
+  );
+  const plannedKeycaps = plannedLetters + plannedCharms;
+
+  const progressPct =
+    plannedKeycaps > 0
+      ? Math.min(100, Math.round((producedKeycaps / plannedKeycaps) * 100))
+      : 0;
+
+  return {
+    completedPlates: completedJobs.length,
+    totalValidPlates: validJobs.length,
+    printingPlates: printingJobs.length,
+    queuedPlates: queuedJobs.length,
+    producedKeycaps,
+    plannedKeycaps,
+    producedLetters,
+    plannedLetters,
+    producedCharms,
+    plannedCharms,
+    progressPct,
+  };
 }
 
 /**
@@ -433,11 +500,6 @@ export function migrateFromLegacyV1(
     wastageByColor[color.id] = emptyAlphabetMap();
   }
 
-  const totalTargetQty = Object.values(targetsByColor).reduce(
-    (sum, map) => sum + countLetters(map),
-    0
-  );
-
   const legacyProject: ProductionProject = {
     id: legacyProjectId,
     name: 'Legacy Production Plan (Migrated v1)',
@@ -447,7 +509,6 @@ export function migrateFromLegacyV1(
     productType: '3D Clicker Keycap',
     plateCapacity: DEFAULT_PLATE_CAPACITY,
     assignedColorIds: colors.map((c) => c.id),
-    targetQuantity: totalTargetQty,
     targetsByColor,
     carryForwardByColor,
     allocatedStockByColor,
@@ -578,7 +639,6 @@ export function createFreshWorkspaceV5(ownerId: string): ProductionWorkspaceV5 {
     productType: '3D Clicker Keycap',
     plateCapacity: DEFAULT_PLATE_CAPACITY,
     assignedColorIds: colors.map((c) => c.id),
-    targetQuantity: countLetters(standardTarget) * colors.length,
     targetsByColor,
     carryForwardByColor,
     allocatedStockByColor,
@@ -691,6 +751,15 @@ export function normalizeWorkspaceV5(
             carryForwardByColor: p.carryForwardByColor || {},
             allocatedStockByColor: p.allocatedStockByColor || {},
           };
+          if (
+            typeof p.targetQuantity === 'number' &&
+            Number.isFinite(p.targetQuantity) &&
+            p.targetQuantity >= 0
+          ) {
+            normalizedProj.targetQuantity = Math.floor(p.targetQuantity);
+          } else {
+            delete normalizedProj.targetQuantity;
+          }
           if (p.charmTargetsByColor && typeof p.charmTargetsByColor === 'object') {
             const cleanedCharmTargets: Record<string, CharmsMap> = {};
             for (const [cid, cMap] of Object.entries(p.charmTargetsByColor)) {
@@ -711,6 +780,62 @@ export function normalizeWorkspaceV5(
               }
             }
             normalizedProj.charmCarryForwardByColor = cleanedCharmCarry;
+          }
+          if (Array.isArray(p.planningSessions)) {
+            const cleanedSessions: PlanningSessionRecord[] = [];
+            for (const s of p.planningSessions) {
+              if (
+                s &&
+                typeof s === 'object' &&
+                typeof s.sessionId === 'string' &&
+                s.sessionId.trim().length > 0 &&
+                typeof s.colorId === 'string' &&
+                s.colorId.trim().length > 0
+              ) {
+                const modeVal: PlateGenerationMode = PLATE_GENERATION_MODES.includes(
+                  s.mode
+                )
+                  ? s.mode
+                  : 'mixed';
+                const capVal =
+                  typeof s.plateCapacity === 'number' && s.plateCapacity >= 1
+                    ? Math.floor(s.plateCapacity)
+                    : p.plateCapacity || DEFAULT_PLATE_CAPACITY;
+                cleanedSessions.push({
+                  sessionId: s.sessionId.trim(),
+                  colorId: s.colorId.trim(),
+                  mode: modeVal,
+                  plateCapacity: capVal,
+                  generatedJobIds: Array.isArray(s.generatedJobIds)
+                    ? s.generatedJobIds.filter(
+                        (id): id is string =>
+                          typeof id === 'string' && id.trim().length > 0
+                      )
+                    : [],
+                  carryForwardLetters: compactLettersMap(
+                    s.carryForwardLetters || {}
+                  ),
+                  carryForwardCharms: compactCharmsMap(
+                    s.carryForwardCharms || {}
+                  ),
+                  createdIso:
+                    typeof s.createdIso === 'string' && s.createdIso.trim().length > 0
+                      ? s.createdIso
+                      : p.createdIso || new Date().toISOString(),
+                  updatedIso:
+                    typeof s.updatedIso === 'string' && s.updatedIso.trim().length > 0
+                      ? s.updatedIso
+                      : p.updatedIso || new Date().toISOString(),
+                });
+              }
+            }
+            if (cleanedSessions.length > 0) {
+              normalizedProj.planningSessions = cleanedSessions;
+            } else {
+              delete normalizedProj.planningSessions;
+            }
+          } else {
+            delete normalizedProj.planningSessions;
           }
           return normalizedProj;
         })
@@ -738,6 +863,30 @@ export function normalizeWorkspaceV5(
             normalizedJob.plateMode = j.plateMode;
           } else {
             delete normalizedJob.plateMode;
+          }
+          if (typeof j.archived === 'boolean') {
+            normalizedJob.archived = j.archived;
+          } else {
+            delete normalizedJob.archived;
+          }
+          const lifecycleStringKeys = [
+            'planningSessionId',
+            'archivedIso',
+            'archivedBy',
+            'cancelledIso',
+            'cancellationReason',
+            'cancelledBy',
+            'cancelledFromMachineId',
+          ] as const;
+          for (const key of lifecycleStringKeys) {
+            const val = j[key];
+            if (typeof val === 'string' && val.trim().length > 0) {
+              normalizedJob[key] = val;
+            } else if (val === null) {
+              normalizedJob[key] = null;
+            } else {
+              delete normalizedJob[key];
+            }
           }
           return normalizedJob;
         })
@@ -776,6 +925,14 @@ export function normalizeWorkspaceV5(
           ? raw.settings.turnaroundBufferMinutes
           : 15,
       timezone: raw.settings?.timezone || DEFAULT_TIMEZONE,
+      ...(Array.isArray(raw.settings?.adminEmails) &&
+      raw.settings.adminEmails.some((e) => typeof e === 'string' && e.trim().length > 0)
+        ? {
+            adminEmails: raw.settings.adminEmails
+              .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
+              .map((e) => e.trim().toLowerCase()),
+          }
+        : {}),
     },
     updatedIso: raw.updatedIso || new Date().toISOString(),
   };

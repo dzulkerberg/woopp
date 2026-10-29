@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
+  computeProjectPlateProgress,
   countPlateKeycaps,
-  getProjectTotalTargetQuantity,
   SALES_CHANNELS,
 } from '../constants';
 import { NavSection, ProductionWorkspaceV5 } from '../types';
@@ -63,16 +63,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   const completedJobs = filteredJobs.filter((j) => j.stage === 'Completed');
-  const printingJobs = filteredJobs.filter((j) => j.stage === 'Printing');
+  const printingJobs = filteredJobs.filter((j) => !j.archived && j.stage === 'Printing');
+  const activePlanJobs = filteredJobs.filter(
+    (j) => j.stage === 'Completed' || (!j.archived && j.stage !== 'Cancelled')
+  );
+  const remainingQueueJobs = filteredJobs.filter(
+    (j) => !j.archived && j.stage !== 'Completed' && j.stage !== 'Cancelled'
+  );
   const totalProducedKeycaps = completedJobs.reduce(
     (sum, j) => sum + countPlateKeycaps(j),
     0
   );
-  const totalPlannedKeycaps = filteredJobs.reduce(
+  const totalPlannedKeycaps = activePlanJobs.reduce(
     (sum, j) => sum + countPlateKeycaps(j),
     0
   );
-  const totalEstMinutes = filteredJobs.reduce((sum, j) => sum + (j.estimatedMinutes || 0), 0);
+  const totalEstMinutes = activePlanJobs.reduce(
+    (sum, j) => sum + (j.estimatedMinutes || 0),
+    0
+  );
   const completedMinutes = completedJobs.reduce(
     (sum, j) => sum + (j.actualMinutes || j.estimatedMinutes || 0),
     0
@@ -86,17 +95,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const chProjectIds = new Set(chProjects.map((p) => p.id));
       const chJobs = workspace.jobs.filter((j) => chProjectIds.has(j.projectId));
       const done = chJobs.filter((j) => j.stage === 'Completed');
-      const donePcs = done.reduce((s, j) => s + countPlateKeycaps(j), 0);
-      const targetPcs = chProjects.reduce(
-        (s, p) => s + getProjectTotalTargetQuantity(p),
-        0
+      const validChJobs = chJobs.filter(
+        (j) => j.stage === 'Completed' || (!j.archived && j.stage !== 'Cancelled')
       );
-      const pct = targetPcs > 0 ? Math.min(100, Math.round((donePcs / targetPcs) * 100)) : 0;
+      const donePcs = done.reduce((s, j) => s + countPlateKeycaps(j), 0);
+      const plannedPcs = validChJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
+      const pct = plannedPcs > 0 ? Math.min(100, Math.round((donePcs / plannedPcs) * 100)) : 0;
       return {
         channel: ch,
         projectsCount: chProjects.length,
         donePcs,
-        targetPcs,
+        plannedPcs,
         pct,
       };
     });
@@ -206,10 +215,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
           <div className="text-xs text-neutral-500 dark:text-neutral-400">Plates Completed</div>
           <div className="text-2xl font-bold text-[#6c4ce6] dark:text-[#b49eff] mt-1 font-mono-data">
-            {completedJobs.length} / {filteredJobs.length}
+            {completedJobs.length} / {activePlanJobs.length}
           </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            {filteredJobs.length - completedJobs.length} remaining in queue
+            {remainingQueueJobs.length} remaining in queue
           </div>
         </div>
 
@@ -286,22 +295,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70 text-xs">
                     {(upcomingDeadlines.length > 0 ? upcomingDeadlines : activeProjects.slice(0, 6)).map(
                       (proj) => {
-                        const pJobs = workspace.jobs.filter((j) => j.projectId === proj.id);
-                        const pDone = pJobs
-                          .filter((j) => j.stage === 'Completed')
-                          .reduce((s, j) => s + countPlateKeycaps(j), 0);
-                        const projTarget = getProjectTotalTargetQuantity(proj);
-                        const pct =
-                          projTarget > 0
-                            ? Math.min(100, Math.round((pDone / projTarget) * 100))
-                            : 0;
+                        const progress = computeProjectPlateProgress(workspace.jobs, proj.id);
+                        const pct = progress.progressPct;
                         const comparableDeadline = toComparableYYYYMMDD(proj.deadline);
                         const etaInfo = projectEtaMap.get(proj.id);
                         const isOverdue =
                           etaInfo?.isDeadlineExceeded ||
                           (Boolean(comparableDeadline) &&
                             comparableDeadline < getTodayYYYYMMDD(timezone) &&
-                            pct < 100);
+                            (progress.totalValidPlates === 0 || pct < 100));
 
                         return (
                           <tr
@@ -336,7 +338,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   : 'text-neutral-700 dark:text-neutral-200'
                               }`}
                             >
-                              {etaInfo?.outstandingPlates === 0 && (etaInfo?.totalPlates || 0) > 0
+                              {etaInfo?.outstandingPlates === 0 &&
+                              (etaInfo?.totalPlates || 0) > 0
                                 ? 'Done'
                                 : etaInfo?.estimatedCompletionMs
                                 ? formatDateTimeDDMMYYYY(etaInfo.estimatedCompletionMs, timezone)
@@ -380,7 +383,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </span>
                     </div>
                     <div className="font-mono-data text-neutral-600 dark:text-neutral-300">
-                      {row.donePcs.toLocaleString()} / {row.targetPcs.toLocaleString()} pcs ({row.pct}%)
+                      {row.donePcs.toLocaleString()} / {row.plannedPcs.toLocaleString()} pcs ({row.pct}%)
                     </div>
                   </div>
                   <div className="h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">

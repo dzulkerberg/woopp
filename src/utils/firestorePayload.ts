@@ -25,6 +25,7 @@ import {
   LedgerMovementType,
   LettersMap,
   MachineStatus,
+  PlanningSessionRecord,
   PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
@@ -573,11 +574,6 @@ function validateProductionProject(
     assignedColorIds: project.assignedColorIds.map((cid, idx) =>
       requireNonEmptyString(cid, `${joinPath(path, 'assignedColorIds')}[${idx}]`)
     ),
-    targetQuantity: requireFiniteNumber(
-      project.targetQuantity,
-      joinPath(path, 'targetQuantity'),
-      { min: 0 }
-    ),
     targetsByColor: validateColorLettersMapRecord(
       project.targetsByColor,
       joinPath(path, 'targetsByColor')
@@ -606,6 +602,14 @@ function validateProductionProject(
     ),
   };
 
+  if (project.targetQuantity !== undefined && project.targetQuantity !== null) {
+    normalized.targetQuantity = requireFiniteNumber(
+      project.targetQuantity,
+      joinPath(path, 'targetQuantity'),
+      { min: 0 }
+    );
+  }
+
   if (project.charmTargetsByColor !== undefined) {
     normalized.charmTargetsByColor = validateColorCharmsMapRecord(
       project.charmTargetsByColor,
@@ -620,7 +624,86 @@ function validateProductionProject(
     );
   }
 
+  if (project.planningSessions !== undefined) {
+    if (!Array.isArray(project.planningSessions)) {
+      throw new FirestorePayloadValidationError(
+        joinPath(path, 'planningSessions'),
+        'Expected optional array of planning session records.'
+      );
+    }
+    const cleanedSessions: PlanningSessionRecord[] = project.planningSessions
+      .slice(0, 200)
+      .map((s, idx) =>
+        validatePlanningSessionRecord(
+          s,
+          `${joinPath(path, 'planningSessions')}[${idx}]`
+        )
+      );
+    if (cleanedSessions.length > 0) {
+      normalized.planningSessions = cleanedSessions;
+    }
+  }
+
   return normalized;
+}
+
+function validatePlanningSessionRecord(
+  session: PlanningSessionRecord,
+  path: string
+): PlanningSessionRecord {
+  if (!isPlainObject(session)) {
+    throw new FirestorePayloadValidationError(
+      path,
+      'Expected planning session record object.'
+    );
+  }
+  if (!Array.isArray(session.generatedJobIds)) {
+    throw new FirestorePayloadValidationError(
+      joinPath(path, 'generatedJobIds'),
+      'Expected array of generated job IDs.'
+    );
+  }
+  return {
+    sessionId: requireNonEmptyString(
+      session.sessionId,
+      joinPath(path, 'sessionId')
+    ),
+    colorId: requireNonEmptyString(session.colorId, joinPath(path, 'colorId')),
+    mode: requireEnum<PlateGenerationMode>(
+      session.mode,
+      PLATE_GENERATION_MODES,
+      joinPath(path, 'mode')
+    ),
+    plateCapacity: requireFiniteNumber(
+      session.plateCapacity,
+      joinPath(path, 'plateCapacity'),
+      { min: 1 }
+    ),
+    generatedJobIds: session.generatedJobIds
+      .filter((id) => id !== undefined)
+      .map((id, idx) =>
+        requireNonEmptyString(
+          id,
+          `${joinPath(path, 'generatedJobIds')}[${idx}]`
+        )
+      ),
+    carryForwardLetters: validateLettersMap(
+      session.carryForwardLetters,
+      joinPath(path, 'carryForwardLetters')
+    ),
+    carryForwardCharms: validateCharmsMap(
+      session.carryForwardCharms,
+      joinPath(path, 'carryForwardCharms')
+    ),
+    createdIso: requireNonEmptyString(
+      session.createdIso,
+      joinPath(path, 'createdIso')
+    ),
+    updatedIso: requireNonEmptyString(
+      session.updatedIso,
+      joinPath(path, 'updatedIso')
+    ),
+  };
 }
 
 function validateProductionJob(job: ProductionJob, path: string): ProductionJob {
@@ -761,6 +844,27 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
       job.pendingServerCompleteSync,
       joinPath(path, 'pendingServerCompleteSync')
     );
+  }
+
+  if (job.archived !== undefined) {
+    normalized.archived = requireBoolean(job.archived, joinPath(path, 'archived'));
+  }
+
+  const nullableLifecycleStringKeys = [
+    'planningSessionId',
+    'archivedIso',
+    'archivedBy',
+    'cancelledIso',
+    'cancellationReason',
+    'cancelledBy',
+    'cancelledFromMachineId',
+  ] as const;
+
+  for (const key of nullableLifecycleStringKeys) {
+    const val = job[key];
+    if (val !== undefined) {
+      normalized[key] = normalizeNullableString(val, joinPath(path, key));
+    }
   }
 
   return normalized;
@@ -931,6 +1035,25 @@ function validateWorkspaceSettings(
       joinPath(path, 'timezone'),
       `Expected optional string (received ${typeof settings.timezone}).`
     );
+  }
+
+  if (settings.adminEmails !== undefined) {
+    if (!Array.isArray(settings.adminEmails)) {
+      throw new FirestorePayloadValidationError(
+        joinPath(path, 'adminEmails'),
+        'Expected optional array of admin email strings.'
+      );
+    }
+    const cleanedAdmins = settings.adminEmails
+      .filter((e) => e !== undefined)
+      .map((e, idx) =>
+        requireNonEmptyString(e, `${joinPath(path, 'adminEmails')}[${idx}]`)
+          .trim()
+          .toLowerCase()
+      );
+    if (cleanedAdmins.length > 0) {
+      normalized.adminEmails = Array.from(new Set(cleanedAdmins));
+    }
   }
 
   return normalized;

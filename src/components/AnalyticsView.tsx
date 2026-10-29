@@ -54,14 +54,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
 
   const completedJobs = filteredJobs.filter((j) => j.stage === 'Completed');
   const failedJobs = filteredJobs.filter((j) => j.stage === 'Failed / Reprint' || j.failedCount > 0);
+  const activePlanJobs = filteredJobs.filter(
+    (j) => j.stage === 'Completed' || (!j.archived && j.stage !== 'Cancelled')
+  );
 
   const producedKeycaps = completedJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
-  const plannedKeycaps = filteredJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
+  const plannedKeycaps = activePlanJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
   const actualPrintMins = completedJobs.reduce(
     (s, j) => s + (j.actualMinutes || j.estimatedMinutes || 0),
     0
   );
-  const estPrintMins = filteredJobs.reduce((s, j) => s + (j.estimatedMinutes || 0), 0);
+  const estPrintMins = activePlanJobs.reduce((s, j) => s + (j.estimatedMinutes || 0), 0);
 
   const letterDemandRanking = useMemo(() => {
     const map: Record<string, { planned: number; produced: number }> = Object.fromEntries(
@@ -70,7 +73,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
     for (const job of filteredJobs) {
       for (const [k, v] of Object.entries(job.letters)) {
         if (map[k]) {
-          map[k].planned += Number(v || 0);
+          if (job.stage !== 'Cancelled') {
+            map[k].planned += Number(v || 0);
+          }
           if (job.stage === 'Completed') {
             map[k].produced += Number(v || 0);
           }
@@ -88,7 +93,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
       let produced = 0;
       for (const job of filteredJobs) {
         const qty = Math.max(0, Math.floor(Number(job.charms?.[def.id] || 0)));
-        planned += qty;
+        if (job.stage !== 'Cancelled') {
+          planned += qty;
+        }
         if (job.stage === 'Completed') {
           produced += qty;
         }
@@ -104,12 +111,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
       'SalesChannel',
       'Color',
       'Stage',
+      'Archived',
       'Printer',
       'TotalKeycaps',
       'AlphabetKeycaps',
       'CharmKeycaps',
       'EstimatedMinutes',
       'ActualMinutes',
+      'CancellationReason',
       'UpdatedDate',
     ];
     const rows = filteredJobs.map((j) => {
@@ -122,12 +131,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
         `"${p?.salesChannel || ''}"`,
         `"${c?.name || ''}"`,
         `"${j.stage}"`,
+        j.archived ? 'Yes' : 'No',
         `"${m?.name || 'Unassigned'}"`,
         countPlateKeycaps(j),
         countLetters(j.letters),
         countCharms(j.charms),
         j.estimatedMinutes,
         j.actualMinutes,
+        `"${(j.cancellationReason || '').replace(/"/g, '""')}"`,
         formatDateDDMMYYYY(j.updatedIso || j.createdIso),
       ].join(',');
     });

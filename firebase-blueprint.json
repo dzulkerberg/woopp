@@ -53,11 +53,11 @@
         },
         "projects": {
           "type": "array",
-          "description": "Multi-project definitions with sales channel, priority, deadline, targets, and allocations"
+          "description": "Multi-project definitions with sales channel, priority, deadline, targets, derived carry-forward maps, planningSessions lineage, and allocations"
         },
         "jobs": {
           "type": "array",
-          "description": "All production print plate jobs across projects with Kanban stage, server start/pause/completion timestamps, and stockApplied ledger guard"
+          "description": "All production print plate jobs across projects with planningSessionId, Kanban stage (Planned, Ready to Print, Printing, Completed, Failed / Reprint, Cancelled), archive metadata (archived, archivedIso, archivedBy), cancellation audit fields (cancelledIso, cancellationReason, cancelledBy, cancelledFromMachineId), server start/pause/completion timestamps, and stockApplied ledger guard"
         },
         "presets": {
           "type": "array",
@@ -69,11 +69,11 @@
         },
         "log": {
           "type": "array",
-          "description": "Chronological audit trail of production, machine, scheduling, and inventory events"
+          "description": "Chronological audit trail of production, machine, scheduling, queue lifecycle, and inventory events"
         },
         "settings": {
           "type": "object",
-          "description": "Workspace preferences including default plate capacity, turnaroundBufferMinutes, timezone, and theme"
+          "description": "Workspace preferences including default plate capacity, turnaroundBufferMinutes, timezone, theme, and optional adminEmails allowlist"
         },
         "updatedIso": {
           "type": "string",

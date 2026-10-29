@@ -20,6 +20,13 @@ service cloud.firestore {
       return isSignedIn() && isValidId(userId) && request.auth.uid == userId;
     }
 
+    // Restrict workspace & destructive queue mutations to non-anonymous authenticated workspace admins
+    function isAuthorizedWorkspaceAdmin(userId) {
+      return isOwner(userId) &&
+        (!('firebase' in request.auth.token) ||
+          request.auth.token.firebase.sign_in_provider != 'anonymous');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -80,6 +87,8 @@ service cloud.firestore {
         data.inventory is map &&
         data.log is list && data.log.size() <= 500 &&
         data.settings is map &&
+        (!('adminEmails' in data.settings) ||
+          (data.settings.adminEmails is list && data.settings.adminEmails.size() <= 20)) &&
         data.updatedIso is string && data.updatedIso.size() <= 64 &&
         (!('serverUpdatedAt' in data) || data.serverUpdatedAt == request.time);
     }
@@ -87,8 +96,8 @@ service cloud.firestore {
     // Preserved v1 document path: users/{userId}/tracker/main
     match /users/{userId}/tracker/main {
       allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidLegacyTracker(incoming());
-      allow update: if isOwner(userId) && isValidLegacyTracker(incoming()) &&
+      allow create: if isAuthorizedWorkspaceAdmin(userId) && isValidLegacyTracker(incoming());
+      allow update: if isAuthorizedWorkspaceAdmin(userId) && isValidLegacyTracker(incoming()) &&
         incoming().diff(existing()).affectedKeys().hasOnly(['colors', 'machines', 'jobs', 'log']);
       allow delete: if false;
     }
@@ -96,8 +105,8 @@ service cloud.firestore {
     // WOOPP 5.0 Workspace document path: users/{userId}/tracker/v5_workspace
     match /users/{userId}/tracker/v5_workspace {
       allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidWorkspaceV5(incoming(), userId);
-      allow update: if isOwner(userId) &&
+      allow create: if isAuthorizedWorkspaceAdmin(userId) && isValidWorkspaceV5(incoming(), userId);
+      allow update: if isAuthorizedWorkspaceAdmin(userId) &&
         isValidWorkspaceV5(incoming(), userId) &&
         incoming().ownerId == existing().ownerId &&
         incoming().diff(existing()).affectedKeys().hasOnly([

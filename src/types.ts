@@ -28,12 +28,23 @@ export type ProjectPriority = 'Critical' | 'High' | 'Normal' | 'Low';
 
 export type ProjectStatus = 'Active' | 'Completed' | 'Archived';
 
-export type KanbanStage =
+export type ActiveKanbanStage =
   | 'Planned'
   | 'Ready to Print'
   | 'Printing'
   | 'Completed'
   | 'Failed / Reprint';
+
+export type KanbanStage = ActiveKanbanStage | 'Cancelled';
+
+export type QueueLifecycleTab = 'active' | 'cancelled' | 'archived' | 'all';
+
+export interface AdminActorContext {
+  uid: string | null;
+  email?: string | null;
+  isAnonymous?: boolean | null;
+  role?: 'admin' | 'operator' | 'viewer';
+}
 
 export type MachineStatus = 'Idle' | 'Printing' | 'Completed' | 'Maintenance' | 'Offline';
 
@@ -60,6 +71,20 @@ export interface PrinterMachine {
   maintenanceUntilMs?: number | null; // Epoch ms when scheduled maintenance ends
 }
 
+export interface PlanningSessionRecord {
+  sessionId: string;
+  colorId: string;
+  mode: PlateGenerationMode;
+  plateCapacity: number;
+  // IDs of ProductionJob records generated in this planner session
+  generatedJobIds: string[];
+  // Temporary carry-forward from incomplete plate allocation in this session
+  carryForwardLetters: LettersMap;
+  carryForwardCharms: CharmsMap;
+  createdIso: string;
+  updatedIso: string;
+}
+
 export interface ProductionProject {
   id: string;
   name: string;
@@ -69,7 +94,8 @@ export interface ProductionProject {
   productType: string;
   plateCapacity: number;
   assignedColorIds: string[];
-  targetQuantity: number;
+  // Optional legacy field preserved non-destructively for historical Firestore documents; never synced or used for progress/queue
+  targetQuantity?: number;
   // colorId -> { A..Z -> qty }
   targetsByColor: Record<string, LettersMap>;
   // colorId -> { A..Z -> carry-forward unplated remainder }
@@ -79,6 +105,8 @@ export interface ProductionProject {
   // Additive Charm Keycap planning maps per filament color (missing treated as 0)
   charmTargetsByColor?: Record<string, CharmsMap>;
   charmCarryForwardByColor?: Record<string, CharmsMap>;
+  // Active planner session lineage linking generated plates to temporary carry-forward
+  planningSessions?: PlanningSessionRecord[];
   status: ProjectStatus;
   notes: string;
   createdIso: string;
@@ -95,6 +123,7 @@ export interface ProductionJob {
   // Additive Charm Keycap quantities on this plate (missing treated as 0)
   charms?: CharmsMap;
   plateMode?: PlateGenerationMode;
+  planningSessionId?: string | null; // Links plate to the Auto Plate Planner session that created it
   stage: KanbanStage;
   machineId: string | null;
   estimatedMinutes: number; // Base manual Bambu Studio duration (hours * 60 + mins)
@@ -121,6 +150,14 @@ export interface ProductionJob {
   actualCompletedAtMs?: number | null; // Actual completion epoch ms (synced via Firebase serverTimestamp)
   pendingServerStartSync?: boolean; // Reconciles startedAtMs with Firestore serverUpdatedAt snapshot
   pendingServerCompleteSync?: boolean; // Reconciles actualCompletedAtMs with Firestore serverUpdatedAt snapshot
+  // Print Queue Lifecycle Management Fields (additive, backward-compatible)
+  archived?: boolean; // True when hidden from Active Queue and stored in Archived view
+  archivedIso?: string | null; // ISO timestamp when archived
+  archivedBy?: string | null; // Email or UID of admin who archived the plate
+  cancelledIso?: string | null; // ISO timestamp when active print was cancelled
+  cancellationReason?: string | null; // Optional operator reason recorded at cancellation
+  cancelledBy?: string | null; // Email or UID of admin who cancelled the print
+  cancelledFromMachineId?: string | null; // Machine ID released when active print was cancelled
 }
 
 export interface AlphabetPreset {
@@ -175,6 +212,7 @@ export interface WorkspaceSettings {
   // Smart ETA & Scheduling Settings (additive, backward-compatible)
   turnaroundBufferMinutes?: number; // Plate removal, bed cleaning & restart buffer (default 15 mins)
   timezone?: string; // User timezone, defaults to 'Asia/Kuala_Lumpur'
+  adminEmails?: string[]; // Optional explicit admin allowlist for destructive queue actions
 }
 
 export interface ProductionWorkspaceV5 {

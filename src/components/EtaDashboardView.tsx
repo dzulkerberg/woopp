@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { countLetters, countPlateKeycaps } from '../constants';
-import { KanbanStage, NavSection, ProductionWorkspaceV5 } from '../types';
+import { KanbanStage, NavSection, ProductionJob, ProductionWorkspaceV5 } from '../types';
 import {
   formatCountdownHMS,
   formatDateDDMMYYYY,
@@ -14,6 +14,8 @@ import { PlateCompositionSummary } from './PlateCompositionSummary';
 interface EtaDashboardViewProps {
   workspace: ProductionWorkspaceV5;
   schedule: GlobalScheduleResult;
+  isAdmin?: boolean;
+  busyJobIds?: ReadonlySet<string>;
   onNavigate: (nav: NavSection) => void;
   onSelectProject: (projectId: string) => void;
   onPauseOrResume: (
@@ -26,16 +28,20 @@ interface EtaDashboardViewProps {
     nextStage: KanbanStage,
     opts?: { machineId?: string | null }
   ) => void;
+  onRequestCancelPrinting?: (job: ProductionJob) => void;
   onUpdateBufferMinutes: (bufferMins: number) => void;
 }
 
 export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
   workspace,
   schedule,
+  isAdmin = true,
+  busyJobIds,
   onNavigate,
   onSelectProject,
   onPauseOrResume,
   onTransitionStage,
+  onRequestCancelPrinting,
   onUpdateBufferMinutes,
 }) => {
   const {
@@ -196,11 +202,18 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
                 key={slot.job.id}
                 slot={slot}
                 timezone={timezone}
+                isAdmin={isAdmin}
+                isBusy={Boolean(busyJobIds?.has(slot.job.id))}
                 onPauseOrResume={onPauseOrResume}
                 onComplete={() =>
                   onTransitionStage(slot.job.id, 'Completed', {
                     machineId: slot.job.machineId,
                   })
+                }
+                onCancelPrinting={
+                  onRequestCancelPrinting
+                    ? () => onRequestCancelPrinting(slot.job)
+                    : undefined
                 }
               />
             ))}
@@ -242,7 +255,8 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
             </thead>
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70">
               {projectEtas.map((pe) => {
-                const allDone = pe.outstandingPlates === 0 && pe.totalPlates > 0;
+                const allDone =
+                  pe.outstandingPlates === 0 && pe.totalPlates > 0;
                 return (
                   <tr
                     key={pe.project.id}
@@ -258,6 +272,7 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
                       </div>
                       <div className="text-[11px] text-neutral-500">
                         {pe.project.salesChannel} · {pe.activePrintingPlates} printing
+                        {pe.cancelledPlates > 0 ? ` · ${pe.cancelledPlates} cancelled` : ''}
                       </div>
                     </td>
                     <td className="py-3.5 px-3 text-neutral-700 dark:text-neutral-300">
@@ -283,6 +298,8 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
                     <td className="py-3.5 pl-3 text-right font-semibold whitespace-nowrap">
                       {allDone ? (
                         <span className="text-emerald-600 dark:text-emerald-400">Completed</span>
+                      ) : pe.totalPlates === 0 ? (
+                        <span className="text-neutral-400">No plates</span>
                       ) : pe.isDeadlineExceeded ? (
                         <span className="text-red-600 dark:text-red-400">
                           Late by {formatDurationHoursMinutes(Math.abs(pe.slackMinutes || 0))}
@@ -309,15 +326,21 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
 interface ActivePrintCountdownCardProps {
   slot: ScheduledJobSlot;
   timezone: string;
+  isAdmin?: boolean;
+  isBusy?: boolean;
   onPauseOrResume: EtaDashboardViewProps['onPauseOrResume'];
   onComplete: () => void;
+  onCancelPrinting?: () => void;
 }
 
 const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
   slot,
   timezone,
+  isAdmin = true,
+  isBusy = false,
   onPauseOrResume,
   onComplete,
+  onCancelPrinting,
 }) => {
   const { job, project, colorName, assignedMachineName, isPaused, remainingSecondsLive, endMs } =
     slot;
@@ -459,12 +482,23 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
               {editingRemaining ? 'Close Adjust' : 'Adjust Remaining'}
             </button>
           )}
+          {onCancelPrinting && (
+            <button
+              type="button"
+              disabled={!isAdmin || isBusy}
+              onClick={onCancelPrinting}
+              className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-45 whitespace-nowrap"
+            >
+              Cancel Print
+            </button>
+          )}
         </div>
 
         <button
           type="button"
+          disabled={isBusy}
           onClick={onComplete}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap"
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 whitespace-nowrap"
         >
           {countLetters(job.letters) > 0 ? 'Complete Print (+Stock)' : 'Complete Print'}
         </button>

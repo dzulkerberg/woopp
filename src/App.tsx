@@ -16,21 +16,18 @@ import {
 } from './firebase';
 import {
   ABC,
-  compactCharmsMap,
-  compactLettersMap,
   countCharms,
   countLetters,
   countPlateKeycaps,
   createFreshWorkspaceV5,
   emptyAlphabetMap,
   formatPlateItemsText,
-  getProjectTotalTargetQuantity,
   migrateFromLegacyV1,
   normalizeAlphabetMap,
-  normalizeCharmsMap,
   normalizeWorkspaceV5,
 } from './constants';
 import {
+  AdminActorContext,
   AlphabetPreset,
   CharmsMap,
   KanbanStage,
@@ -46,13 +43,21 @@ import {
 } from './types';
 import {
   applyMachineUpdate,
+  archivePrintPlate,
+  bulkArchivePrintPlates,
+  bulkDeletePrintPlates,
+  bulkRestorePrintPlates,
+  cancelPrintingJob,
+  clearProjectColorCarryForward,
+  commitGeneratedPlatesToWorkspace,
   createActivityLogEntry,
+  deletePrintPlate,
   DraftPlatePreview,
   getAvailableStockForColor,
   getReservedStockForColor,
-  inferPlateMode,
+  isAuthorizedAdmin,
   pauseOrResumePrintingJob,
-  shouldPreserveExistingJobOnRegenerate,
+  restorePrintPlate,
   transitionJobState,
 } from './utils/productionEngine';
 import {
@@ -85,6 +90,12 @@ import { InventoryView } from './components/InventoryView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { SettingsView } from './components/SettingsView';
 import { DialogModal, ModalConfig } from './components/DialogModal';
+import {
+  BulkQueueActionKind,
+  BulkQueueActionModal,
+  CancelPrintingConfirmModal,
+  DeletePlateConfirmModal,
+} from './components/QueueLifecycleModals';
 
 const SECTION_META: Record<NavSection, { title: string; subtitle: string }> = {
   dashboard: {
@@ -148,12 +159,66 @@ export const App: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [modal, setModal] = useState<ModalConfig | null>(null);
 
+  // Print Queue Lifecycle modal & concurrency state
+  const [pendingDeleteJobId, setPendingDeleteJobId] = useState<string | null>(null);
+  const [pendingCancelJobId, setPendingCancelJobId] = useState<string | null>(null);
+  const [pendingBulkState, setPendingBulkState] = useState<{
+    action: BulkQueueActionKind;
+    jobIds: string[];
+  } | null>(null);
+  const [isLifecycleSaving, setIsLifecycleSaving] = useState<boolean>(false);
+  const [busyJobIds, setBusyJobIds] = useState<Set<string>>(() => new Set());
+  const busyJobIdsRef = useRef<Set<string>>(new Set());
+
   const v5Ref = useRef<DocumentReference | null>(null);
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingWritesRef = useRef<number>(0);
   const lastConfirmedWorkspaceRef = useRef<ProductionWorkspaceV5>(initialWorkspace);
+  const latestWorkspaceRef = useRef<ProductionWorkspaceV5>(initialWorkspace);
   const serverClockOffsetMsRef = useRef<number>(0);
   const serverTimestampSupportedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    latestWorkspaceRef.current = workspace;
+  }, [workspace]);
+
+  const actorContext = useMemo<AdminActorContext>(
+    () => ({
+      uid: user?.uid ?? null,
+      email: user?.email ?? null,
+      isAnonymous: user?.isAnonymous ?? null,
+    }),
+    [user?.uid, user?.email, user?.isAnonymous]
+  );
+
+  const isAdmin = useMemo(
+    () => isAuthorizedAdmin(actorContext, workspace),
+    [actorContext, workspace]
+  );
+
+  const lockJobIds = useCallback((ids: string[]): boolean => {
+    for (const id of ids) {
+      if (busyJobIdsRef.current.has(id)) {
+        return false;
+      }
+    }
+    const next = new Set(busyJobIdsRef.current);
+    for (const id of ids) {
+      next.add(id);
+    }
+    busyJobIdsRef.current = next;
+    setBusyJobIds(next);
+    return true;
+  }, []);
+
+  const unlockJobIds = useCallback((ids: string[]) => {
+    const next = new Set(busyJobIdsRef.current);
+    for (const id of ids) {
+      next.delete(id);
+    }
+    busyJobIdsRef.current = next;
+    setBusyJobIds(next);
+  }, []);
 
   const getAuthoritativeNowMs = useCallback(
     () => Date.now() + serverClockOffsetMsRef.current,
@@ -643,165 +708,91 @@ export const App: React.FC = () => {
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
     confirmedPlates: DraftPlatePreview[];
+    preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
   }) => {
-    const project = workspace.projects.find((p) => p.id === params.projectId);
-    const color = workspace.colors.find((c) => c.id === params.colorId);
+    const latestWs = latestWorkspaceRef.current;
+    const project = latestWs.projects.find((p) => p.id === params.projectId);
+    const color = latestWs.colors.find((c) => c.id === params.colorId);
     if (!project || !color) return;
 
-    const prevSavedLetters = normalizeAlphabetMap(project.targetsByColor?.[params.colorId]);
-    const nextNormalizedLetters = normalizeAlphabetMap(params.targetLetters);
-    const prevSavedCharms = normalizeCharmsMap(project.charmTargetsByColor?.[params.colorId]);
-    const nextNormalizedCharms = normalizeCharmsMap(params.targetCharms);
+    const result = commitGeneratedPlatesToWorkspace(latestWs, {
+      projectId: params.projectId,
+      colorId: params.colorId,
+      plateCapacity: params.plateCapacity,
+      mode: params.mode,
+      targetLetters: params.targetLetters,
+      targetCharms: params.targetCharms,
+      carryForwardLetters: params.carryForwardLetters,
+      carryForwardCharms: params.carryForwardCharms,
+      confirmedPlates: params.confirmedPlates,
+      preserveQueuedPlates: params.preserveQueuedPlates,
+      nowMs: getAuthoritativeNowMs(),
+    });
 
-    const prevLettersQty = countLetters(prevSavedLetters);
-    const nextLettersQty = countLetters(nextNormalizedLetters);
-    const prevCharmsQty = countCharms(prevSavedCharms);
-    const nextCharmsQty = countCharms(nextNormalizedCharms);
-
-    const lettersTargetChanged =
-      prevLettersQty > 0 &&
-      ABC.some((k) => prevSavedLetters[k] !== nextNormalizedLetters[k]);
-    const charmsTargetChanged =
-      prevCharmsQty > 0 &&
-      Object.keys(prevSavedCharms).some(
-        (k) =>
-          prevSavedCharms[k as keyof typeof prevSavedCharms] !==
-          nextNormalizedCharms[k as keyof typeof nextNormalizedCharms]
-      );
-
-    const commitToCloud = async () => {
-      const nowIso = new Date().toISOString();
-
-      // Preserve all jobs from other projects/colors, Completed, Printing, Failed / Reprint history,
-      // and cross-category plates when regenerating in Alphabet Only or Charm Only mode.
-      const keptJobs = workspace.jobs.filter((j) => {
-        if (j.projectId !== params.projectId || j.colorId !== params.colorId) return true;
-        return shouldPreserveExistingJobOnRegenerate(j, params.mode);
-      });
-
-      const createdJobs: ProductionJob[] = params.confirmedPlates.map((draft, idx) => {
-        const compactedLetters = compactLettersMap(draft.letters);
-        const compactedCharms = compactCharmsMap(draft.charms);
-        const job: ProductionJob = {
-          id: `job-${Date.now()}-${idx}-${params.colorId}`,
-          projectId: params.projectId,
-          colorId: params.colorId,
-          plateNumber: draft.plateNumber,
-          plateCapacity: params.plateCapacity,
-          letters: compactedLetters,
-          plateMode: inferPlateMode(compactedLetters, compactedCharms),
-          stage: draft.slicerVerified ? 'Ready to Print' : 'Planned',
-          machineId: null,
-          estimatedMinutes: Math.max(1, Math.round(draft.estimatedMinutes || 195)),
-          actualMinutes: 0,
-          slicerVerified: draft.slicerVerified,
-          stockApplied: false,
-          stockTransactionId: null,
-          failedCount: 0,
-          failureReason: '',
-          notes: draft.notes || 'Generated via Auto Plate Planner',
-          createdIso: nowIso,
-          updatedIso: nowIso,
-          completedIso: null,
-        };
-        if (Object.keys(compactedCharms).length > 0) {
-          job.charms = compactedCharms;
-        }
-        return job;
-      });
-
-      const nextTargetsByColor = {
-        ...project.targetsByColor,
-        [params.colorId]: nextNormalizedLetters,
-      };
-      const nextCarryByColor = {
-        ...project.carryForwardByColor,
-        [params.colorId]: normalizeAlphabetMap(params.carryForwardLetters),
-      };
-      const nextCharmTargetsByColor = {
-        ...(project.charmTargetsByColor || {}),
-        [params.colorId]: compactCharmsMap(params.targetCharms),
-      };
-      const nextCharmCarryByColor = {
-        ...(project.charmCarryForwardByColor || {}),
-        [params.colorId]: compactCharmsMap(params.carryForwardCharms),
-      };
-
-      const updatedProjectCandidate: ProductionProject = {
-        ...project,
-        plateCapacity: params.plateCapacity,
-        targetsByColor: nextTargetsByColor,
-        carryForwardByColor: nextCarryByColor,
-        charmTargetsByColor: nextCharmTargetsByColor,
-        charmCarryForwardByColor: nextCharmCarryByColor,
-        updatedIso: nowIso,
-      };
-
-      const updatedProjectTargetQty = getProjectTotalTargetQuantity(updatedProjectCandidate);
-
-      const nextProjects = workspace.projects.map((p) =>
-        p.id === project.id
-          ? {
-              ...updatedProjectCandidate,
-              targetQuantity: updatedProjectTargetQty,
-            }
-          : p
-      );
-
-      const carryCount =
-        countLetters(params.carryForwardLetters) + countCharms(params.carryForwardCharms);
-      const modeLabel =
-        params.mode === 'alphabet_only'
-          ? 'Alphabet Only'
-          : params.mode === 'charm_only'
-          ? 'Charm Only'
-          : 'Alphabet + Charm';
-
-      const nextLog = appendLog(
-        workspace.log,
-        'plate',
-        `${project.name} · ${color.name} (${modeLabel}): Generated ${createdJobs.length} plate(s)${
-          carryCount > 0 ? ` and carried forward ${carryCount} pcs` : ''
-        }. Completed, Failed & Printing plate history preserved.`,
-        project.id
-      );
-
-      const saved = await persistWorkspace({
-        ...workspace,
-        projects: nextProjects,
-        jobs: [...keptJobs, ...createdJobs],
-        log: nextLog,
-      });
-
-      if (saved) {
-        params.onSuccess?.();
-        showAlert(
-          `Saved ${createdJobs.length} plate(s) for ${project.name} (${color.name}).${
-            carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
-          }`,
-          'Plates Added to Queue'
-        );
-      }
-    };
-
-    if (lettersTargetChanged || charmsTargetChanged) {
-      showConfirm(
-        `Update saved production targets for ${project.name} (${color.name}) before queueing ${params.confirmedPlates.length} plate(s)?\n` +
-          `Alphabet A–Z: ${prevLettersQty} pcs → ${nextLettersQty} pcs\n` +
-          `Charm Keycaps: ${prevCharmsQty} pcs → ${nextCharmsQty} pcs\n` +
-          `Completed, Failed / Reprint, and Printing plates will remain untouched.`,
-        () => {
-          void commitToCloud();
-        },
-        'Confirm Production Target Update',
-        'Confirm & Save Plates'
+    if (result.error || !result.nextWorkspace || !result.createdJobs) {
+      showAlert(
+        result.error || 'Could not generate plates for this project.',
+        'Plate Generation Blocked'
       );
       return;
     }
 
-    await commitToCloud();
+    const carryCount =
+      countLetters(params.carryForwardLetters) + countCharms(params.carryForwardCharms);
+
+    const saved = await persistWorkspace(result.nextWorkspace);
+
+    if (saved) {
+      params.onSuccess?.();
+      showAlert(
+        `Saved ${result.createdJobs.length} plate(s) for ${project.name} (${color.name}).${
+          carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
+        }`,
+        'Plates Added to Queue'
+      );
+    }
   };
+
+  const handleClearCarryForward = useCallback(
+    (params: {
+      projectId: string;
+      colorId: string;
+      mode: PlateGenerationMode;
+      trimTargetRemainder: boolean;
+    }) => {
+      const currentWs = latestWorkspaceRef.current;
+      const project = currentWs.projects.find((p) => p.id === params.projectId);
+      const color = currentWs.colors.find((c) => c.id === params.colorId);
+      if (!project || !color) return;
+
+      showConfirm(
+        `Dismiss active carry-forward remainder for ${project.name} (${color.name})?\n` +
+          `Completed, Printing, and Queued plates will remain untouched.`,
+        () => {
+          const latestWs = latestWorkspaceRef.current;
+          const res = clearProjectColorCarryForward(latestWs, {
+            projectId: params.projectId,
+            colorId: params.colorId,
+            mode: params.mode,
+            trimTargetRemainder: params.trimTargetRemainder,
+            nowMs: getAuthoritativeNowMs(),
+          });
+          if (res.error || !res.nextWorkspace) {
+            showAlert(
+              res.error || 'Could not clear carry-forward remainder.',
+              'Carry-Forward Notice'
+            );
+            return;
+          }
+          void persistWorkspace(res.nextWorkspace);
+        },
+        'Dismiss Carry-Forward Remainder',
+        'Dismiss Carry-Forward'
+      );
+    },
+    [getAuthoritativeNowMs, persistWorkspace, showAlert, showConfirm]
+  );
 
   // --- Handlers for Kanban, Smart ETA Timers & Job Metadata ---
   const handleTransitionStage = (
@@ -860,6 +851,13 @@ export const App: React.FC = () => {
   ) => {
     const job = workspace.jobs.find((j) => j.id === jobId);
     if (!job) return;
+    if (job.archived) {
+      showAlert(
+        `Plate ${job.plateNumber} is archived. Restore it before editing metadata.`,
+        'Archived Plate Read-Only'
+      );
+      return;
+    }
 
     const authNow = getAuthoritativeNowMs();
 
@@ -956,6 +954,204 @@ export const App: React.FC = () => {
       });
     }
   };
+
+  // --- Handlers for Print Queue Lifecycle Management (Delete, Cancel, Archive, Restore & Bulk) ---
+  const handleRequestDeletePlate = useCallback(
+    (job: ProductionJob) => {
+      if (!isAdmin) {
+        showAlert(
+          'Admin privileges are required to delete print plates.',
+          'Unauthorized Action'
+        );
+        return;
+      }
+      if (busyJobIdsRef.current.has(job.id)) return;
+      setPendingDeleteJobId(job.id);
+    },
+    [isAdmin, showAlert]
+  );
+
+  const handleConfirmDeletePlate = useCallback(
+    async (jobId: string) => {
+      if (!lockJobIds([jobId])) return;
+      setIsLifecycleSaving(true);
+      try {
+        const currentWs = latestWorkspaceRef.current;
+        const result = deletePrintPlate(currentWs, jobId, {
+          actor: actorContext,
+          nowMs: getAuthoritativeNowMs(),
+        });
+        if (result.error || !result.nextWorkspace) {
+          showAlert(result.error || 'Unable to delete plate.', 'Delete Plate Blocked');
+          return;
+        }
+        const saved = await persistWorkspace(result.nextWorkspace);
+        if (saved) {
+          setPendingDeleteJobId(null);
+        }
+      } finally {
+        setIsLifecycleSaving(false);
+        unlockJobIds([jobId]);
+      }
+    },
+    [actorContext, getAuthoritativeNowMs, lockJobIds, persistWorkspace, showAlert, unlockJobIds]
+  );
+
+  const handleRequestCancelPrinting = useCallback(
+    (job: ProductionJob) => {
+      if (!isAdmin) {
+        showAlert(
+          'Admin privileges are required to cancel an active print job.',
+          'Unauthorized Action'
+        );
+        return;
+      }
+      if (busyJobIdsRef.current.has(job.id)) return;
+      setPendingCancelJobId(job.id);
+    },
+    [isAdmin, showAlert]
+  );
+
+  const handleConfirmCancelPrinting = useCallback(
+    async (jobId: string, reason: string) => {
+      if (!lockJobIds([jobId])) return;
+      setIsLifecycleSaving(true);
+      try {
+        const currentWs = latestWorkspaceRef.current;
+        const result = cancelPrintingJob(currentWs, jobId, {
+          reason,
+          actor: actorContext,
+          nowMs: getAuthoritativeNowMs(),
+        });
+        if (result.error || !result.nextWorkspace) {
+          showAlert(result.error || 'Unable to cancel print job.', 'Cancel Printing Blocked');
+          return;
+        }
+        const saved = await persistWorkspace(result.nextWorkspace);
+        if (saved) {
+          setPendingCancelJobId(null);
+        }
+      } finally {
+        setIsLifecycleSaving(false);
+        unlockJobIds([jobId]);
+      }
+    },
+    [actorContext, getAuthoritativeNowMs, lockJobIds, persistWorkspace, showAlert, unlockJobIds]
+  );
+
+  const handleArchivePlate = useCallback(
+    async (job: ProductionJob) => {
+      if (!isAdmin) {
+        showAlert(
+          'Admin privileges are required to archive print plates.',
+          'Unauthorized Action'
+        );
+        return;
+      }
+      if (!lockJobIds([job.id])) return;
+      try {
+        const currentWs = latestWorkspaceRef.current;
+        const result = archivePrintPlate(currentWs, job.id, {
+          actor: actorContext,
+          nowMs: getAuthoritativeNowMs(),
+        });
+        if (result.error || !result.nextWorkspace) {
+          showAlert(result.error || 'Unable to archive plate.', 'Archive Plate Blocked');
+          return;
+        }
+        await persistWorkspace(result.nextWorkspace);
+      } finally {
+        unlockJobIds([job.id]);
+      }
+    },
+    [actorContext, getAuthoritativeNowMs, isAdmin, lockJobIds, persistWorkspace, showAlert, unlockJobIds]
+  );
+
+  const handleRestorePlate = useCallback(
+    async (job: ProductionJob) => {
+      if (!isAdmin) {
+        showAlert(
+          'Admin privileges are required to restore archived print plates.',
+          'Unauthorized Action'
+        );
+        return;
+      }
+      if (!lockJobIds([job.id])) return;
+      try {
+        const currentWs = latestWorkspaceRef.current;
+        const result = restorePrintPlate(currentWs, job.id, {
+          actor: actorContext,
+          nowMs: getAuthoritativeNowMs(),
+        });
+        if (result.error || !result.nextWorkspace) {
+          showAlert(result.error || 'Unable to restore plate.', 'Restore Plate Blocked');
+          return;
+        }
+        await persistWorkspace(result.nextWorkspace);
+      } finally {
+        unlockJobIds([job.id]);
+      }
+    },
+    [actorContext, getAuthoritativeNowMs, isAdmin, lockJobIds, persistWorkspace, showAlert, unlockJobIds]
+  );
+
+  const handleRequestBulkAction = useCallback(
+    (action: BulkQueueActionKind, jobs: ProductionJob[]) => {
+      if (!isAdmin) {
+        showAlert(
+          'Admin privileges are required for bulk queue actions.',
+          'Unauthorized Action'
+        );
+        return;
+      }
+      if (jobs.length === 0) return;
+      setPendingBulkState({
+        action,
+        jobIds: jobs.map((j) => j.id),
+      });
+    },
+    [isAdmin, showAlert]
+  );
+
+  const handleConfirmBulkAction = useCallback(
+    async (action: BulkQueueActionKind, jobIds: string[]) => {
+      if (jobIds.length === 0) return;
+      if (!lockJobIds(jobIds)) return;
+      setIsLifecycleSaving(true);
+      try {
+        const currentWs = latestWorkspaceRef.current;
+        const nowMsVal = getAuthoritativeNowMs();
+        const result =
+          action === 'bulk_delete'
+            ? bulkDeletePrintPlates(currentWs, jobIds, {
+                actor: actorContext,
+                nowMs: nowMsVal,
+              })
+            : action === 'bulk_archive'
+            ? bulkArchivePrintPlates(currentWs, jobIds, {
+                actor: actorContext,
+                nowMs: nowMsVal,
+              })
+            : bulkRestorePrintPlates(currentWs, jobIds, {
+                actor: actorContext,
+                nowMs: nowMsVal,
+              });
+
+        if (result.error || !result.nextWorkspace) {
+          showAlert(result.error || 'Bulk queue action blocked.', 'Bulk Action Blocked');
+          return;
+        }
+        const saved = await persistWorkspace(result.nextWorkspace);
+        if (saved) {
+          setPendingBulkState(null);
+        }
+      } finally {
+        setIsLifecycleSaving(false);
+        unlockJobIds(jobIds);
+      }
+    },
+    [actorContext, getAuthoritativeNowMs, lockJobIds, persistWorkspace, showAlert, unlockJobIds]
+  );
 
   // --- Handlers for Printer Fleet ---
   const handleAddMachine = (name: string, model: string, capacity: number): boolean => {
@@ -1572,10 +1768,13 @@ export const App: React.FC = () => {
             <EtaDashboardView
               workspace={workspace}
               schedule={schedule}
+              isAdmin={isAdmin}
+              busyJobIds={busyJobIds}
               onNavigate={setActiveNav}
               onSelectProject={setSelectedProjectId}
               onPauseOrResume={handlePauseOrResume}
               onTransitionStage={handleTransitionStage}
+              onRequestCancelPrinting={handleRequestCancelPrinting}
               onUpdateBufferMinutes={handleUpdateBufferMinutes}
             />
           )}
@@ -1609,6 +1808,7 @@ export const App: React.FC = () => {
               onSavePreset={handleSavePreset}
               onDeletePreset={handleDeletePreset}
               onCommitGeneratedPlates={handleCommitGeneratedPlates}
+              onClearCarryForward={handleClearCarryForward}
               onAlert={showAlert}
             />
           )}
@@ -1618,11 +1818,18 @@ export const App: React.FC = () => {
               workspace={workspace}
               schedule={schedule}
               selectedProjectId={selectedProjectId}
+              isAdmin={isAdmin}
+              busyJobIds={busyJobIds}
               onSelectProject={setSelectedProjectId}
               onTransitionStage={handleTransitionStage}
               onPauseOrResume={handlePauseOrResume}
               onUpdateJobMetadata={handleUpdateJobMetadata}
               onCopyQueueSummary={handleCopyQueueSummary}
+              onRequestDeletePlate={handleRequestDeletePlate}
+              onRequestCancelPrinting={handleRequestCancelPrinting}
+              onArchivePlate={handleArchivePlate}
+              onRestorePlate={handleRestorePlate}
+              onRequestBulkAction={handleRequestBulkAction}
             />
           )}
 
@@ -1630,6 +1837,8 @@ export const App: React.FC = () => {
             <MachinesView
               workspace={workspace}
               schedule={schedule}
+              isAdmin={isAdmin}
+              busyJobIds={busyJobIds}
               onAddMachine={handleAddMachine}
               onUpdateMachine={handleUpdateMachine}
               onRemoveMachine={handleRemoveMachine}
@@ -1638,6 +1847,7 @@ export const App: React.FC = () => {
               }
               onPauseOrResume={handlePauseOrResume}
               onTransitionStage={handleTransitionStage}
+              onRequestCancelPrinting={handleRequestCancelPrinting}
             />
           )}
 
@@ -1672,6 +1882,51 @@ export const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      <DeletePlateConfirmModal
+        job={
+          pendingDeleteJobId
+            ? workspace.jobs.find((j) => j.id === pendingDeleteJobId) || null
+            : null
+        }
+        workspace={workspace}
+        isSaving={isLifecycleSaving}
+        onClose={() => {
+          if (!isLifecycleSaving) setPendingDeleteJobId(null);
+        }}
+        onConfirmDelete={handleConfirmDeletePlate}
+      />
+
+      <CancelPrintingConfirmModal
+        job={
+          pendingCancelJobId
+            ? workspace.jobs.find((j) => j.id === pendingCancelJobId) || null
+            : null
+        }
+        workspace={workspace}
+        isSaving={isLifecycleSaving}
+        onClose={() => {
+          if (!isLifecycleSaving) setPendingCancelJobId(null);
+        }}
+        onConfirmCancel={handleConfirmCancelPrinting}
+      />
+
+      <BulkQueueActionModal
+        action={pendingBulkState?.action || null}
+        jobs={
+          pendingBulkState
+            ? pendingBulkState.jobIds
+                .map((id) => workspace.jobs.find((j) => j.id === id))
+                .filter((j): j is ProductionJob => Boolean(j))
+            : []
+        }
+        workspace={workspace}
+        isSaving={isLifecycleSaving}
+        onClose={() => {
+          if (!isLifecycleSaving) setPendingBulkState(null);
+        }}
+        onConfirmBulk={handleConfirmBulkAction}
+      />
 
       <DialogModal modal={modal} />
     </div>
