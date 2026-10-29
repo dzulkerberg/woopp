@@ -39,6 +39,8 @@ import {
   ProjectStatus,
 } from './types';
 import {
+  applyMachineUpdate,
+  createActivityLogEntry,
   DraftPlatePreview,
   getAvailableStockForColor,
   getReservedStockForColor,
@@ -46,13 +48,16 @@ import {
   transitionJobState,
 } from './utils/productionEngine';
 import {
+  buildFirestoreSetDocPayload,
+  prepareWorkspaceForFirestore,
+} from './utils/firestorePayload';
+import {
   computeGlobalSchedule,
   getEffectivePrintMinutes,
 } from './utils/schedulingEngine';
 import {
   DEFAULT_TIMEZONE,
   formatDateDDMMYYYY,
-  formatDateTimeDDMMYYYY,
 } from './utils/dateFormat';
 import { Sidebar, TopHeader } from './components/Sidebar';
 import { AuthSection } from './components/AuthSection';
@@ -118,9 +123,8 @@ export const App: React.FC = () => {
   const [ready, setReady] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>('Connecting...');
 
-  const [workspace, setWorkspace] = useState<ProductionWorkspaceV5>(() =>
-    createFreshWorkspaceV5('local-owner')
-  );
+  const initialWorkspace = useMemo(() => createFreshWorkspaceV5('local-owner'), []);
+  const [workspace, setWorkspace] = useState<ProductionWorkspaceV5>(initialWorkspace);
   const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -129,6 +133,7 @@ export const App: React.FC = () => {
   const v5Ref = useRef<DocumentReference | null>(null);
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingWritesRef = useRef<number>(0);
+  const lastConfirmedWorkspaceRef = useRef<ProductionWorkspaceV5>(initialWorkspace);
   const serverClockOffsetMsRef = useRef<number>(0);
   const serverTimestampSupportedRef = useRef<boolean>(true);
 
@@ -194,41 +199,21 @@ export const App: React.FC = () => {
     []
   );
 
-  /**
-   * Enforces strict schema & volumetric bounds matching `firebase-blueprint.json` and `firestore.rules`
-   * before persisting to Firestore or localStorage.
-   */
-  const sanitizeForSave = (ws: ProductionWorkspaceV5, ownerId: string): ProductionWorkspaceV5 => {
-    return {
-      schemaVersion: 5,
-      ownerId: ownerId.slice(0, 128),
-      migratedFromV1: Boolean(ws.migratedFromV1),
-      colors: ws.colors.slice(0, 50),
-      machines: ws.machines.slice(0, 100),
-      projects: ws.projects.slice(0, 500),
-      jobs: ws.jobs.slice(0, 3000),
-      presets: ws.presets.slice(0, 100),
-      inventory: {
-        physicalByColor: ws.inventory.physicalByColor,
-        wastageByColor: ws.inventory.wastageByColor,
-        movements: ws.inventory.movements.slice(0, 300),
-      },
-      log: ws.log.slice(0, 200),
-      settings: ws.settings,
-      updatedIso: new Date().toISOString(),
-    };
-  };
-
   const writeSnapshotWithServerTime = async (
     docRef: DocumentReference,
-    snapshotPayload: ProductionWorkspaceV5
+    validatedPayload: ProductionWorkspaceV5,
+    docPath: string
   ) => {
     if (serverTimestampSupportedRef.current) {
       try {
-        await setDoc(docRef, {
-          ...snapshotPayload,
-          serverUpdatedAt: serverTimestamp(),
-        });
+        const docWithServerTime = buildFirestoreSetDocPayload(
+          {
+            ...validatedPayload,
+            serverUpdatedAt: serverTimestamp(),
+          },
+          docPath
+        );
+        await setDoc(docRef, docWithServerTime);
         return;
       } catch (err: unknown) {
         const code =
@@ -247,58 +232,99 @@ export const App: React.FC = () => {
         }
       }
     }
-    await setDoc(docRef, snapshotPayload);
+    const cleanDoc = buildFirestoreSetDocPayload({ ...validatedPayload }, docPath);
+    await setDoc(docRef, cleanDoc);
   };
 
+  /**
+   * Validates, normalizes, and persists workspace changes to Cloud Firestore (or local storage in demo mode).
+   * - Never passes `undefined` to `setDoc()`.
+   * - Never displays failed saves as successful: rolls back UI state to `lastConfirmedWorkspaceRef` if persistence fails.
+   */
   const persistWorkspace = useCallback(
-    (nextWs: ProductionWorkspaceV5) => {
+    async (nextWs: ProductionWorkspaceV5): Promise<boolean> => {
       const authNowMs = Date.now() + serverClockOffsetMsRef.current;
       setNowMs(authNowMs);
 
       if (localMode) {
-        const sanitized = sanitizeForSave(nextWs, 'local-owner');
-        setWorkspace(sanitized);
         try {
-          localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(sanitized));
+          const validated = prepareWorkspaceForFirestore(nextWs, 'local-owner', {
+            documentLabel: 'localStorage/woopp-print-tracker-v5',
+          });
+          localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(validated));
+          lastConfirmedWorkspaceRef.current = validated;
+          setWorkspace(validated);
           setSyncStatus('Saved locally');
-        } catch {
-          setSyncStatus('Local storage full');
+          return true;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Unable to save locally';
+          setWorkspace(lastConfirmedWorkspaceRef.current);
+          setSyncStatus('Save failed · Local error');
+          showAlert(`Could not save workspace locally: ${msg}`, 'Local Save Failed');
+          return false;
         }
-        return;
       }
 
       if (!ready || !v5Ref.current || !user) {
+        setSyncStatus('Save blocked · Not connected');
         showAlert('Cloud connection is still initializing. Please try again in a moment.');
-        return;
+        return false;
       }
 
-      const sanitized = sanitizeForSave(nextWs, user.uid);
-      setWorkspace(sanitized);
-      const snapshotPayload = structuredClone(sanitized);
       const docRef = v5Ref.current;
       const docPath = `users/${user.uid}/tracker/v5_workspace`;
 
+      let validated: ProductionWorkspaceV5;
+      try {
+        validated = prepareWorkspaceForFirestore(nextWs, user.uid, {
+          documentLabel: docPath,
+        });
+      } catch (validationErr: unknown) {
+        const msg =
+          validationErr instanceof Error
+            ? validationErr.message
+            : String(validationErr);
+        setWorkspace(lastConfirmedWorkspaceRef.current);
+        setSyncStatus('Save failed · Invalid data');
+        showAlert(
+          `Workspace validation failed before saving to Cloud Firestore: ${msg}`,
+          'Validation Error'
+        );
+        return false;
+      }
+
+      setWorkspace(validated);
       pendingWritesRef.current += 1;
       setSyncStatus('Saving to Cloud...');
 
-      writeQueueRef.current = writeQueueRef.current
+      const currentWriteTask = writeQueueRef.current
         .catch(() => {})
-        .then(() => writeSnapshotWithServerTime(docRef, snapshotPayload))
-        .then(() => {
-          pendingWritesRef.current -= 1;
+        .then(async () => {
+          await writeSnapshotWithServerTime(docRef, validated, docPath);
+          lastConfirmedWorkspaceRef.current = validated;
+          pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
           if (pendingWritesRef.current === 0) {
             setSyncStatus('Synced · Cloud Firestore');
           }
+          return true;
         })
         .catch((err: unknown) => {
-          pendingWritesRef.current -= 1;
+          pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+          if (pendingWritesRef.current === 0) {
+            // Roll back unpersisted optimistic state so failed saves never appear succeeded
+            setWorkspace(lastConfirmedWorkspaceRef.current);
+          }
           const info = buildFirestoreErrorInfo(err, OperationType.WRITE, docPath);
-          setSyncStatus('Queued / Sync error');
+          setSyncStatus('Save failed · Not synced');
           showAlert(
             `Could not save workspace to Cloud Firestore: ${info.error}`,
-            'Cloud Sync Notice'
+            'Cloud Sync Failed'
           );
+          return false;
         });
+
+      writeQueueRef.current = currentWriteTask.then(() => undefined);
+      return currentWriteTask;
     },
     [localMode, ready, user, showAlert]
   );
@@ -400,15 +426,16 @@ export const App: React.FC = () => {
               });
 
               if (reconciledAny) {
-                normalized = sanitizeForSave(
+                normalized = prepareWorkspaceForFirestore(
                   { ...normalized, jobs: reconciledJobs },
-                  firebaseUser.uid
+                  firebaseUser.uid,
+                  { documentLabel: v5Path }
                 );
                 pendingWritesRef.current += 1;
                 writeQueueRef.current = writeQueueRef.current
                   .catch(() => {})
                   .then(() =>
-                    writeSnapshotWithServerTime(userV5DocRef, structuredClone(normalized))
+                    writeSnapshotWithServerTime(userV5DocRef, normalized, v5Path)
                   )
                   .finally(() => {
                     pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
@@ -416,6 +443,7 @@ export const App: React.FC = () => {
               }
             }
 
+            lastConfirmedWorkspaceRef.current = normalized;
             setWorkspace(normalized);
             setReady(true);
             setSyncStatus('Synced · Cloud Firestore');
@@ -435,30 +463,40 @@ export const App: React.FC = () => {
               bootstrapped = createFreshWorkspaceV5(firebaseUser.uid);
             }
 
-            const sanitized = sanitizeForSave(bootstrapped, firebaseUser.uid);
-            setWorkspace(sanitized);
+            const validated = prepareWorkspaceForFirestore(
+              bootstrapped,
+              firebaseUser.uid,
+              { documentLabel: v5Path }
+            );
+            lastConfirmedWorkspaceRef.current = validated;
+            setWorkspace(validated);
             setReady(true);
 
             pendingWritesRef.current += 1;
             setSyncStatus('Saving v5 migration...');
             writeQueueRef.current = writeQueueRef.current
               .catch(() => {})
-              .then(() => setDoc(userV5DocRef, structuredClone(sanitized)))
+              .then(() => writeSnapshotWithServerTime(userV5DocRef, validated, v5Path))
               .then(() => {
-                pendingWritesRef.current -= 1;
+                pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
                 if (pendingWritesRef.current === 0) {
                   setSyncStatus('Synced · Cloud Firestore');
                 }
               })
               .catch(() => {
-                pendingWritesRef.current -= 1;
+                pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
                 setSyncStatus('Read-only (check rules)');
               });
           } catch (legacyErr: unknown) {
             const msg = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
             if (msg.toLowerCase().includes('offline')) {
-              const fallback = createFreshWorkspaceV5(firebaseUser.uid);
-              setWorkspace(sanitizeForSave(fallback, firebaseUser.uid));
+              const fallback = prepareWorkspaceForFirestore(
+                createFreshWorkspaceV5(firebaseUser.uid),
+                firebaseUser.uid,
+                { documentLabel: v5Path }
+              );
+              lastConfirmedWorkspaceRef.current = fallback;
+              setWorkspace(fallback);
               setReady(true);
               setSyncStatus('Offline Cache Mode');
             } else {
@@ -476,11 +514,16 @@ export const App: React.FC = () => {
           getDoc(userLegacyDocRef)
             .then((legacySnap) => {
               if (legacySnap.exists()) {
-                const migrated = migrateFromLegacyV1(
-                  legacySnap.data() as LegacyTrackerState,
-                  firebaseUser.uid
+                const migrated = prepareWorkspaceForFirestore(
+                  migrateFromLegacyV1(
+                    legacySnap.data() as LegacyTrackerState,
+                    firebaseUser.uid
+                  ),
+                  firebaseUser.uid,
+                  { documentLabel: v5Path }
                 );
-                setWorkspace(sanitizeForSave(migrated, firebaseUser.uid));
+                lastConfirmedWorkspaceRef.current = migrated;
+                setWorkspace(migrated);
                 setReady(true);
                 setSyncStatus('Loaded v1 · Deploy v5 rules to save');
               } else {
@@ -508,30 +551,32 @@ export const App: React.FC = () => {
   }, [showAlert]);
 
   const enterLocalWorkspace = () => {
+    let loaded: ProductionWorkspaceV5;
     try {
       const savedV5 = localStorage.getItem(STORAGE_KEY_V5);
       if (savedV5) {
         const parsed = JSON.parse(savedV5) as ProductionWorkspaceV5;
-        setWorkspace(normalizeWorkspaceV5(parsed, 'local-owner'));
+        loaded = normalizeWorkspaceV5(parsed, 'local-owner');
       } else {
         // Also check if user had local v1 data in browser storage!
         const savedV1 = localStorage.getItem(STORAGE_KEY_V1);
         if (savedV1) {
           const parsedV1 = JSON.parse(savedV1) as LegacyTrackerState;
           if (Array.isArray(parsedV1.jobs) && Array.isArray(parsedV1.colors)) {
-            const migrated = migrateFromLegacyV1(parsedV1, 'local-owner');
-            setWorkspace(migrated);
-            localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(migrated));
+            loaded = migrateFromLegacyV1(parsedV1, 'local-owner');
+            localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(loaded));
           } else {
-            setWorkspace(createFreshWorkspaceV5('local-owner'));
+            loaded = createFreshWorkspaceV5('local-owner');
           }
         } else {
-          setWorkspace(createFreshWorkspaceV5('local-owner'));
+          loaded = createFreshWorkspaceV5('local-owner');
         }
       }
     } catch {
-      setWorkspace(createFreshWorkspaceV5('local-owner'));
+      loaded = createFreshWorkspaceV5('local-owner');
     }
+    lastConfirmedWorkspaceRef.current = loaded;
+    setWorkspace(loaded);
     setLocalMode(true);
     setReady(true);
     setSyncStatus('Local Browser Storage');
@@ -555,14 +600,13 @@ export const App: React.FC = () => {
     const authNow = getAuthoritativeNowMs();
     const tz = workspace.settings.timezone || DEFAULT_TIMEZONE;
     return [
-      {
-        id: `log-${authNow}-${Math.random().toString(36).slice(2, 6)}`,
-        at: formatDateTimeDDMMYYYY(authNow, tz),
-        timestampIso: new Date(authNow).toISOString(),
+      createActivityLogEntry({
         category,
         msg,
         projectId,
-      },
+        nowMs: authNow,
+        timezone: tz,
+      }),
       ...currentLog,
     ];
   };
@@ -635,7 +679,7 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleCommitGeneratedPlates = (params: {
+  const handleCommitGeneratedPlates = async (params: {
     projectId: string;
     colorId: string;
     plateCapacity: number;
@@ -714,19 +758,21 @@ export const App: React.FC = () => {
       project.id
     );
 
-    persistWorkspace({
+    const saved = await persistWorkspace({
       ...workspace,
       projects: nextProjects,
       jobs: [...keptJobs, ...createdJobs],
       log: nextLog,
     });
 
-    showAlert(
-      `Saved ${createdJobs.length} plate(s) for ${project.name} (${color.name}).${
-        carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
-      }`,
-      'Plates Added to Queue'
-    );
+    if (saved) {
+      showAlert(
+        `Saved ${createdJobs.length} plate(s) for ${project.name} (${color.name}).${
+          carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
+        }`,
+        'Plates Added to Queue'
+      );
+    }
   };
 
   // --- Handlers for Kanban, Smart ETA Timers & Job Metadata ---
@@ -805,11 +851,17 @@ export const App: React.FC = () => {
       return;
     }
 
+    const definedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([, val]) => val !== undefined)
+    ) as typeof updates;
+
     const nextJobs = workspace.jobs.map((j) => {
       if (j.id !== jobId) return j;
       const merged: ProductionJob = {
         ...j,
-        ...updates,
+        ...definedUpdates,
+        machineId:
+          definedUpdates.machineId !== undefined ? definedUpdates.machineId : j.machineId,
         updatedIso: new Date(authNow).toISOString(),
       };
 
@@ -817,8 +869,8 @@ export const App: React.FC = () => {
       if (
         merged.stage === 'Printing' &&
         !merged.isPaused &&
-        (updates.estimatedMinutes !== undefined ||
-          updates.machineDurationOverrides !== undefined)
+        (definedUpdates.estimatedMinutes !== undefined ||
+          definedUpdates.machineDurationOverrides !== undefined)
       ) {
         const machine =
           workspace.machines.find((m) => m.id === merged.machineId) || null;
@@ -837,7 +889,7 @@ export const App: React.FC = () => {
       return merged;
     });
 
-    persistWorkspace({ ...workspace, jobs: nextJobs });
+    void persistWorkspace({ ...workspace, jobs: nextJobs });
   };
 
   const handleCopyQueueSummary = (jobsToCopy: ProductionJob[]) => {
@@ -924,33 +976,19 @@ export const App: React.FC = () => {
       >
     >
   ) => {
-    const machine = workspace.machines.find((m) => m.id === machineId);
-    if (!machine) return;
-
-    if (
-      updates.status &&
-      (updates.status === 'Maintenance' || updates.status === 'Offline') &&
-      workspace.jobs.some((j) => j.machineId === machineId && j.stage === 'Printing')
-    ) {
-      showAlert(
-        `Complete or reassign the active print on ${machine.name} before switching to ${updates.status}.`
-      );
+    const result = applyMachineUpdate(
+      workspace,
+      machineId,
+      updates,
+      getAuthoritativeNowMs()
+    );
+    if (result.error) {
+      showAlert(result.error, 'Machine Status Blocked');
       return;
     }
-
-    const nextMachines = workspace.machines.map((m) =>
-      m.id === machineId ? { ...m, ...updates } : m
-    );
-    const nextLog =
-      updates.status && updates.status !== machine.status
-        ? appendLog(
-            workspace.log,
-            'machine',
-            `${machine.name} status changed: ${machine.status} → ${updates.status}`
-          )
-        : workspace.log;
-
-    persistWorkspace({ ...workspace, machines: nextMachines, log: nextLog });
+    if (result.nextWorkspace) {
+      void persistWorkspace(result.nextWorkspace);
+    }
   };
 
   const handleRemoveMachine = (machineId: string) => {
@@ -1169,13 +1207,13 @@ export const App: React.FC = () => {
   };
 
   // --- Handlers for Settings, Smart Scheduling Defaults, Colors & Backups ---
-  const handleUpdateWorkspaceDefaults = (params: {
+  const handleUpdateWorkspaceDefaults = async (params: {
     defaultPlateCapacity: number;
     defaultProductType: string;
     turnaroundBufferMinutes: number;
     timezone: string;
   }) => {
-    persistWorkspace({
+    const saved = await persistWorkspace({
       ...workspace,
       settings: {
         ...workspace.settings,
@@ -1190,7 +1228,9 @@ export const App: React.FC = () => {
         `Updated defaults: ${params.defaultPlateCapacity} pcs/plate, ${params.turnaroundBufferMinutes}m buffer, TZ ${params.timezone}`
       ),
     });
-    showAlert('Production & scheduling settings updated.');
+    if (saved) {
+      showAlert('Production & scheduling settings updated.');
+    }
   };
 
   const handleUpdateBufferMinutes = (bufferMins: number) => {
@@ -1268,8 +1308,11 @@ export const App: React.FC = () => {
       showConfirm(
         `Restore backup containing ${importedWs.projects.length} project(s) and ${importedWs.jobs.length} plate(s)?`,
         () => {
-          persistWorkspace(importedWs);
-          setTimeout(() => showAlert('Workspace backup restored successfully.'), 60);
+          void persistWorkspace(importedWs).then((saved) => {
+            if (saved) {
+              setTimeout(() => showAlert('Workspace backup restored successfully.'), 60);
+            }
+          });
         },
         'Confirm Backup Restore',
         'Restore Data'

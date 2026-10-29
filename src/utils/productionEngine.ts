@@ -7,6 +7,7 @@ import {
   sumAlphabetMaps,
 } from '../constants';
 import {
+  ActivityLogEntry,
   InventoryMovement,
   InventoryState,
   KanbanStage,
@@ -17,6 +18,34 @@ import {
 } from '../types';
 import { DEFAULT_TIMEZONE, formatDateTimeDDMMYYYY } from './dateFormat';
 import { getEffectivePrintMinutes, getLiveRemainingSeconds } from './schedulingEngine';
+
+/**
+ * Constructs a Firestore-compatible ActivityLogEntry.
+ * Strictly omits optional `projectId` when absent instead of assigning `projectId: undefined`.
+ */
+export function createActivityLogEntry(params: {
+  category: ActivityLogEntry['category'];
+  msg: string;
+  projectId?: string | null;
+  nowMs?: number;
+  timezone?: string;
+}): ActivityLogEntry {
+  const nowMs = params.nowMs ?? Date.now();
+  const tz = params.timezone || DEFAULT_TIMEZONE;
+  const entry: ActivityLogEntry = {
+    id: `log-${nowMs}-${Math.random().toString(36).slice(2, 6)}`,
+    at: formatDateTimeDDMMYYYY(nowMs, tz),
+    timestampIso: new Date(nowMs).toISOString(),
+    category: params.category,
+    msg: params.msg,
+  };
+
+  if (typeof params.projectId === 'string' && params.projectId.trim().length > 0) {
+    entry.projectId = params.projectId;
+  }
+
+  return entry;
+}
 
 export interface DraftPlatePreview {
   tempId: string;
@@ -450,14 +479,13 @@ export function transitionJobState(
       machines: nextMachines,
       inventory: nextInventory,
       log: [
-        {
-          id: `log-${nowMs}-${Math.random().toString(36).slice(2, 6)}`,
-          at: formatDateTimeDDMMYYYY(nowMs, timezone),
-          timestampIso: nowIso,
-          category: 'plate' as const,
+        createActivityLogEntry({
+          category: 'plate',
           msg: logMsg,
           projectId: targetJob.projectId,
-        },
+          nowMs,
+          timezone,
+        }),
         ...workspace.log,
       ].slice(0, 200),
       updatedIso: nowIso,
@@ -548,17 +576,126 @@ export function pauseOrResumePrintingJob(
       ...workspace,
       jobs: workspace.jobs.map((j) => (j.id === jobId ? updatedJob : j)),
       log: [
-        {
-          id: `log-pause-${nowMs}-${Math.random().toString(36).slice(2, 6)}`,
-          at: formatDateTimeDDMMYYYY(nowMs, timezone),
-          timestampIso: nowIso,
-          category: 'plate' as const,
+        createActivityLogEntry({
+          category: 'plate',
           msg: actionLabel,
           projectId: job.projectId,
-        },
+          nowMs,
+          timezone,
+        }),
         ...workspace.log,
       ].slice(0, 200),
       updatedIso: nowIso,
+    },
+  };
+}
+
+/**
+ * Pure, Firestore-safe machine update handler supporting status changes
+ * (`Idle`, `Printing`, `Completed`, `Maintenance`, `Offline`), speed factors,
+ * setup buffers, and maintenance downtime windows without ever introducing `undefined`.
+ */
+export function applyMachineUpdate(
+  workspace: ProductionWorkspaceV5,
+  machineId: string,
+  updates: Partial<
+    Pick<
+      PrinterMachine,
+      | 'name'
+      | 'model'
+      | 'status'
+      | 'plateCapacity'
+      | 'notes'
+      | 'speedFactor'
+      | 'setupBufferMinutes'
+      | 'maintenanceUntilMs'
+    >
+  >,
+  nowMs: number = Date.now()
+): { nextWorkspace?: ProductionWorkspaceV5; error?: string } {
+  const machine = workspace.machines.find((m) => m.id === machineId);
+  if (!machine) {
+    return { error: 'Printer machine not found.' };
+  }
+
+  const activePrintingJob = workspace.jobs.find(
+    (j) => j.machineId === machineId && j.stage === 'Printing'
+  );
+
+  if (
+    updates.status !== undefined &&
+    updates.status !== 'Printing' &&
+    activePrintingJob
+  ) {
+    return {
+      error: `Complete, cancel, or reassign active Plate ${activePrintingJob.plateNumber} on ${machine.name} before switching status to ${updates.status}.`,
+    };
+  }
+
+  const nextStatus = updates.status !== undefined ? updates.status : machine.status;
+
+  let nextMaintenanceUntilMs: number | null;
+  if (updates.maintenanceUntilMs !== undefined) {
+    nextMaintenanceUntilMs =
+      updates.maintenanceUntilMs === null
+        ? null
+        : Math.round(updates.maintenanceUntilMs);
+  } else if (updates.status !== undefined && updates.status !== 'Maintenance') {
+    nextMaintenanceUntilMs = null;
+  } else {
+    nextMaintenanceUntilMs = machine.maintenanceUntilMs ?? null;
+  }
+
+  const nextMachine: PrinterMachine = {
+    ...machine,
+    name: updates.name !== undefined ? updates.name : machine.name,
+    model: updates.model !== undefined ? updates.model : machine.model,
+    status: nextStatus,
+    plateCapacity:
+      updates.plateCapacity !== undefined
+        ? Math.max(1, Math.round(updates.plateCapacity))
+        : machine.plateCapacity,
+    activeJobId: activePrintingJob ? activePrintingJob.id : null,
+    notes: updates.notes !== undefined ? updates.notes : machine.notes,
+    maintenanceUntilMs: nextMaintenanceUntilMs,
+  };
+
+  if (updates.speedFactor !== undefined) {
+    nextMachine.speedFactor = updates.speedFactor;
+  } else if (machine.speedFactor !== undefined) {
+    nextMachine.speedFactor = machine.speedFactor;
+  }
+
+  if (updates.setupBufferMinutes !== undefined) {
+    nextMachine.setupBufferMinutes = Math.max(0, Math.round(updates.setupBufferMinutes));
+  } else if (machine.setupBufferMinutes !== undefined) {
+    nextMachine.setupBufferMinutes = machine.setupBufferMinutes;
+  }
+
+  const nextMachines = workspace.machines.map((m) =>
+    m.id === machineId ? nextMachine : m
+  );
+
+  const tz = workspace.settings?.timezone || DEFAULT_TIMEZONE;
+  const nextLog =
+    updates.status !== undefined && updates.status !== machine.status
+      ? [
+          createActivityLogEntry({
+            category: 'machine',
+            msg: `${nextMachine.name} status changed: ${machine.status} → ${updates.status}`,
+            nowMs,
+            timezone: tz,
+          }),
+          ...workspace.log,
+        ].slice(0, 200)
+      : workspace.log;
+
+  return {
+    nextWorkspace: {
+      ...workspace,
+      machines: nextMachines,
+      log: nextLog,
+      updatedIso: new Date(nowMs).toISOString(),
     },
   };
 }

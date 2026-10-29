@@ -173,7 +173,6 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                   <select
                     aria-label={`Status for ${machine.name}`}
                     value={machine.status}
-                    disabled={Boolean(activeJob)}
                     onChange={(e) => {
                       const nextStatus = e.target.value as MachineStatus;
                       onUpdateMachine(machine.id, {

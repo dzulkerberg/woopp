@@ -322,7 +322,7 @@ export function migrateFromLegacyV1(
     at: entry.at || formatDateTimeDDMMYYYY(),
     timestampIso: nowIso,
     category: 'system' as const,
-    msg: entry.msg,
+    msg: typeof entry.msg === 'string' ? entry.msg : '',
     projectId: legacyProjectId,
   }));
 
@@ -494,6 +494,9 @@ export function normalizeWorkspaceV5(
         totalFailedPlates: 0,
         totalPrintMinutes: 0,
         notes: '',
+        speedFactor: 1,
+        setupBufferMinutes: 0,
+        maintenanceUntilMs: null,
       });
     }
   });
@@ -517,6 +520,8 @@ export function normalizeWorkspaceV5(
     colors,
     machines: [...(raw.machines || []), ...additionalMachines].map((m) => ({
       ...m,
+      activeJobId: m.activeJobId ?? null,
+      notes: typeof m.notes === 'string' ? m.notes : '',
       speedFactor:
         typeof m.speedFactor === 'number' && m.speedFactor > 0 ? m.speedFactor : 1,
       setupBufferMinutes:
@@ -537,7 +542,20 @@ export function normalizeWorkspaceV5(
         ? raw.inventory.movements.slice(0, 300)
         : [],
     },
-    log: Array.isArray(raw.log) ? raw.log.slice(0, 200) : [],
+    log: Array.isArray(raw.log)
+      ? raw.log.slice(0, 200).map((entry) => {
+          const cleanEntry = {
+            id: entry.id,
+            at: entry.at,
+            timestampIso: entry.timestampIso,
+            category: entry.category,
+            msg: typeof entry.msg === 'string' ? entry.msg : '',
+          };
+          return typeof entry.projectId === 'string' && entry.projectId.trim().length > 0
+            ? { ...cleanEntry, projectId: entry.projectId }
+            : cleanEntry;
+        })
+      : [],
     settings: {
       defaultPlateCapacity: raw.settings?.defaultPlateCapacity || DEFAULT_PLATE_CAPACITY,
       defaultProductType: raw.settings?.defaultProductType || '3D Clicker Keycap',
