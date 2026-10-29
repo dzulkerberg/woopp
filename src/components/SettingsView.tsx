@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { DEFAULT_COLOR_PALETTE } from '../constants';
 import { ColorOption, ProductionWorkspaceV5 } from '../types';
 import { DEFAULT_TIMEZONE, SUPPORTED_TIMEZONES } from '../utils/dateFormat';
+import { LegacyLocalDataSummary } from '../utils/legacyLocalBackup';
 
 interface SettingsViewProps {
   workspace: ProductionWorkspaceV5;
@@ -16,6 +17,9 @@ interface SettingsViewProps {
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
   onClearActivityLog: () => void;
+  legacyLocalData?: LegacyLocalDataSummary | null;
+  onExportLegacyLocalBackup?: () => void;
+  onMigrateLegacyLocalToCloud?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -26,6 +30,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onExportBackup,
   onImportBackup,
   onClearActivityLog,
+  legacyLocalData,
+  onExportLegacyLocalBackup,
+  onMigrateLegacyLocalToCloud,
 }) => {
   const [defaultCap, setDefaultCap] = useState(workspace.settings.defaultPlateCapacity);
   const [defaultProduct, setDefaultProduct] = useState(workspace.settings.defaultProductType);
@@ -242,6 +249,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             Clear Activity Log
           </button>
         </div>
+
+        {legacyLocalData && (
+          <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800">
+            <div className="p-4 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-amber-900 dark:text-amber-200 max-w-xl">
+                <div className="font-semibold">
+                  One-Time Migration for Unsynced Browser Data ({legacyLocalData.format.toUpperCase()})
+                </div>
+                <p className="mt-0.5 text-amber-800 dark:text-amber-300">
+                  Found {legacyLocalData.projectCount} project(s) and {legacyLocalData.jobCount} plate(s) from a retired Local Workspace session in this browser. Existing browser records remain untouched.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {onExportLegacyLocalBackup && (
+                  <button
+                    type="button"
+                    onClick={onExportLegacyLocalBackup}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-amber-900 dark:text-amber-200 whitespace-nowrap"
+                  >
+                    Export Local JSON
+                  </button>
+                )}
+                {onMigrateLegacyLocalToCloud && (
+                  <button
+                    type="button"
+                    onClick={onMigrateLegacyLocalToCloud}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+                  >
+                    Migrate to Cloud Firestore
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

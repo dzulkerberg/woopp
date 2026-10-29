@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
   doc,
   DocumentReference,
-  getDoc,
+  getDocFromServer,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -23,8 +23,6 @@ import {
   migrateFromLegacyV1,
   normalizeAlphabetMap,
   normalizeWorkspaceV5,
-  STORAGE_KEY_V1,
-  STORAGE_KEY_V5,
 } from './constants';
 import {
   AlphabetPreset,
@@ -51,6 +49,11 @@ import {
   buildFirestoreSetDocPayload,
   prepareWorkspaceForFirestore,
 } from './utils/firestorePayload';
+import {
+  buildCloudWorkspaceFromLocalBackup,
+  downloadUnsyncedLocalBackupJson,
+  inspectUnsyncedLocalData,
+} from './utils/legacyLocalBackup';
 import {
   computeGlobalSchedule,
   getEffectivePrintMinutes,
@@ -118,12 +121,17 @@ const SECTION_META: Record<NavSection, { title: string; subtitle: string }> = {
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [localMode, setLocalMode] = useState<boolean>(false);
   const [authInitialized, setAuthInitialized] = useState<boolean>(false);
   const [ready, setReady] = useState<boolean>(false);
-  const [syncStatus, setSyncStatus] = useState<string>('Connecting...');
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [connectionAttempt, setConnectionAttempt] = useState<number>(0);
+  const [syncStatus, setSyncStatus] = useState<string>('Connecting to Cloud...');
+  const [legacyBannerDismissed, setLegacyBannerDismissed] = useState<boolean>(false);
 
-  const initialWorkspace = useMemo(() => createFreshWorkspaceV5('local-owner'), []);
+  // Read-only check for any prior unsynced browser data (never written to or deleted)
+  const legacyLocalData = useMemo(() => inspectUnsyncedLocalData(), []);
+
+  const initialWorkspace = useMemo(() => createFreshWorkspaceV5('pending-cloud-auth'), []);
   const [workspace, setWorkspace] = useState<ProductionWorkspaceV5>(initialWorkspace);
   const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -237,7 +245,8 @@ export const App: React.FC = () => {
   };
 
   /**
-   * Validates, normalizes, and persists workspace changes to Cloud Firestore (or local storage in demo mode).
+   * Validates, normalizes, and persists workspace changes exclusively to Firebase Cloud Firestore (`woopp-tracker`).
+   * - Never writes to `localStorage` or falls back to local mode.
    * - Never passes `undefined` to `setDoc()`.
    * - Never displays failed saves as successful: rolls back UI state to `lastConfirmedWorkspaceRef` if persistence fails.
    */
@@ -246,28 +255,22 @@ export const App: React.FC = () => {
       const authNowMs = Date.now() + serverClockOffsetMsRef.current;
       setNowMs(authNowMs);
 
-      if (localMode) {
-        try {
-          const validated = prepareWorkspaceForFirestore(nextWs, 'local-owner', {
-            documentLabel: 'localStorage/woopp-print-tracker-v5',
-          });
-          localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(validated));
-          lastConfirmedWorkspaceRef.current = validated;
-          setWorkspace(validated);
-          setSyncStatus('Saved locally');
-          return true;
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Unable to save locally';
-          setWorkspace(lastConfirmedWorkspaceRef.current);
-          setSyncStatus('Save failed · Local error');
-          showAlert(`Could not save workspace locally: ${msg}`, 'Local Save Failed');
-          return false;
-        }
+      if (!ready || !v5Ref.current || !user) {
+        setSyncStatus('Save failed · Not connected to Cloud');
+        showAlert(
+          'Cloud Firestore connection is not ready. Verify your internet connection and sign-in status before saving.',
+          'Cloud Connection Required'
+        );
+        return false;
       }
 
-      if (!ready || !v5Ref.current || !user) {
-        setSyncStatus('Save blocked · Not connected');
-        showAlert('Cloud connection is still initializing. Please try again in a moment.');
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        setWorkspace(lastConfirmedWorkspaceRef.current);
+        setSyncStatus('Save failed · Offline');
+        showAlert(
+          'Cannot save changes while offline. Reconnect to the internet so Cloud Firestore (woopp-tracker) can persist your update.',
+          'Cloud Connection Unavailable'
+        );
         return false;
       }
 
@@ -326,10 +329,10 @@ export const App: React.FC = () => {
       writeQueueRef.current = currentWriteTask.then(() => undefined);
       return currentWriteTask;
     },
-    [localMode, ready, user, showAlert]
+    [ready, user, showAlert]
   );
 
-  // Firebase Auth & Non-Destructive v1 -> v5 Migration Lifecycle
+  // Firebase Auth & Cloud-Only Non-Destructive v1 -> v5 Lifecycle (no local fallback)
   useEffect(() => {
     let unsubV5Snapshot: (() => void) | null = null;
 
@@ -341,23 +344,24 @@ export const App: React.FC = () => {
       }
       v5Ref.current = null;
       setReady(false);
+      setCloudError(null);
       pendingWritesRef.current = 0;
       writeQueueRef.current = Promise.resolve();
       setUser(firebaseUser);
 
       if (!firebaseUser) {
+        setSyncStatus('Signed out');
         return;
       }
 
-      setLocalMode(false);
-      setSyncStatus('Loading workspace...');
+      setSyncStatus('Loading Cloud Firestore...');
 
       const v5Path = `users/${firebaseUser.uid}/tracker/v5_workspace`;
       const userV5DocRef = doc(db, 'users', firebaseUser.uid, 'tracker', 'v5_workspace');
       const userLegacyDocRef = doc(db, 'users', firebaseUser.uid, 'tracker', 'main');
       v5Ref.current = userV5DocRef;
 
-      // Attach real-time listener to v5_workspace
+      // Attach real-time listener to Cloud Firestore v5_workspace
       unsubV5Snapshot = onSnapshot(
         userV5DocRef,
         async (v5Snap) => {
@@ -445,15 +449,27 @@ export const App: React.FC = () => {
 
             lastConfirmedWorkspaceRef.current = normalized;
             setWorkspace(normalized);
+            setCloudError(null);
             setReady(true);
             setSyncStatus('Synced · Cloud Firestore');
             return;
           }
 
-          // v5_workspace does not exist yet -> Check legacy v1 `tracker/main` without modifying it!
+          // If !v5Snap.exists() came from an empty local cache because Cloud Firestore backend could not be reached,
+          // do NOT fall back to local mode or initialize a blank workspace — surface a clear connection error instead.
+          if (v5Snap.metadata.fromCache) {
+            setReady(false);
+            setSyncStatus('Cloud Firestore unavailable');
+            setCloudError(
+              `Could not reach Cloud Firestore (woopp-tracker) to load ${v5Path}. Verify your internet connection and retry.`
+            );
+            return;
+          }
+
+          // v5_workspace confirmed absent on Cloud server -> Check legacy v1 `tracker/main` on Cloud Firestore without modifying it!
           try {
             setSyncStatus('Checking legacy v1 records...');
-            const legacySnap = await getDoc(userLegacyDocRef);
+            const legacySnap = await getDocFromServer(userLegacyDocRef);
             let bootstrapped: ProductionWorkspaceV5;
 
             if (legacySnap.exists()) {
@@ -468,77 +484,42 @@ export const App: React.FC = () => {
               firebaseUser.uid,
               { documentLabel: v5Path }
             );
-            lastConfirmedWorkspaceRef.current = validated;
-            setWorkspace(validated);
-            setReady(true);
 
             pendingWritesRef.current += 1;
-            setSyncStatus('Saving v5 migration...');
-            writeQueueRef.current = writeQueueRef.current
-              .catch(() => {})
-              .then(() => writeSnapshotWithServerTime(userV5DocRef, validated, v5Path))
-              .then(() => {
-                pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
-                if (pendingWritesRef.current === 0) {
-                  setSyncStatus('Synced · Cloud Firestore');
-                }
-              })
-              .catch(() => {
-                pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
-                setSyncStatus('Read-only (check rules)');
-              });
-          } catch (legacyErr: unknown) {
-            const msg = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
-            if (msg.toLowerCase().includes('offline')) {
-              const fallback = prepareWorkspaceForFirestore(
-                createFreshWorkspaceV5(firebaseUser.uid),
-                firebaseUser.uid,
-                { documentLabel: v5Path }
-              );
-              lastConfirmedWorkspaceRef.current = fallback;
-              setWorkspace(fallback);
+            setSyncStatus('Initializing Cloud Workspace...');
+            try {
+              await writeSnapshotWithServerTime(userV5DocRef, validated, v5Path);
+              pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+              lastConfirmedWorkspaceRef.current = validated;
+              setWorkspace(validated);
+              setCloudError(null);
               setReady(true);
-              setSyncStatus('Offline Cache Mode');
-            } else {
-              setSyncStatus('Firestore error');
-              showAlert(
-                `Could not read legacy production records: ${msg}`,
-                'Database Connection Notice'
+              setSyncStatus('Synced · Cloud Firestore');
+            } catch (initWriteErr: unknown) {
+              pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+              const writeMsg =
+                initWriteErr instanceof Error ? initWriteErr.message : String(initWriteErr);
+              setReady(false);
+              setSyncStatus('Cloud write error');
+              setCloudError(
+                `Unable to initialize Cloud Firestore document (${v5Path}): ${writeMsg}`
               );
             }
+          } catch (legacyErr: unknown) {
+            const msg = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
+            setReady(false);
+            setSyncStatus('Cloud Firestore unavailable');
+            setCloudError(
+              `Could not reach Cloud Firestore (woopp-tracker) to load your production records: ${msg}`
+            );
           }
         },
         (snapErr: unknown) => {
           const msg = snapErr instanceof Error ? snapErr.message : String(snapErr);
-          // Fallback to legacy v1 read if v5_workspace rule hasn't been deployed yet on woopp-tracker
-          getDoc(userLegacyDocRef)
-            .then((legacySnap) => {
-              if (legacySnap.exists()) {
-                const migrated = prepareWorkspaceForFirestore(
-                  migrateFromLegacyV1(
-                    legacySnap.data() as LegacyTrackerState,
-                    firebaseUser.uid
-                  ),
-                  firebaseUser.uid,
-                  { documentLabel: v5Path }
-                );
-                lastConfirmedWorkspaceRef.current = migrated;
-                setWorkspace(migrated);
-                setReady(true);
-                setSyncStatus('Loaded v1 · Deploy v5 rules to save');
-              } else {
-                setReady(false);
-                setSyncStatus('Permission / Network notice');
-              }
-            })
-            .catch(() => {
-              setReady(false);
-              setSyncStatus('Permission / Network notice');
-            });
-
-          showAlert(
-            `Unable to subscribe to Cloud Firestore (${v5Path}):\n${msg}\n\nNote: If your woopp-tracker Firestore Security Rules only allow 'tracker/main', deploy the updated firestore.rules in your Firebase Console to enable v5 cloud writes.`,
-            'Firestore Access Notice'
+          setReady(false);
+          setSyncStatus('Cloud connection error');
+          setCloudError(
+            `Unable to connect to Cloud Firestore (${v5Path}): ${msg}`
           );
         }
       );
@@ -548,46 +529,9 @@ export const App: React.FC = () => {
       unsubAuth();
       if (unsubV5Snapshot) unsubV5Snapshot();
     };
-  }, [showAlert]);
-
-  const enterLocalWorkspace = () => {
-    let loaded: ProductionWorkspaceV5;
-    try {
-      const savedV5 = localStorage.getItem(STORAGE_KEY_V5);
-      if (savedV5) {
-        const parsed = JSON.parse(savedV5) as ProductionWorkspaceV5;
-        loaded = normalizeWorkspaceV5(parsed, 'local-owner');
-      } else {
-        // Also check if user had local v1 data in browser storage!
-        const savedV1 = localStorage.getItem(STORAGE_KEY_V1);
-        if (savedV1) {
-          const parsedV1 = JSON.parse(savedV1) as LegacyTrackerState;
-          if (Array.isArray(parsedV1.jobs) && Array.isArray(parsedV1.colors)) {
-            loaded = migrateFromLegacyV1(parsedV1, 'local-owner');
-            localStorage.setItem(STORAGE_KEY_V5, JSON.stringify(loaded));
-          } else {
-            loaded = createFreshWorkspaceV5('local-owner');
-          }
-        } else {
-          loaded = createFreshWorkspaceV5('local-owner');
-        }
-      }
-    } catch {
-      loaded = createFreshWorkspaceV5('local-owner');
-    }
-    lastConfirmedWorkspaceRef.current = loaded;
-    setWorkspace(loaded);
-    setLocalMode(true);
-    setReady(true);
-    setSyncStatus('Local Browser Storage');
-  };
+  }, [connectionAttempt]);
 
   const handleSignOut = async () => {
-    if (localMode) {
-      setLocalMode(false);
-      setReady(false);
-      return;
-    }
     await signOut(auth);
   };
 
@@ -1290,10 +1234,14 @@ export const App: React.FC = () => {
   };
 
   const handleImportBackup = async (file: File) => {
+    if (!user) {
+      showAlert('Sign in to Firebase Authentication before importing a backup.');
+      return;
+    }
     try {
       const rawText = await file.text();
       const parsed = JSON.parse(rawText);
-      const currentOwner = user?.uid || 'local-owner';
+      const currentOwner = user.uid;
 
       let importedWs: ProductionWorkspaceV5;
       if (parsed && parsed.schemaVersion === 5 && Array.isArray(parsed.projects)) {
@@ -1306,16 +1254,16 @@ export const App: React.FC = () => {
       }
 
       showConfirm(
-        `Restore backup containing ${importedWs.projects.length} project(s) and ${importedWs.jobs.length} plate(s)?`,
+        `Restore backup containing ${importedWs.projects.length} project(s) and ${importedWs.jobs.length} plate(s) into Cloud Firestore?`,
         () => {
           void persistWorkspace(importedWs).then((saved) => {
             if (saved) {
-              setTimeout(() => showAlert('Workspace backup restored successfully.'), 60);
+              setTimeout(() => showAlert('Workspace backup restored to Cloud Firestore.'), 60);
             }
           });
         },
         'Confirm Backup Restore',
-        'Restore Data'
+        'Restore to Cloud'
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Invalid file';
@@ -1323,11 +1271,49 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleMigrateLegacyLocalToCloud = () => {
+    if (!legacyLocalData || !user) return;
+    showConfirm(
+      `Migrate ${legacyLocalData.projectCount} project(s) and ${legacyLocalData.jobCount} plate(s) from this browser's previous local storage into your Cloud Firestore workspace (users/${user.uid}/tracker/v5_workspace)?\n\nYour existing local browser copy will not be deleted.`,
+      () => {
+        try {
+          const migrated = buildCloudWorkspaceFromLocalBackup(legacyLocalData, user.uid);
+          const withMigrationLog: ProductionWorkspaceV5 = {
+            ...migrated,
+            log: appendLog(
+              migrated.log,
+              'system',
+              `Migrated ${legacyLocalData.projectCount} project(s) and ${legacyLocalData.jobCount} plate(s) from browser ${legacyLocalData.format} storage to Cloud Firestore.`
+            ),
+          };
+          void persistWorkspace(withMigrationLog).then((saved) => {
+            if (saved) {
+              setLegacyBannerDismissed(true);
+              setTimeout(
+                () =>
+                  showAlert(
+                    'Unsynced browser data migrated and saved to Cloud Firestore (woopp-tracker). Your local browser record was left untouched.',
+                    'Cloud Migration Complete'
+                  ),
+                60
+              );
+            }
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          showAlert(`Could not migrate local browser data: ${msg}`, 'Migration Failed');
+        }
+      },
+      'Migrate Local Data to Cloud',
+      'Migrate to Cloud'
+    );
+  };
+
   const handleClearActivityLog = () => {
     showConfirm(
       'Clear activity log history? (Projects, plates, machines, and inventory ledger remain intact.)',
       () => {
-        persistWorkspace({ ...workspace, log: [] });
+        void persistWorkspace({ ...workspace, log: [] });
       },
       'Clear Activity Log',
       'Clear Log'
@@ -1336,28 +1322,83 @@ export const App: React.FC = () => {
 
   const handleToggleTheme = () => {
     const nextTheme = workspace.settings.theme === 'dark' ? 'light' : 'dark';
-    persistWorkspace({
+    void persistWorkspace({
       ...workspace,
       settings: { ...workspace.settings, theme: nextTheme },
     });
   };
 
-  const isAuthenticated = Boolean(user) || localMode;
-
-  if (!authInitialized && !localMode) {
+  if (!authInitialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#faf9fd] dark:bg-[#111018] text-sm text-neutral-500">
-        Connecting to WOOPP Production System...
+        Connecting to WOOPP Cloud Authentication...
       </div>
     );
   }
 
-  if (!isAuthenticated) {
+  // Strictly require Firebase Authentication before accessing the admin dashboard
+  if (!user) {
     return (
       <>
-        <AuthSection onOfflineDemo={enterLocalWorkspace} />
+        <AuthSection legacyLocalData={legacyLocalData} />
         <DialogModal modal={modal} />
       </>
+    );
+  }
+
+  // Show an explicit Cloud Firestore connection error instead of falling back to local mode
+  if (cloudError) {
+    return (
+      <div className="min-h-screen flex flex-col justify-center items-center px-4 py-12 bg-[#faf9fd] dark:bg-[#111018]">
+        <div className="w-full max-w-lg bg-white dark:bg-[#171522] border border-red-200 dark:border-red-900/60 rounded-2xl p-8 space-y-5">
+          <div>
+            <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">
+              CLOUD FIRESTORE CONNECTION ERROR
+            </div>
+            <h1 className="text-xl font-bold text-neutral-900 dark:text-white">
+              Unable to Load Production Workspace
+            </h1>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300 mt-1.5">
+              WOOPP Production System 5.0 runs exclusively in Cloud-Only Mode (<span className="font-mono-data">woopp-tracker</span>) to protect inventory and scheduling integrity. Offline/local fallback is disabled.
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200/80 dark:border-red-900/60 text-xs font-mono-data text-red-800 dark:text-red-200 break-words">
+            {cloudError}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => setConnectionAttempt((n) => n + 1)}
+              className="px-4 py-2.5 rounded-xl bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-xs font-semibold transition-colors"
+            >
+              Retry Cloud Connection
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-xs font-medium transition-colors"
+            >
+              Sign out ({user.email})
+            </button>
+          </div>
+        </div>
+        <DialogModal modal={modal} />
+      </div>
+    );
+  }
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[#faf9fd] dark:bg-[#111018] px-4 text-center">
+        <div className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+          {syncStatus}
+        </div>
+        <div className="text-xs text-neutral-500 dark:text-neutral-400">
+          Authenticated as {user.email} · Project: woopp-tracker
+        </div>
+      </div>
     );
   }
 
@@ -1390,8 +1431,7 @@ export const App: React.FC = () => {
         theme={workspace.settings.theme}
         onToggleTheme={handleToggleTheme}
         syncStatus={syncStatus}
-        userEmail={user?.email || ''}
-        isLocalMode={localMode}
+        userEmail={user.email || ''}
         onSignOut={handleSignOut}
         mobileOpen={mobileMenuOpen}
         onSetMobileOpen={setMobileMenuOpen}
@@ -1406,6 +1446,37 @@ export const App: React.FC = () => {
         />
 
         <main className="flex-1 max-w-[1320px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          {legacyLocalData && !legacyBannerDismissed && (
+            <div className="mb-6 p-4 rounded-xl bg-amber-50/90 dark:bg-amber-950/35 border border-amber-200 dark:border-amber-800/70 flex flex-wrap items-center justify-between gap-3 no-print">
+              <div className="text-xs text-amber-900 dark:text-amber-200">
+                <span className="font-semibold">Unsynced browser data found:</span>{' '}
+                {legacyLocalData.projectCount} project(s) and {legacyLocalData.jobCount} plate(s) from the retired Local Workspace exist in this browser. Export a JSON backup or migrate them into Cloud Firestore.
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadUnsyncedLocalBackupJson(legacyLocalData)}
+                  className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-xs font-semibold text-amber-900 dark:text-amber-200 whitespace-nowrap"
+                >
+                  Export Backup (.json)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleMigrateLegacyLocalToCloud}
+                  className="px-3 py-1.5 rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-xs font-semibold text-white whitespace-nowrap"
+                >
+                  Migrate to Cloud
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLegacyBannerDismissed(true)}
+                  className="px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300 hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
           {activeNav === 'dashboard' && (
             <DashboardView
               workspace={workspace}
@@ -1506,6 +1577,15 @@ export const App: React.FC = () => {
               onExportBackup={handleExportBackup}
               onImportBackup={handleImportBackup}
               onClearActivityLog={handleClearActivityLog}
+              legacyLocalData={legacyLocalData}
+              onExportLegacyLocalBackup={
+                legacyLocalData
+                  ? () => downloadUnsyncedLocalBackupJson(legacyLocalData)
+                  : undefined
+              }
+              onMigrateLegacyLocalToCloud={
+                legacyLocalData ? handleMigrateLegacyLocalToCloud : undefined
+              }
             />
           )}
         </main>

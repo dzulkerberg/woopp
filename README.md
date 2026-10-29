@@ -18,6 +18,9 @@ Professional multi-project 3D print production management & smart scheduling app
 - **Idempotent Inventory & Channel Allocation**: Tracks physical produced stock, project-reserved stock, available unallocated stock, wastage/rejects, and safe reversal if a Completed plate is corrected.
 - **Dashboard & Analytics**: Multi-dimensional filtering (date, project, channel, machine, color) and CSV export.
 
-## Non-Destructive Schema & Migration Strategy
-- Legacy v1 records at `users/{uid}/tracker/main` are **never overwritten or deleted**.
-- Existing `users/{uid}/tracker/v5_workspace` records remain 100% compatible: all Smart ETA fields (`startedAtMs`, `isPaused`, `remainingSecondsAtPause`, `estimatedFinishAtMs`, `actualCompletedAtMs`, `machineDurationOverrides`, `turnaroundBufferMinutes`, `timezone`, and optional top-level `serverUpdatedAt`) are additive with safe defaults applied in memory by `normalizeWorkspaceV5`.
+## Cloud-Only Architecture & Non-Destructive Migration
+- **Firebase Cloud-Only Mode (`woopp-tracker`)**: Requires Firebase Email/Password Authentication before accessing the admin dashboard. All production records, machines, projects, plates, inventory, settings, and activity logs persist exclusively to Cloud Firestore (`users/{uid}/tracker/v5_workspace`).
+- **No Silent Offline Fallback**: Never uses `localStorage` as a database or falls back to guest/local mode when Firebase is unreachable; displays an explicit Cloud Firestore connection error with retry controls instead, and rolls back failed saves so unpersisted updates never display as synced.
+- **Legacy Data Safety**: Legacy v1 records at `users/{uid}/tracker/main` and any existing browser `localStorage` entries (`woopp-print-tracker-v5` / `woopp-print-tracker-v1`) are **never overwritten or deleted**. Users with prior unsynced browser data can export a one-time `.json` backup or migrate it into Cloud Firestore.
+- **Additive Schema Compatibility**: Existing `users/{uid}/tracker/v5_workspace` records remain 100% compatible with Smart ETA & Scheduling fields via `normalizeWorkspaceV5` and strict `undefined`-free Firestore validation (`prepareWorkspaceForFirestore`).
+

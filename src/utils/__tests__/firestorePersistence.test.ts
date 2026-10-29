@@ -374,3 +374,95 @@ describe('Development diagnostics & required field validation', () => {
     ).toThrow(/jobs\[0\]\.estimatedMinutes/);
   });
 });
+
+describe('Cloud-Only Mode: one-time unsynced local data backup & non-destructive migration', () => {
+  it('inspects unsynced v5 and v1 browser records in strictly read-only mode without deleting or mutating localStorage', async () => {
+    const {
+      inspectUnsyncedLocalData,
+      buildCloudWorkspaceFromLocalBackup,
+    } = await import('../legacyLocalBackup');
+    const { STORAGE_KEY_V1, STORAGE_KEY_V5 } = await import('../../constants');
+
+    const localSample = createFreshWorkspaceV5('local-owner');
+    const rawV5 = JSON.stringify(localSample);
+
+    let setItemCalls = 0;
+    let removeItemCalls = 0;
+    let clearCalls = 0;
+
+    const storeMap = new Map<string, string>([[STORAGE_KEY_V5, rawV5]]);
+    const mockStorage = {
+      getItem: (key: string) => storeMap.get(key) ?? null,
+      setItem: () => {
+        setItemCalls += 1;
+      },
+      removeItem: () => {
+        removeItemCalls += 1;
+      },
+      clear: () => {
+        clearCalls += 1;
+      },
+    };
+
+    const detectedV5 = inspectUnsyncedLocalData(mockStorage);
+    expect(detectedV5).not.toBeNull();
+    expect(detectedV5!.format).toBe('v5');
+    expect(detectedV5!.sourceKey).toBe(STORAGE_KEY_V5);
+    expect(detectedV5!.projectCount).toBe(localSample.projects.length);
+    expect(detectedV5!.jobCount).toBe(localSample.jobs.length);
+
+    const cloudWsFromV5 = buildCloudWorkspaceFromLocalBackup(detectedV5!, 'firebase-uid-999');
+    expect(cloudWsFromV5.ownerId).toBe('firebase-uid-999');
+    assertNoUndefinedOwnProperties(cloudWsFromV5);
+
+    // Existing browser local record must NEVER be modified or deleted automatically
+    expect(setItemCalls).toBe(0);
+    expect(removeItemCalls).toBe(0);
+    expect(clearCalls).toBe(0);
+    expect(storeMap.get(STORAGE_KEY_V5)).toBe(rawV5);
+
+    // Verify legacy v1 local record detection & migration to Cloud v5
+    storeMap.delete(STORAGE_KEY_V5);
+    const rawV1 = JSON.stringify({
+      colors: ['Pink', 'Lavender'],
+      machines: ['Bambu P1S #1'],
+      jobs: [
+        {
+          id: 'legacy-job-1',
+          color: 0,
+          plate: 1,
+          letters: { A: 4, B: 2 },
+          status: 'Siap',
+          machine: 'Bambu P1S #1',
+          notes: 'First batch',
+        },
+      ],
+      log: [{ time: '29/10/2026', msg: 'Completed plate 1' }],
+    });
+    storeMap.set(STORAGE_KEY_V1, rawV1);
+
+    const detectedV1 = inspectUnsyncedLocalData(mockStorage);
+    expect(detectedV1).not.toBeNull();
+    expect(detectedV1!.format).toBe('v1');
+    expect(detectedV1!.sourceKey).toBe(STORAGE_KEY_V1);
+    expect(detectedV1!.jobCount).toBe(1);
+
+    const cloudWsFromV1 = buildCloudWorkspaceFromLocalBackup(detectedV1!, 'firebase-uid-999');
+    expect(cloudWsFromV1.ownerId).toBe('firebase-uid-999');
+    expect(cloudWsFromV1.schemaVersion).toBe(5);
+    expect(cloudWsFromV1.inventory.physicalByColor['color-0'].A).toBe(4);
+    expect(cloudWsFromV1.inventory.physicalByColor['color-0'].B).toBe(2);
+    assertNoUndefinedOwnProperties(cloudWsFromV1);
+
+    // Browser storage remains completely untouched
+    expect(setItemCalls).toBe(0);
+    expect(removeItemCalls).toBe(0);
+    expect(clearCalls).toBe(0);
+    expect(storeMap.get(STORAGE_KEY_V1)).toBe(rawV1);
+
+    // Empty or malformed storage returns null cleanly
+    storeMap.set(STORAGE_KEY_V1, '{invalid-json');
+    expect(inspectUnsyncedLocalData(mockStorage)).toBeNull();
+  });
+});
+

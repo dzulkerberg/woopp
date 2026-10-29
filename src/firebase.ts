@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDT1iOH7a-uO0E43dL-OvwqhW6jWD8oAD4',
@@ -15,11 +15,10 @@ const firebaseConfig = {
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
-// Use experimentalAutoDetectLongPolling so Firestore connects reliably inside proxied/sandboxed iframes
-// without timing out after 10 seconds on WebChannel streams, plus persistent local cache for resilience.
+// Cloud-only Firestore instance using long-polling auto-detection for reliable connectivity
+// without falling back to persistent offline browser storage as a primary database.
 export const db = initializeFirestore(firebaseApp, {
   experimentalAutoDetectLongPolling: true,
-  localCache: persistentLocalCache(),
 });
 
 export enum OperationType {

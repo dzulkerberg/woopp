@@ -24,7 +24,6 @@ interface SidebarProps {
   onToggleTheme: () => void;
   syncStatus: string;
   userEmail: string;
-  isLocalMode: boolean;
   onSignOut: () => void;
   mobileOpen: boolean;
   onSetMobileOpen: (open: boolean) => void;
@@ -50,7 +49,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleTheme,
   syncStatus,
   userEmail,
-  isLocalMode,
   onSignOut,
   mobileOpen,
   onSetMobileOpen,
@@ -120,10 +118,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="text-xs font-medium text-neutral-800 dark:text-neutral-200 truncate">
-              {isLocalMode ? 'Local Browser Mode' : userEmail || 'Authenticated'}
+              {userEmail || 'Authenticated'}
             </div>
             <div className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
-              {isLocalMode ? 'Offline Storage' : 'woopp-tracker'}
+              woopp-tracker · Cloud
             </div>
           </div>
           <button
