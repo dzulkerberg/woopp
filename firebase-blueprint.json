@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "LegacyTrackerDoc": {
+      "title": "Legacy Tracker Document",
+      "description": "Backward-compatible WOOPP v1 production tracker document stored at users/{userId}/tracker/main.",
+      "type": "object",
+      "properties": {
+        "colors": {
+          "type": "array",
+          "description": "Legacy 3-color names array"
+        },
+        "machines": {
+          "type": "array",
+          "description": "Legacy printer names array"
+        },
+        "jobs": {
+          "type": "array",
+          "description": "Legacy print plate jobs array"
+        },
+        "log": {
+          "type": "array",
+          "description": "Legacy activity log entries"
+        }
+      },
+      "required": ["colors", "machines", "jobs", "log"]
+    },
+    "ProductionWorkspace": {
+      "title": "WOOPP Production Workspace V5",
+      "description": "Multi-project 3D print production management workspace document stored at users/{userId}/tracker/v5_workspace without overwriting users/{userId}/tracker/main.",
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "description": "Schema version identifier (5)"
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated owner"
+        },
+        "migratedFromV1": {
+          "type": "boolean",
+          "description": "Whether existing v1 data from tracker/main was migrated into this workspace"
+        },
+        "colors": {
+          "type": "array",
+          "description": "Global color catalog available across projects"
+        },
+        "machines": {
+          "type": "array",
+          "description": "Printer fleet records with status, speedFactor, setupBufferMinutes, maintenanceUntilMs, and active assignment"
+        },
+        "projects": {
+          "type": "array",
+          "description": "Multi-project definitions with sales channel, priority, deadline, targets, and allocations"
+        },
+        "jobs": {
+          "type": "array",
+          "description": "All production print plate jobs across projects with Kanban stage, server start/pause/completion timestamps, and stockApplied ledger guard"
+        },
+        "presets": {
+          "type": "array",
+          "description": "Saved reusable alphabet A-Z quantity presets"
+        },
+        "inventory": {
+          "type": "object",
+          "description": "Physical produced stock, project reservations, wastage, and ledger movements"
+        },
+        "log": {
+          "type": "array",
+          "description": "Chronological audit trail of production, machine, scheduling, and inventory events"
+        },
+        "settings": {
+          "type": "object",
+          "description": "Workspace preferences including default plate capacity, turnaroundBufferMinutes, timezone, and theme"
+        },
+        "updatedIso": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp of last save"
+        },
+        "serverUpdatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Authoritative Firebase serverTimestamp() recorded on cloud writes"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "ownerId",
+        "migratedFromV1",
+        "colors",
+        "machines",
+        "projects",
+        "jobs",
+        "presets",
+        "inventory",
+        "log",
+        "settings",
+        "updatedIso"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/tracker/main": {
+      "schema": { "$ref": "#/entities/LegacyTrackerDoc" },
+      "description": "Preserved original v1 production tracker document (read-only during v5 migration, untouched)."
+    },
+    "/users/{userId}/tracker/v5_workspace": {
+      "schema": { "$ref": "#/entities/ProductionWorkspace" },
+      "description": "WOOPP 5.0 multi-project production management and Smart ETA Scheduling state isolated per authenticated user."
+    }
+  }
+}
