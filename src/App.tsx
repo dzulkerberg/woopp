@@ -16,20 +16,28 @@ import {
 } from './firebase';
 import {
   ABC,
+  compactCharmsMap,
   compactLettersMap,
+  countCharms,
   countLetters,
+  countPlateKeycaps,
   createFreshWorkspaceV5,
   emptyAlphabetMap,
+  formatPlateItemsText,
+  getProjectTotalTargetQuantity,
   migrateFromLegacyV1,
   normalizeAlphabetMap,
+  normalizeCharmsMap,
   normalizeWorkspaceV5,
 } from './constants';
 import {
   AlphabetPreset,
+  CharmsMap,
   KanbanStage,
   LegacyTrackerState,
   LettersMap,
   NavSection,
+  PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
   ProductionProject,
@@ -42,7 +50,9 @@ import {
   DraftPlatePreview,
   getAvailableStockForColor,
   getReservedStockForColor,
+  inferPlateMode,
   pauseOrResumePrintingJob,
+  shouldPreserveExistingJobOnRegenerate,
   transitionJobState,
 } from './utils/productionEngine';
 import {
@@ -95,7 +105,7 @@ const SECTION_META: Record<NavSection, { title: string; subtitle: string }> = {
   },
   planner: {
     title: 'Auto Plate Planner',
-    subtitle: 'Custom A–Z alphabet grid and exact-capacity plate distribution',
+    subtitle: 'Custom A–Z alphabet & charm keycap grid with exact-capacity plate distribution',
   },
   queue: {
     title: 'Print Queue',
@@ -627,96 +637,170 @@ export const App: React.FC = () => {
     projectId: string;
     colorId: string;
     plateCapacity: number;
+    mode: PlateGenerationMode;
     targetLetters: LettersMap;
+    targetCharms: CharmsMap;
     carryForwardLetters: LettersMap;
+    carryForwardCharms: CharmsMap;
     confirmedPlates: DraftPlatePreview[];
+    onSuccess?: () => void;
   }) => {
     const project = workspace.projects.find((p) => p.id === params.projectId);
     const color = workspace.colors.find((c) => c.id === params.colorId);
     if (!project || !color) return;
 
-    const nowIso = new Date().toISOString();
+    const prevSavedLetters = normalizeAlphabetMap(project.targetsByColor?.[params.colorId]);
+    const nextNormalizedLetters = normalizeAlphabetMap(params.targetLetters);
+    const prevSavedCharms = normalizeCharmsMap(project.charmTargetsByColor?.[params.colorId]);
+    const nextNormalizedCharms = normalizeCharmsMap(params.targetCharms);
 
-    // Keep all jobs from other projects/colors, AND strictly preserve Completed + Printing jobs for this project+color!
-    const keptJobs = workspace.jobs.filter((j) => {
-      if (j.projectId !== params.projectId || j.colorId !== params.colorId) return true;
-      return j.stage === 'Completed' || j.stage === 'Printing';
-    });
+    const prevLettersQty = countLetters(prevSavedLetters);
+    const nextLettersQty = countLetters(nextNormalizedLetters);
+    const prevCharmsQty = countCharms(prevSavedCharms);
+    const nextCharmsQty = countCharms(nextNormalizedCharms);
 
-    const createdJobs: ProductionJob[] = params.confirmedPlates.map((draft, idx) => ({
-      id: `job-${Date.now()}-${idx}-${params.colorId}`,
-      projectId: params.projectId,
-      colorId: params.colorId,
-      plateNumber: draft.plateNumber,
-      plateCapacity: params.plateCapacity,
-      letters: compactLettersMap(draft.letters),
-      stage: draft.slicerVerified ? 'Ready to Print' : 'Planned',
-      machineId: null,
-      estimatedMinutes: Math.max(1, Math.round(draft.estimatedMinutes || 195)),
-      actualMinutes: 0,
-      slicerVerified: draft.slicerVerified,
-      stockApplied: false,
-      stockTransactionId: null,
-      failedCount: 0,
-      failureReason: '',
-      notes: draft.notes || 'Generated via Auto Plate Planner',
-      createdIso: nowIso,
-      updatedIso: nowIso,
-      completedIso: null,
-    }));
-
-    const nextTargetsByColor = {
-      ...project.targetsByColor,
-      [params.colorId]: params.targetLetters,
-    };
-    const nextCarryByColor = {
-      ...project.carryForwardByColor,
-      [params.colorId]: params.carryForwardLetters,
-    };
-
-    const updatedProjectTargetQty = project.assignedColorIds.reduce(
-      (sum, cid) => sum + countLetters(nextTargetsByColor[cid]),
-      0
-    );
-
-    const nextProjects = workspace.projects.map((p) =>
-      p.id === project.id
-        ? {
-            ...p,
-            plateCapacity: params.plateCapacity,
-            targetsByColor: nextTargetsByColor,
-            carryForwardByColor: nextCarryByColor,
-            targetQuantity: updatedProjectTargetQty,
-            updatedIso: nowIso,
-          }
-        : p
-    );
-
-    const carryCount = countLetters(params.carryForwardLetters);
-    const nextLog = appendLog(
-      workspace.log,
-      'plate',
-      `${project.name} · ${color.name}: Generated ${createdJobs.length} plate(s)${
-        carryCount > 0 ? ` and carried forward ${carryCount} pcs` : ''
-      }. Locked Completed/Printing plates preserved.`,
-      project.id
-    );
-
-    const saved = await persistWorkspace({
-      ...workspace,
-      projects: nextProjects,
-      jobs: [...keptJobs, ...createdJobs],
-      log: nextLog,
-    });
-
-    if (saved) {
-      showAlert(
-        `Saved ${createdJobs.length} plate(s) for ${project.name} (${color.name}).${
-          carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
-        }`,
-        'Plates Added to Queue'
+    const lettersTargetChanged =
+      prevLettersQty > 0 &&
+      ABC.some((k) => prevSavedLetters[k] !== nextNormalizedLetters[k]);
+    const charmsTargetChanged =
+      prevCharmsQty > 0 &&
+      Object.keys(prevSavedCharms).some(
+        (k) =>
+          prevSavedCharms[k as keyof typeof prevSavedCharms] !==
+          nextNormalizedCharms[k as keyof typeof nextNormalizedCharms]
       );
+
+    const commitToCloud = async () => {
+      const nowIso = new Date().toISOString();
+
+      // Preserve all jobs from other projects/colors, Completed, Printing, Failed / Reprint history,
+      // and cross-category plates when regenerating in Alphabet Only or Charm Only mode.
+      const keptJobs = workspace.jobs.filter((j) => {
+        if (j.projectId !== params.projectId || j.colorId !== params.colorId) return true;
+        return shouldPreserveExistingJobOnRegenerate(j, params.mode);
+      });
+
+      const createdJobs: ProductionJob[] = params.confirmedPlates.map((draft, idx) => {
+        const compactedLetters = compactLettersMap(draft.letters);
+        const compactedCharms = compactCharmsMap(draft.charms);
+        const job: ProductionJob = {
+          id: `job-${Date.now()}-${idx}-${params.colorId}`,
+          projectId: params.projectId,
+          colorId: params.colorId,
+          plateNumber: draft.plateNumber,
+          plateCapacity: params.plateCapacity,
+          letters: compactedLetters,
+          plateMode: inferPlateMode(compactedLetters, compactedCharms),
+          stage: draft.slicerVerified ? 'Ready to Print' : 'Planned',
+          machineId: null,
+          estimatedMinutes: Math.max(1, Math.round(draft.estimatedMinutes || 195)),
+          actualMinutes: 0,
+          slicerVerified: draft.slicerVerified,
+          stockApplied: false,
+          stockTransactionId: null,
+          failedCount: 0,
+          failureReason: '',
+          notes: draft.notes || 'Generated via Auto Plate Planner',
+          createdIso: nowIso,
+          updatedIso: nowIso,
+          completedIso: null,
+        };
+        if (Object.keys(compactedCharms).length > 0) {
+          job.charms = compactedCharms;
+        }
+        return job;
+      });
+
+      const nextTargetsByColor = {
+        ...project.targetsByColor,
+        [params.colorId]: nextNormalizedLetters,
+      };
+      const nextCarryByColor = {
+        ...project.carryForwardByColor,
+        [params.colorId]: normalizeAlphabetMap(params.carryForwardLetters),
+      };
+      const nextCharmTargetsByColor = {
+        ...(project.charmTargetsByColor || {}),
+        [params.colorId]: compactCharmsMap(params.targetCharms),
+      };
+      const nextCharmCarryByColor = {
+        ...(project.charmCarryForwardByColor || {}),
+        [params.colorId]: compactCharmsMap(params.carryForwardCharms),
+      };
+
+      const updatedProjectCandidate: ProductionProject = {
+        ...project,
+        plateCapacity: params.plateCapacity,
+        targetsByColor: nextTargetsByColor,
+        carryForwardByColor: nextCarryByColor,
+        charmTargetsByColor: nextCharmTargetsByColor,
+        charmCarryForwardByColor: nextCharmCarryByColor,
+        updatedIso: nowIso,
+      };
+
+      const updatedProjectTargetQty = getProjectTotalTargetQuantity(updatedProjectCandidate);
+
+      const nextProjects = workspace.projects.map((p) =>
+        p.id === project.id
+          ? {
+              ...updatedProjectCandidate,
+              targetQuantity: updatedProjectTargetQty,
+            }
+          : p
+      );
+
+      const carryCount =
+        countLetters(params.carryForwardLetters) + countCharms(params.carryForwardCharms);
+      const modeLabel =
+        params.mode === 'alphabet_only'
+          ? 'Alphabet Only'
+          : params.mode === 'charm_only'
+          ? 'Charm Only'
+          : 'Alphabet + Charm';
+
+      const nextLog = appendLog(
+        workspace.log,
+        'plate',
+        `${project.name} · ${color.name} (${modeLabel}): Generated ${createdJobs.length} plate(s)${
+          carryCount > 0 ? ` and carried forward ${carryCount} pcs` : ''
+        }. Completed, Failed & Printing plate history preserved.`,
+        project.id
+      );
+
+      const saved = await persistWorkspace({
+        ...workspace,
+        projects: nextProjects,
+        jobs: [...keptJobs, ...createdJobs],
+        log: nextLog,
+      });
+
+      if (saved) {
+        params.onSuccess?.();
+        showAlert(
+          `Saved ${createdJobs.length} plate(s) for ${project.name} (${color.name}).${
+            carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
+          }`,
+          'Plates Added to Queue'
+        );
+      }
+    };
+
+    if (lettersTargetChanged || charmsTargetChanged) {
+      showConfirm(
+        `Update saved production targets for ${project.name} (${color.name}) before queueing ${params.confirmedPlates.length} plate(s)?\n` +
+          `Alphabet A–Z: ${prevLettersQty} pcs → ${nextLettersQty} pcs\n` +
+          `Charm Keycaps: ${prevCharmsQty} pcs → ${nextCharmsQty} pcs\n` +
+          `Completed, Failed / Reprint, and Printing plates will remain untouched.`,
+        () => {
+          void commitToCloud();
+        },
+        'Confirm Production Target Update',
+        'Confirm & Save Plates'
+      );
+      return;
     }
+
+    await commitToCloud();
   };
 
   // --- Handlers for Kanban, Smart ETA Timers & Job Metadata ---
@@ -842,12 +926,10 @@ export const App: React.FC = () => {
         const p = workspace.projects.find((pr) => pr.id === j.projectId);
         const c = workspace.colors.find((cl) => cl.id === j.colorId);
         const m = workspace.machines.find((mc) => mc.id === j.machineId);
-        const lettersStr = Object.entries(j.letters)
-          .map(([k, v]) => `${k}${v}`)
-          .join(' ');
-        return `${p?.name || 'Project'} | ${c?.name || 'Color'} | Plate ${j.plateNumber} | ${
-          j.stage
-        } | ${m?.name || 'Unassigned'} | ${lettersStr}`;
+        const itemsStr = formatPlateItemsText(j, true);
+        return `${p?.name || 'Project'} | ${c?.name || 'Color'} | Plate ${j.plateNumber} (${countPlateKeycaps(
+          j
+        )}/${j.plateCapacity}) | ${j.stage} | ${m?.name || 'Unassigned'} | ${itemsStr}`;
       })
       .join('\n');
 

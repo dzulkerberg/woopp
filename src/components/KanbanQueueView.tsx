@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { countLetters, KANBAN_STAGES } from '../constants';
+import { countPlateKeycaps, KANBAN_STAGES } from '../constants';
 import { KanbanStage, ProductionJob, ProductionWorkspaceV5 } from '../types';
 import {
   formatCountdownHMS,
@@ -8,6 +8,7 @@ import {
 } from '../utils/dateFormat';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
 import { DurationHMInput } from './DurationHMInput';
+import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface KanbanQueueViewProps {
   workspace: ProductionWorkspaceV5;
@@ -162,7 +163,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 items-start">
           {KANBAN_STAGES.map((stage) => {
             const stageJobs = filteredJobs.filter((j) => j.stage === stage);
-            const stageKeycaps = stageJobs.reduce((s, j) => s + countLetters(j.letters), 0);
+            const stageKeycaps = stageJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
 
             return (
               <div
@@ -218,13 +219,22 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               {filteredJobs.map((job) => {
                 const proj = workspace.projects.find((p) => p.id === job.projectId);
                 const color = workspace.colors.find((c) => c.id === job.colorId);
-                const qty = countLetters(job.letters);
+                const qty = countPlateKeycaps(job);
                 const slot = schedule.slotsByJobId[job.id];
 
                 return (
                   <tr key={job.id} className="hover:bg-neutral-50 dark:hover:bg-neutral-800/30">
-                    <td className="py-3 px-4 font-semibold text-neutral-900 dark:text-white font-mono-data whitespace-nowrap">
-                      Plate {job.plateNumber} ({qty}/{job.plateCapacity})
+                    <td className="py-3 px-4 text-neutral-900 dark:text-white">
+                      <div className="font-semibold font-mono-data whitespace-nowrap">
+                        Plate {job.plateNumber} ({qty}/{job.plateCapacity})
+                      </div>
+                      <div className="mt-1">
+                        <PlateCompositionSummary
+                          letters={job.letters}
+                          charms={job.charms}
+                          compact
+                        />
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-neutral-700 dark:text-neutral-300">
                       <div className="font-medium">{proj?.name || 'Project'}</div>
@@ -320,7 +330,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   const [expanded, setExpanded] = useState(false);
   const project = workspace.projects.find((p) => p.id === job.projectId);
   const color = workspace.colors.find((c) => c.id === job.colorId);
-  const qty = countLetters(job.letters);
+  const qty = countPlateKeycaps(job);
   const slot = schedule.slotsByJobId[job.id];
   const { timezone } = schedule;
 
@@ -424,12 +434,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         </div>
       ) : null}
 
-      {/* Letters breakdown */}
-      <div className="text-[11px] font-mono-data text-neutral-700 dark:text-neutral-300 leading-relaxed break-words">
-        {Object.entries(job.letters)
-          .map(([k, v]) => `${k}×${v}`)
-          .join(' · ')}
-      </div>
+      {/* Alphabet & Charm composition breakdown */}
+      <PlateCompositionSummary letters={job.letters} charms={job.charms} />
 
       {/* Printer Assignment */}
       <div>
@@ -493,7 +499,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       {/* Metadata footer & Expandable Bambu Studio Timing / Machine Overrides */}
       <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
         <span>
-          {job.stockApplied
+          {job.stage === 'Completed'
             ? `Done (${formatDurationHoursMinutes(job.actualMinutes || job.estimatedMinutes)})`
             : `Bambu Est: ${formatDurationHoursMinutes(job.estimatedMinutes)}`}
           {job.failedCount > 0 ? ` · Fails: ${job.failedCount}` : ''}

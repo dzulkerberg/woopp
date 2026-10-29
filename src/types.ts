@@ -1,5 +1,22 @@
 export type LettersMap = Record<string, number>;
 
+export type CharmId =
+  | 'CHARM_LOVE'
+  | 'CHARM_STAR'
+  | 'CHARM_FLOWER'
+  | 'CHARM_HASH'
+  | 'CHARM_AT';
+
+export type CharmsMap = Partial<Record<CharmId, number>>;
+
+export interface CharmDefinition {
+  id: CharmId;
+  label: string;
+  symbol: string;
+}
+
+export type PlateGenerationMode = 'alphabet_only' | 'charm_only' | 'mixed';
+
 export type SalesChannel =
   | 'Klebang Walk'
   | 'Vintage Night Market'
@@ -59,6 +76,9 @@ export interface ProductionProject {
   carryForwardByColor: Record<string, LettersMap>;
   // colorId -> { A..Z -> reserved physical inventory allocated to this project }
   allocatedStockByColor: Record<string, LettersMap>;
+  // Additive Charm Keycap planning maps per filament color (missing treated as 0)
+  charmTargetsByColor?: Record<string, CharmsMap>;
+  charmCarryForwardByColor?: Record<string, CharmsMap>;
   status: ProjectStatus;
   notes: string;
   createdIso: string;
@@ -72,6 +92,9 @@ export interface ProductionJob {
   plateNumber: number;
   plateCapacity: number;
   letters: LettersMap;
+  // Additive Charm Keycap quantities on this plate (missing treated as 0)
+  charms?: CharmsMap;
+  plateMode?: PlateGenerationMode;
   stage: KanbanStage;
   machineId: string | null;
   estimatedMinutes: number; // Base manual Bambu Studio duration (hours * 60 + mins)

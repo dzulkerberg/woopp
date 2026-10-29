@@ -466,3 +466,336 @@ describe('Cloud-Only Mode: one-time unsynced local data backup & non-destructive
   });
 });
 
+describe('Charm Keycaps: Auto Plate Generator, Scheduling, Inventory Isolation & Firestore Compatibility', () => {
+  it('defines the 5 stable Charm IDs, labels, and symbols and defaults charm maps to zero', async () => {
+    const {
+      CHARM_DEFINITIONS,
+      countCharms,
+      emptyCharmsMap,
+      normalizeWorkspaceV5,
+    } = await import('../../constants');
+
+    expect(CHARM_DEFINITIONS).toEqual([
+      { id: 'CHARM_LOVE', label: 'LOVE', symbol: '♥' },
+      { id: 'CHARM_STAR', label: 'STAR', symbol: '★' },
+      { id: 'CHARM_FLOWER', label: 'FLOWER', symbol: '✿' },
+      { id: 'CHARM_HASH', label: 'HASHTAG', symbol: '#' },
+      { id: 'CHARM_AT', label: 'AT SIGN', symbol: '@' },
+    ]);
+
+    const defaults = emptyCharmsMap();
+    expect(defaults).toEqual({
+      CHARM_LOVE: 0,
+      CHARM_STAR: 0,
+      CHARM_FLOWER: 0,
+      CHARM_HASH: 0,
+      CHARM_AT: 0,
+    });
+    expect(countCharms(defaults)).toBe(0);
+
+    // Older Firestore v5 records without any charm fields load cleanly with 0 charm counts
+    const legacyV5Doc = createFreshWorkspaceV5('legacy-owner');
+    delete (legacyV5Doc.projects[0] as unknown as Record<string, unknown>).charmTargetsByColor;
+    delete (legacyV5Doc.projects[0] as unknown as Record<string, unknown>).charmCarryForwardByColor;
+    const reloaded = normalizeWorkspaceV5(legacyV5Doc, 'legacy-owner');
+
+    expect(countCharms(reloaded.projects[0].charmTargetsByColor?.['color-0'])).toBe(0);
+    expect(reloaded.jobs.every((j) => countCharms(j.charms) === 0)).toBe(true);
+  });
+
+  it('distributes Alphabet Only, Charm Only, and Mixed (Alphabet + Charm) plates strictly <= 138 pcs without adding unrequested keycaps', async () => {
+    const {
+      countCharms,
+      countLetters,
+      countPlateKeycaps,
+      DEFAULT_PLATE_CAPACITY,
+      emptyAlphabetMap,
+      emptyCharmsMap,
+    } = await import('../../constants');
+    const {
+      computeIntelligentPlates,
+      shouldPreserveExistingJobOnRegenerate,
+    } = await import('../productionEngine');
+
+    expect(DEFAULT_PLATE_CAPACITY).toBe(138);
+
+    const requestedLetters = {
+      ...emptyAlphabetMap(),
+      A: 100,
+      B: 60,
+    }; // 160 alphabet pcs
+    const requestedCharms = {
+      ...emptyCharmsMap(),
+      CHARM_LOVE: 50,
+      CHARM_STAR: 40,
+      CHARM_FLOWER: 20,
+      CHARM_HASH: 15,
+      CHARM_AT: 11,
+    }; // 136 charm pcs
+    // Total mixed = 160 + 136 = 296 pcs -> 2 full plates (138 + 138 = 276) + 20 remainder (118 remaining capacity on incomplete plate)
+
+    // 1. Mixed Mode (Alphabet + Charm)
+    const mixedDist = computeIntelligentPlates(
+      [],
+      'proj-1',
+      'color-0',
+      requestedLetters,
+      138,
+      195,
+      {
+        requestedCharms,
+        mode: 'mixed',
+      }
+    );
+
+    expect(mixedDist.fullPlates).toHaveLength(2);
+    for (const plate of mixedDist.fullPlates) {
+      expect(countPlateKeycaps(plate)).toBe(138);
+      expect(countPlateKeycaps(plate)).toBeLessThanOrEqual(138);
+    }
+    expect(mixedDist.remainderCount).toBe(20);
+    expect(mixedDist.neededForNextFullPlate).toBe(118); // Remaining capacity for incomplete 3rd plate
+
+    // Verify exact conservation: never adds unrequested letters or charms
+    const distributedLettersTotal =
+      mixedDist.fullPlates.reduce((s, p) => s + countLetters(p.letters), 0) +
+      countLetters(mixedDist.remainder);
+    const distributedCharmsTotal =
+      mixedDist.fullPlates.reduce((s, p) => s + countCharms(p.charms), 0) +
+      countCharms(mixedDist.remainderCharms);
+
+    expect(distributedLettersTotal).toBe(160);
+    expect(distributedCharmsTotal).toBe(136);
+    expect(mixedDist.fullPlates.every((p) => (p.letters.C || 0) === 0)).toBe(true);
+
+    // 2. Charm Only Mode (150 charms -> 1 full plate of 138 + 12 remainder with 126 remaining capacity)
+    const charmOnlyReq = {
+      ...emptyCharmsMap(),
+      CHARM_LOVE: 60,
+      CHARM_STAR: 50,
+      CHARM_FLOWER: 40,
+    };
+    const charmOnlyDist = computeIntelligentPlates(
+      [],
+      'proj-1',
+      'color-0',
+      requestedLetters,
+      138,
+      195,
+      {
+        requestedCharms: charmOnlyReq,
+        mode: 'charm_only',
+      }
+    );
+
+    expect(charmOnlyDist.fullPlates).toHaveLength(1);
+    expect(countLetters(charmOnlyDist.fullPlates[0].letters)).toBe(0);
+    expect(countCharms(charmOnlyDist.fullPlates[0].charms)).toBe(138);
+    expect(charmOnlyDist.fullPlates[0].plateMode).toBe('charm_only');
+    expect(charmOnlyDist.remainderCount).toBe(12);
+    expect(charmOnlyDist.neededForNextFullPlate).toBe(126);
+
+    // 3. Alphabet Only Mode ignores charms and distributes only A–Z
+    const alphaOnlyDist = computeIntelligentPlates(
+      [],
+      'proj-1',
+      'color-0',
+      requestedLetters,
+      138,
+      195,
+      {
+        requestedCharms: charmOnlyReq,
+        mode: 'alphabet_only',
+      }
+    );
+    expect(alphaOnlyDist.fullPlates).toHaveLength(1);
+    expect(countLetters(alphaOnlyDist.fullPlates[0].letters)).toBe(138);
+    expect(countCharms(alphaOnlyDist.fullPlates[0].charms)).toBe(0);
+    expect(alphaOnlyDist.remainderCount).toBe(22);
+
+    // 4. Preserves Completed, Printing, Failed / Reprint, and cross-category plates
+    const ws = createFreshWorkspaceV5('u-1');
+    const baseJob = ws.jobs[0];
+    expect(
+      shouldPreserveExistingJobOnRegenerate({ ...baseJob, stage: 'Completed' }, 'mixed')
+    ).toBe(true);
+    expect(
+      shouldPreserveExistingJobOnRegenerate({ ...baseJob, stage: 'Printing' }, 'mixed')
+    ).toBe(true);
+    expect(
+      shouldPreserveExistingJobOnRegenerate({ ...baseJob, stage: 'Failed / Reprint' }, 'mixed')
+    ).toBe(true);
+    expect(
+      shouldPreserveExistingJobOnRegenerate(
+        {
+          ...baseJob,
+          stage: 'Planned',
+          letters: {},
+          charms: { CHARM_LOVE: 50 },
+        },
+        'alphabet_only'
+      )
+    ).toBe(true);
+  });
+
+  it('supports Charm & Mixed plates in parallel Machine Scheduling, ETA calculation, Firestore persistence, and keeps Inventory isolated for Charm-Only plates', async () => {
+    const {
+      countCharms,
+      countPlateKeycaps,
+      normalizeWorkspaceV5,
+    } = await import('../../constants');
+    const { computeGlobalSchedule } = await import('../schedulingEngine');
+
+    let ws = createFreshWorkspaceV5('user-charm');
+    const project = ws.projects[0];
+    const colorId = project.assignedColorIds[0];
+    const machineA = ws.machines[0].id;
+    const machineB = ws.machines[1].id;
+    const nowMs = 1_760_500_000_000;
+
+    // Add a Charm-Only plate and a Mixed Alphabet+Charm plate
+    const charmPlateId = 'job-charm-only-1';
+    const mixedPlateId = 'job-mixed-1';
+
+    ws = {
+      ...ws,
+      projects: ws.projects.map((p, idx) =>
+        idx === 0
+          ? {
+              ...p,
+              charmTargetsByColor: {
+                [colorId]: {
+                  CHARM_LOVE: 80,
+                  CHARM_STAR: 58,
+                  CHARM_HASH: 20,
+                  CHARM_AT: 18,
+                },
+              },
+              charmCarryForwardByColor: {
+                [colorId]: {
+                  CHARM_FLOWER: 5,
+                },
+              },
+            }
+          : p
+      ),
+      jobs: [
+        {
+          id: charmPlateId,
+          projectId: project.id,
+          colorId,
+          plateNumber: 10,
+          plateCapacity: 138,
+          letters: {},
+          charms: { CHARM_LOVE: 80, CHARM_STAR: 58 },
+          plateMode: 'charm_only',
+          stage: 'Ready to Print',
+          machineId: machineA,
+          estimatedMinutes: 180,
+          actualMinutes: 0,
+          slicerVerified: true,
+          stockApplied: false,
+          stockTransactionId: null,
+          failedCount: 0,
+          failureReason: '',
+          notes: 'Charm plate',
+          createdIso: new Date(nowMs).toISOString(),
+          updatedIso: new Date(nowMs).toISOString(),
+          completedIso: null,
+        },
+        {
+          id: mixedPlateId,
+          projectId: project.id,
+          colorId,
+          plateNumber: 11,
+          plateCapacity: 138,
+          letters: { A: 60, E: 40 },
+          charms: { CHARM_HASH: 20, CHARM_AT: 18 },
+          plateMode: 'mixed',
+          stage: 'Ready to Print',
+          machineId: machineB,
+          estimatedMinutes: 210,
+          actualMinutes: 0,
+          slicerVerified: true,
+          stockApplied: false,
+          stockTransactionId: null,
+          failedCount: 0,
+          failureReason: '',
+          notes: 'Mixed plate',
+          createdIso: new Date(nowMs).toISOString(),
+          updatedIso: new Date(nowMs).toISOString(),
+          completedIso: null,
+        },
+      ],
+    };
+
+    expect(countPlateKeycaps(ws.jobs[0])).toBe(138);
+    expect(countPlateKeycaps(ws.jobs[1])).toBe(138);
+
+    // Parallel scheduling ETA: 180m on Machine A vs 210m on Machine B -> Project ETA equals max(180m, 210m), NOT 390m!
+    const scheduleBefore = computeGlobalSchedule(ws, nowMs);
+    expect(scheduleBefore.slotsByJobId[charmPlateId].assignedMachineId).toBe(machineA);
+    expect(scheduleBefore.slotsByJobId[mixedPlateId].assignedMachineId).toBe(machineB);
+    expect(scheduleBefore.projectEtas[0].estimatedCompletionMs).toBe(nowMs + 210 * 60_000);
+
+    // Start & complete the Charm-Only plate -> must NOT alter Inventory Management stock or movements!
+    const invBefore = JSON.stringify(ws.inventory);
+    const startedRes = transitionJobState(ws, charmPlateId, 'Printing', {
+      machineId: machineA,
+      nowMs,
+    });
+    expect(startedRes.error).toBeUndefined();
+
+    const completedRes = transitionJobState(
+      startedRes.nextWorkspace!,
+      charmPlateId,
+      'Completed',
+      {
+        machineId: machineA,
+        nowMs: nowMs + 175 * 60_000,
+      }
+    );
+    expect(completedRes.error).toBeUndefined();
+    const afterCompleteWs = completedRes.nextWorkspace!;
+
+    // Inventory remains 100% untouched for Charm-Only plates
+    expect(JSON.stringify(afterCompleteWs.inventory)).toBe(invBefore);
+    const completedCharmJob = afterCompleteWs.jobs.find((j) => j.id === charmPlateId)!;
+    expect(completedCharmJob.stage).toBe('Completed');
+    expect(completedCharmJob.actualMinutes).toBe(175);
+    expect(completedCharmJob.completedIso).not.toBeNull();
+
+    // Validate & serialize for Firestore setDoc() and reload via normalizeWorkspaceV5
+    const validatedForFirestore = prepareWorkspaceForFirestore(
+      afterCompleteWs,
+      'user-charm',
+      { isDev: false }
+    );
+    const firestoreSetPayload = buildFirestoreSetDocPayload(
+      {
+        ...validatedForFirestore,
+        serverUpdatedAt: serverTimestamp(),
+      },
+      'users/user-charm/tracker/v5_workspace',
+      { isDev: false }
+    );
+
+    assertNoUndefinedOwnProperties(firestoreSetPayload);
+
+    const roundTripped = normalizeWorkspaceV5(validatedForFirestore, 'user-charm');
+    expect(roundTripped.projects[0].charmTargetsByColor?.[colorId]).toEqual({
+      CHARM_LOVE: 80,
+      CHARM_STAR: 58,
+      CHARM_HASH: 20,
+      CHARM_AT: 18,
+    });
+    expect(roundTripped.projects[0].charmCarryForwardByColor?.[colorId]).toEqual({
+      CHARM_FLOWER: 5,
+    });
+    expect(countCharms(roundTripped.jobs[0].charms)).toBe(138);
+    expect(roundTripped.jobs[1].charms).toEqual({ CHARM_HASH: 20, CHARM_AT: 18 });
+    expect(roundTripped.jobs[1].plateMode).toBe('mixed');
+  });
+});
+
+

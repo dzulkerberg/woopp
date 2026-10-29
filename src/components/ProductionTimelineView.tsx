@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { countLetters } from '../constants';
+import { countPlateKeycaps, formatPlateItemsText } from '../constants';
 import { ProductionWorkspaceV5 } from '../types';
 import {
   formatDateTimeDDMMYYYY,
@@ -7,6 +7,7 @@ import {
   formatTimeHHMM,
 } from '../utils/dateFormat';
 import { GlobalScheduleResult, ScheduledJobSlot } from '../utils/schedulingEngine';
+import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface ProductionTimelineViewProps {
   workspace: ProductionWorkspaceV5;
@@ -180,7 +181,9 @@ export const ProductionTimelineView: React.FC<ProductionTimelineViewProps> = ({
                               type="button"
                               onClick={() => setSelectedSlotId(slot.job.id)}
                               style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                              title={`Plate ${slot.job.plateNumber} (${slot.project?.name}) · ${formatDateTimeDDMMYYYY(
+                              title={`Plate ${slot.job.plateNumber} (${slot.project?.name}) · ${countPlateKeycaps(
+                                slot.job
+                              )} pcs (${formatPlateItemsText(slot.job, true)}) · ${formatDateTimeDDMMYYYY(
                                 slot.startMs,
                                 timezone
                               )} → ${formatDateTimeDDMMYYYY(slot.endMs, timezone)}`}
@@ -243,13 +246,19 @@ export const ProductionTimelineView: React.FC<ProductionTimelineViewProps> = ({
                 : 'Unscheduled — waiting for online machine'}
             </div>
             <div className="text-xs text-neutral-500">
-              Keycaps: {countLetters(selectedSlot.job.letters)} pcs · Priority:{' '}
+              Keycaps: {countPlateKeycaps(selectedSlot.job)}/{selectedSlot.job.plateCapacity} pcs · Priority:{' '}
               {selectedSlot.project?.priority || 'Normal'}
               {selectedSlot.exceedsProjectDeadline && (
                 <span className="text-red-600 dark:text-red-400 font-semibold ml-2">
                   · Warning: Finishes after project deadline
                 </span>
               )}
+            </div>
+            <div className="pt-1">
+              <PlateCompositionSummary
+                letters={selectedSlot.job.letters}
+                charms={selectedSlot.job.charms}
+              />
             </div>
           </div>
 
@@ -313,12 +322,22 @@ export const ProductionTimelineView: React.FC<ProductionTimelineViewProps> = ({
                     className="hover:bg-neutral-50 dark:hover:bg-neutral-800/30 cursor-pointer"
                   >
                     <td className="py-3 pr-3">
-                      <span className="font-semibold text-neutral-900 dark:text-white">
-                        Plate {slot.job.plateNumber}
-                      </span>{' '}
-                      <span className="text-neutral-500">
-                        · {slot.project?.name} · {slot.colorName}
-                      </span>
+                      <div>
+                        <span className="font-semibold text-neutral-900 dark:text-white">
+                          Plate {slot.job.plateNumber}
+                        </span>{' '}
+                        <span className="text-neutral-500">
+                          · {slot.project?.name} · {slot.colorName} ({countPlateKeycaps(slot.job)}/
+                          {slot.job.plateCapacity} pcs)
+                        </span>
+                      </div>
+                      <div className="mt-1">
+                        <PlateCompositionSummary
+                          letters={slot.job.letters}
+                          charms={slot.job.charms}
+                          compact
+                        />
+                      </div>
                     </td>
                     <td className="py-3 px-3 text-neutral-700 dark:text-neutral-300">
                       {slot.assignedMachineName}

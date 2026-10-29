@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { ABC, countLetters, SALES_CHANNELS } from '../constants';
+import {
+  ABC,
+  CHARM_DEFINITIONS,
+  countCharms,
+  countLetters,
+  countPlateKeycaps,
+  SALES_CHANNELS,
+} from '../constants';
 import { ProductionWorkspaceV5 } from '../types';
 import { formatDateDDMMYYYY } from '../utils/dateFormat';
 import { DateInputDDMMYYYY } from './DateInputDDMMYYYY';
@@ -48,8 +55,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
   const completedJobs = filteredJobs.filter((j) => j.stage === 'Completed');
   const failedJobs = filteredJobs.filter((j) => j.stage === 'Failed / Reprint' || j.failedCount > 0);
 
-  const producedKeycaps = completedJobs.reduce((s, j) => s + countLetters(j.letters), 0);
-  const plannedKeycaps = filteredJobs.reduce((s, j) => s + countLetters(j.letters), 0);
+  const producedKeycaps = completedJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
+  const plannedKeycaps = filteredJobs.reduce((s, j) => s + countPlateKeycaps(j), 0);
   const actualPrintMins = completedJobs.reduce(
     (s, j) => s + (j.actualMinutes || j.estimatedMinutes || 0),
     0
@@ -75,6 +82,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
     );
   }, [filteredJobs]);
 
+  const charmDemandRanking = useMemo(() => {
+    return CHARM_DEFINITIONS.map((def) => {
+      let planned = 0;
+      let produced = 0;
+      for (const job of filteredJobs) {
+        const qty = Math.max(0, Math.floor(Number(job.charms?.[def.id] || 0)));
+        planned += qty;
+        if (job.stage === 'Completed') {
+          produced += qty;
+        }
+      }
+      return { ...def, planned, produced };
+    });
+  }, [filteredJobs]);
+
   const exportAnalyticsCSV = () => {
     const headers = [
       'PlateNumber',
@@ -83,7 +105,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
       'Color',
       'Stage',
       'Printer',
-      'Keycaps',
+      'TotalKeycaps',
+      'AlphabetKeycaps',
+      'CharmKeycaps',
       'EstimatedMinutes',
       'ActualMinutes',
       'UpdatedDate',
@@ -99,7 +123,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
         `"${c?.name || ''}"`,
         `"${j.stage}"`,
         `"${m?.name || 'Unassigned'}"`,
+        countPlateKeycaps(j),
         countLetters(j.letters),
+        countCharms(j.charms),
         j.estimatedMinutes,
         j.actualMinutes,
         formatDateDDMMYYYY(j.updatedIso || j.createdIso),
@@ -342,6 +368,27 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
                 </div>
               );
             })}
+          </div>
+
+          <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 space-y-2.5">
+            <h4 className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+              Charm Keycap Production Volume
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {charmDemandRanking.map((ch) => (
+                <div
+                  key={ch.id}
+                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-50 dark:bg-[#12101b] border border-neutral-200/70 dark:border-neutral-800 text-xs font-mono-data"
+                >
+                  <span className="font-sans font-semibold text-neutral-800 dark:text-neutral-200">
+                    {ch.symbol} {ch.label}
+                  </span>
+                  <span className="text-[#5b3cc4] dark:text-[#c7b8ff] font-semibold">
+                    {ch.produced} / {ch.planned} pcs
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
       </div>

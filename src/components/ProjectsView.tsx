@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import {
+  countCharms,
   countLetters,
+  countPlateKeycaps,
   DEFAULT_PLATE_CAPACITY,
   emptyAlphabetMap,
+  getProjectTotalTargetQuantity,
   PRIORITIES,
   SALES_CHANNELS,
 } from '../constants';
@@ -112,7 +115,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     }
 
     const plannedTargetSum = editingProject.assignedColorIds.reduce(
-      (sum, cid) => sum + countLetters(targetsByColor[cid]),
+      (sum, cid) =>
+        sum +
+        countLetters(targetsByColor[cid]) +
+        countCharms(editingProject.charmTargetsByColor?.[cid]),
       0
     );
 
@@ -345,7 +351,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                Initial Target Quantity (auto-updates from A–Z Planner)
+                Initial Target Quantity (auto-updates from A–Z &amp; Charm Planner)
               </label>
               <input
                 type="number"
@@ -415,16 +421,31 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             const completedJobs = pJobs.filter((j) => j.stage === 'Completed');
             const printingJobs = pJobs.filter((j) => j.stage === 'Printing');
             const producedPcs = completedJobs.reduce(
+              (sum, j) => sum + countPlateKeycaps(j),
+              0
+            );
+            const producedLettersPcs = completedJobs.reduce(
               (sum, j) => sum + countLetters(j.letters),
+              0
+            );
+            const producedCharmsPcs = completedJobs.reduce(
+              (sum, j) => sum + countCharms(j.charms),
               0
             );
             const allocatedPcs = Object.values(project.allocatedStockByColor || {}).reduce(
               (sum, m) => sum + countLetters(m),
               0
             );
+            const plannedJobsPcs = pJobs.reduce(
+              (sum, j) => sum + countPlateKeycaps(j),
+              0
+            );
             const targetPcs =
-              project.targetQuantity ||
-              pJobs.reduce((sum, j) => sum + countLetters(j.letters), 0);
+              getProjectTotalTargetQuantity(project) || plannedJobsPcs;
+            const targetCharmsPcs = project.assignedColorIds.reduce(
+              (sum, cid) => sum + countCharms(project.charmTargetsByColor?.[cid]),
+              0
+            );
             const progressPct =
               targetPcs > 0 ? Math.min(100, Math.round((producedPcs / targetPcs) * 100)) : 0;
 
@@ -470,6 +491,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         style={{ width: `${progressPct}%` }}
                       />
                     </div>
+                    {(targetCharmsPcs > 0 || producedCharmsPcs > 0) && (
+                      <div className="mt-1.5 text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center justify-between gap-2">
+                        <span>Alphabet A–Z: {producedLettersPcs.toLocaleString()} printed</span>
+                        <span className="text-[#5b3cc4] dark:text-[#c7b8ff]">
+                          Charms: {producedCharmsPcs.toLocaleString()} /{' '}
+                          {(targetCharmsPcs || producedCharmsPcs).toLocaleString()} printed
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Unboxed Metadata Details */}

@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { countLetters, DEFAULT_PLATE_CAPACITY, MACHINE_STATUSES } from '../constants';
+import {
+  countLetters,
+  countPlateKeycaps,
+  DEFAULT_PLATE_CAPACITY,
+  formatPlateItemsText,
+  MACHINE_STATUSES,
+} from '../constants';
 import {
   KanbanStage,
   MachineStatus,
@@ -12,6 +18,7 @@ import {
   formatDurationHoursMinutes,
 } from '../utils/dateFormat';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
+import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface MachinesViewProps {
   workspace: ProductionWorkspaceV5;
@@ -312,8 +319,14 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                       </span>
                     </div>
                     <div className="text-xs text-neutral-700 dark:text-neutral-200">
-                      {activeSlot.project?.name} · {activeSlot.colorName} ({countLetters(activeJob.letters)} pcs)
+                      {activeSlot.project?.name} · {activeSlot.colorName} ({countPlateKeycaps(activeJob)}/
+                      {activeJob.plateCapacity} pcs)
                     </div>
+                    <PlateCompositionSummary
+                      letters={activeJob.letters}
+                      charms={activeJob.charms}
+                      compact
+                    />
                     {activeSlot.endMs && (
                       <div className="text-[11px] font-mono-data text-neutral-500">
                         Est Finish: {formatDateTimeDDMMYYYY(activeSlot.endMs, timezone)}
@@ -341,7 +354,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                         }
                         className="flex-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap"
                       >
-                        Complete (+Stock)
+                        {countLetters(activeJob.letters) > 0 ? 'Complete (+Stock)' : 'Complete Print'}
                       </button>
                       <button
                         type="button"
@@ -381,9 +394,13 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                           {readyOrPlannedJobs.map((j) => {
                             const p = workspace.projects.find((pr) => pr.id === j.projectId);
                             const c = workspace.colors.find((cl) => cl.id === j.colorId);
+                            const summary = formatPlateItemsText(j, true);
+                            const shortSummary =
+                              summary.length > 42 ? `${summary.slice(0, 42)}…` : summary;
                             return (
                               <option key={j.id} value={j.id}>
-                                {p?.name} · {c?.name} · P{j.plateNumber} ({formatDurationHoursMinutes(j.estimatedMinutes)})
+                                {p?.name} · {c?.name} · P{j.plateNumber} ({countPlateKeycaps(j)} pcs ·{' '}
+                                {formatDurationHoursMinutes(j.estimatedMinutes)}) — {shortSummary}
                               </option>
                             );
                           })}
@@ -422,7 +439,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                         className="text-xs text-neutral-600 dark:text-neutral-300 flex items-center justify-between gap-2"
                       >
                         <span className="truncate">
-                          P{qs.job.plateNumber} · {qs.project?.name}
+                          P{qs.job.plateNumber} · {qs.project?.name} ({countPlateKeycaps(qs.job)} pcs)
                           {qs.isVirtualAssignment ? ' (Auto)' : ''}
                         </span>
                         <span className="font-mono-data text-[11px] text-neutral-400 shrink-0">

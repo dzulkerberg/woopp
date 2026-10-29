@@ -1,17 +1,27 @@
 import {
   ABC,
+  CHARM_BY_ID,
+  CHARM_IDS,
+  compactCharmsMap,
   compactLettersMap,
+  countCharms,
   countLetters,
   emptyAlphabetMap,
+  emptyCharmsMap,
   normalizeAlphabetMap,
+  normalizeCharmsMap,
   sumAlphabetMaps,
+  sumCharmsMaps,
 } from '../constants';
 import {
   ActivityLogEntry,
+  CharmId,
+  CharmsMap,
   InventoryMovement,
   InventoryState,
   KanbanStage,
   LettersMap,
+  PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
   ProductionWorkspaceV5,
@@ -52,20 +62,68 @@ export interface DraftPlatePreview {
   plateNumber: number;
   capacity: number;
   letters: LettersMap;
+  charms: CharmsMap;
+  plateMode: PlateGenerationMode;
   estimatedMinutes: number;
   slicerVerified: boolean;
   notes: string;
 }
 
 export interface PlateDistributionResult {
+  mode: PlateGenerationMode;
   lockedTotals: LettersMap;
+  lockedCharms: Record<CharmId, number>;
   netRequired: LettersMap;
+  netRequiredCharms: Record<CharmId, number>;
+  netAlphabetCount: number;
+  netCharmCount: number;
   totalNetCount: number;
   fullPlates: DraftPlatePreview[];
   remainder: LettersMap;
+  remainderCharms: CharmsMap;
   remainderCount: number;
   neededForNextFullPlate: number;
   underLockedLetters: string[];
+  underLockedCharms: CharmId[];
+  underLockedLabels: string[];
+}
+
+export function inferPlateMode(
+  letters?: LettersMap | null,
+  charms?: CharmsMap | null
+): PlateGenerationMode {
+  const lCount = countLetters(letters);
+  const cCount = countCharms(charms);
+  if (lCount > 0 && cCount > 0) return 'mixed';
+  if (cCount > 0) return 'charm_only';
+  return 'alphabet_only';
+}
+
+/**
+ * Determines which existing plates for `(projectId, colorId)` must be preserved
+ * untouched when committing newly generated plates:
+ * - Always preserves `Completed`, `Printing`, and `Failed / Reprint` plate history.
+ * - In `alphabet_only` mode, also preserves queued pure-charm plates.
+ * - In `charm_only` mode, also preserves queued pure-alphabet plates.
+ */
+export function shouldPreserveExistingJobOnRegenerate(
+  job: ProductionJob,
+  mode: PlateGenerationMode
+): boolean {
+  if (
+    job.stage === 'Completed' ||
+    job.stage === 'Printing' ||
+    job.stage === 'Failed / Reprint'
+  ) {
+    return true;
+  }
+  if (mode === 'alphabet_only') {
+    return countLetters(job.letters) === 0 && countCharms(job.charms) > 0;
+  }
+  if (mode === 'charm_only') {
+    return countCharms(job.charms) === 0 && countLetters(job.letters) > 0;
+  }
+  return false;
 }
 
 export function computeIntelligentPlates(
@@ -74,45 +132,83 @@ export function computeIntelligentPlates(
   colorId: string,
   requestedTarget: LettersMap,
   capacity: number,
-  defaultMinutesPerPlate: number = 195
+  defaultMinutesPerPlate: number = 195,
+  options?: {
+    requestedCharms?: CharmsMap;
+    mode?: PlateGenerationMode;
+  }
 ): PlateDistributionResult {
+  const mode: PlateGenerationMode = options?.mode || 'mixed';
   const safeCap = Math.max(1, Math.floor(capacity || 138));
   const safeMins = Math.max(1, Math.round(defaultMinutesPerPlate || 195));
   const projectColorJobs = jobs.filter(
     (j) => j.projectId === projectId && j.colorId === colorId
   );
 
-  // Completed and Printing plates are strictly locked and never altered
+  // Completed and Printing plates are strictly locked and count toward fulfilled targets
   const lockedJobs = projectColorJobs.filter(
     (j) => j.stage === 'Completed' || j.stage === 'Printing'
   );
 
   const lockedTotals = sumAlphabetMaps(lockedJobs.map((j) => j.letters));
-  const normalizedTarget = normalizeAlphabetMap(requestedTarget);
+  const lockedCharms = sumCharmsMaps(lockedJobs.map((j) => j.charms));
 
-  const underLockedLetters = ABC.filter(
-    (letter) => (normalizedTarget[letter] || 0) < (lockedTotals[letter] || 0)
-  );
+  const normalizedTarget = normalizeAlphabetMap(requestedTarget);
+  const normalizedCharms = normalizeCharmsMap(options?.requestedCharms);
+
+  const underLockedLetters =
+    mode === 'charm_only'
+      ? []
+      : ABC.filter((letter) => (normalizedTarget[letter] || 0) < (lockedTotals[letter] || 0));
+
+  const underLockedCharms =
+    mode === 'alphabet_only'
+      ? []
+      : CHARM_IDS.filter(
+          (charmId) => (normalizedCharms[charmId] || 0) < (lockedCharms[charmId] || 0)
+        );
+
+  const underLockedLabels = [
+    ...underLockedLetters,
+    ...underLockedCharms.map((cid) => `${CHARM_BY_ID[cid].symbol} ${CHARM_BY_ID[cid].label}`),
+  ];
 
   const netRequired = emptyAlphabetMap();
-  for (const letter of ABC) {
-    netRequired[letter] = Math.max(
-      0,
-      (normalizedTarget[letter] || 0) - (lockedTotals[letter] || 0)
-    );
+  if (mode !== 'charm_only') {
+    for (const letter of ABC) {
+      netRequired[letter] = Math.max(
+        0,
+        (normalizedTarget[letter] || 0) - (lockedTotals[letter] || 0)
+      );
+    }
   }
 
-  const totalNetCount = countLetters(netRequired);
+  const netRequiredCharms = emptyCharmsMap();
+  if (mode !== 'alphabet_only') {
+    for (const charmId of CHARM_IDS) {
+      netRequiredCharms[charmId] = Math.max(
+        0,
+        (normalizedCharms[charmId] || 0) - (lockedCharms[charmId] || 0)
+      );
+    }
+  }
+
+  const netAlphabetCount = countLetters(netRequired);
+  const netCharmCount = countCharms(netRequiredCharms);
+  const totalNetCount = netAlphabetCount + netCharmCount;
+
   const fullPlateCount = Math.floor(totalNetCount / safeCap);
   const remainderCount = totalNetCount % safeCap;
   const neededForNextFullPlate = remainderCount === 0 ? 0 : safeCap - remainderCount;
 
-  const pool = { ...netRequired };
-  const sortedLetters = ABC.filter((k) => pool[k] > 0).sort(
-    (a, b) => pool[b] - pool[a] || a.localeCompare(b)
-  );
+  const letterPool: LettersMap = { ...netRequired };
+  const charmPool: Record<CharmId, number> = { ...netRequiredCharms };
 
-  const usedNumbers = new Set(lockedJobs.map((j) => j.plateNumber));
+  // Avoid colliding with plate numbers of preserved Completed, Printing, Failed/Reprint, or cross-category plates
+  const preservedJobs = projectColorJobs.filter((j) =>
+    shouldPreserveExistingJobOnRegenerate(j, mode)
+  );
+  const usedNumbers = new Set(preservedJobs.map((j) => j.plateNumber));
   let nextPlateNum = 1;
   const getNextPlateNumber = () => {
     while (usedNumbers.has(nextPlateNum)) {
@@ -124,47 +220,100 @@ export function computeIntelligentPlates(
     return chosen;
   };
 
+  type PoolCandidate =
+    | { kind: 'letter'; key: string; orderIdx: number; remaining: number }
+    | { kind: 'charm'; key: CharmId; orderIdx: number; remaining: number };
+
+  const getActiveCandidates = (): PoolCandidate[] => {
+    const list: PoolCandidate[] = [];
+    ABC.forEach((letter, idx) => {
+      if ((letterPool[letter] || 0) > 0) {
+        list.push({
+          kind: 'letter',
+          key: letter,
+          orderIdx: idx,
+          remaining: letterPool[letter],
+        });
+      }
+    });
+    CHARM_IDS.forEach((charmId, idx) => {
+      if ((charmPool[charmId] || 0) > 0) {
+        list.push({
+          kind: 'charm',
+          key: charmId,
+          orderIdx: 100 + idx,
+          remaining: charmPool[charmId],
+        });
+      }
+    });
+    return list.sort(
+      (a, b) => b.remaining - a.remaining || a.orderIdx - b.orderIdx
+    );
+  };
+
   const fullPlates: DraftPlatePreview[] = [];
 
   for (let p = 0; p < fullPlateCount; p++) {
     let room = safeCap;
     const plateLetters: LettersMap = {};
-    const activeOrder = sortedLetters
-      .filter((k) => pool[k] > 0)
-      .sort((a, b) => pool[b] - pool[a] || a.localeCompare(b));
+    const plateCharms: CharmsMap = {};
+    const candidates = getActiveCandidates();
 
-    for (const k of activeOrder) {
+    for (const item of candidates) {
       if (room <= 0) break;
-      const take = Math.min(pool[k], room);
+      const available =
+        item.kind === 'letter'
+          ? letterPool[item.key] || 0
+          : charmPool[item.key] || 0;
+      const take = Math.min(available, room);
       if (take > 0) {
-        plateLetters[k] = take;
-        pool[k] -= take;
+        if (item.kind === 'letter') {
+          plateLetters[item.key] = take;
+          letterPool[item.key] -= take;
+        } else {
+          plateCharms[item.key] = take;
+          charmPool[item.key] -= take;
+        }
         room -= take;
       }
     }
+
+    const compactedL = compactLettersMap(plateLetters);
+    const compactedC = compactCharmsMap(plateCharms);
 
     fullPlates.push({
       tempId: `draft-${Date.now()}-${p}`,
       plateNumber: getNextPlateNumber(),
       capacity: safeCap,
-      letters: compactLettersMap(plateLetters),
+      letters: compactedL,
+      charms: compactedC,
+      plateMode: inferPlateMode(compactedL, compactedC),
       estimatedMinutes: safeMins,
       slicerVerified: false,
       notes: '',
     });
   }
 
-  const remainder = compactLettersMap(pool);
+  const remainder = compactLettersMap(letterPool);
+  const remainderCharms = compactCharmsMap(charmPool);
 
   return {
+    mode,
     lockedTotals,
+    lockedCharms,
     netRequired,
+    netRequiredCharms,
+    netAlphabetCount,
+    netCharmCount,
     totalNetCount,
     fullPlates,
     remainder,
+    remainderCharms,
     remainderCount,
     neededForNextFullPlate,
     underLockedLetters,
+    underLockedCharms,
+    underLockedLabels,
   };
 }
 
@@ -245,66 +394,72 @@ export function transitionJobState(
   let nextTxId = targetJob.stockTransactionId;
   let completedIso = targetJob.completedIso;
 
-  // Case A: Entering Completed AND stock has NOT been credited yet -> Credit once
+  const hasAlphabetLetters = countLetters(targetJob.letters) > 0;
+
+  // Case A: Entering Completed AND stock has NOT been credited yet -> Credit A–Z letters once (Charm-only plates leave Inventory untouched)
   if (nextStage === 'Completed' && !targetJob.stockApplied) {
-    const txId = `tx-comp-${jobId}-${nowMs}`;
-    for (const [letter, qty] of Object.entries(targetJob.letters)) {
-      nextPhysical[targetJob.colorId][letter] =
-        (nextPhysical[targetJob.colorId][letter] || 0) + Number(qty || 0);
+    if (hasAlphabetLetters) {
+      const txId = `tx-comp-${jobId}-${nowMs}`;
+      for (const [letter, qty] of Object.entries(targetJob.letters)) {
+        nextPhysical[targetJob.colorId][letter] =
+          (nextPhysical[targetJob.colorId][letter] || 0) + Number(qty || 0);
+      }
+      nextMovements.unshift({
+        id: txId,
+        type: 'PRINT_COMPLETE',
+        jobId: targetJob.id,
+        projectId: targetJob.projectId,
+        colorId: targetJob.colorId,
+        deltas: { ...targetJob.letters },
+        reason: `Completed Plate ${targetJob.plateNumber}`,
+        timestampIso: nowIso,
+      });
+      nextStockApplied = true;
+      nextTxId = txId;
     }
-    nextMovements.unshift({
-      id: txId,
-      type: 'PRINT_COMPLETE',
-      jobId: targetJob.id,
-      projectId: targetJob.projectId,
-      colorId: targetJob.colorId,
-      deltas: { ...targetJob.letters },
-      reason: `Completed Plate ${targetJob.plateNumber}`,
-      timestampIso: nowIso,
-    });
-    nextStockApplied = true;
-    nextTxId = txId;
     completedIso = nowIso;
   }
 
-  // Case B: Leaving Completed -> Safely reverse credited stock so no phantom inventory remains
-  if (targetJob.stage === 'Completed' && nextStage !== 'Completed' && targetJob.stockApplied) {
-    const reservedForColor = getReservedStockForColor(workspace, targetJob.colorId);
-    for (const [letter, qty] of Object.entries(targetJob.letters)) {
-      const currentPhys = nextPhysical[targetJob.colorId][letter] || 0;
-      const afterRev = currentPhys - Number(qty || 0);
-      if (afterRev < 0) {
-        return {
-          error: `Cannot reverse Completed status: Letter ${letter} physical stock (${currentPhys}) is already consumed below plate quantity (${qty}). Adjust stock first.`,
-        };
+  // Case B: Leaving Completed -> Safely reverse credited A–Z stock if any was applied
+  if (targetJob.stage === 'Completed' && nextStage !== 'Completed') {
+    if (targetJob.stockApplied && hasAlphabetLetters) {
+      const reservedForColor = getReservedStockForColor(workspace, targetJob.colorId);
+      for (const [letter, qty] of Object.entries(targetJob.letters)) {
+        const currentPhys = nextPhysical[targetJob.colorId][letter] || 0;
+        const afterRev = currentPhys - Number(qty || 0);
+        if (afterRev < 0) {
+          return {
+            error: `Cannot reverse Completed status: Letter ${letter} physical stock (${currentPhys}) is already consumed below plate quantity (${qty}). Adjust stock first.`,
+          };
+        }
+        if (afterRev < (reservedForColor[letter] || 0)) {
+          return {
+            error: `Cannot reverse Completed status: ${reservedForColor[letter]} pcs of letter ${letter} are currently reserved by projects. Release allocation first.`,
+          };
+        }
       }
-      if (afterRev < (reservedForColor[letter] || 0)) {
-        return {
-          error: `Cannot reverse Completed status: ${reservedForColor[letter]} pcs of letter ${letter} are currently reserved by projects. Release allocation first.`,
-        };
+
+      const revDeltas: LettersMap = {};
+      for (const [letter, qty] of Object.entries(targetJob.letters)) {
+        const amount = Number(qty || 0);
+        nextPhysical[targetJob.colorId][letter] = Math.max(
+          0,
+          (nextPhysical[targetJob.colorId][letter] || 0) - amount
+        );
+        revDeltas[letter] = -amount;
       }
-    }
 
-    const revDeltas: LettersMap = {};
-    for (const [letter, qty] of Object.entries(targetJob.letters)) {
-      const amount = Number(qty || 0);
-      nextPhysical[targetJob.colorId][letter] = Math.max(
-        0,
-        (nextPhysical[targetJob.colorId][letter] || 0) - amount
-      );
-      revDeltas[letter] = -amount;
+      nextMovements.unshift({
+        id: `tx-rev-${jobId}-${nowMs}`,
+        type: 'PRINT_REVERSAL',
+        jobId: targetJob.id,
+        projectId: targetJob.projectId,
+        colorId: targetJob.colorId,
+        deltas: revDeltas,
+        reason: `Reversed Plate ${targetJob.plateNumber} (${targetJob.stage} -> ${nextStage})`,
+        timestampIso: nowIso,
+      });
     }
-
-    nextMovements.unshift({
-      id: `tx-rev-${jobId}-${nowMs}`,
-      type: 'PRINT_REVERSAL',
-      jobId: targetJob.id,
-      projectId: targetJob.projectId,
-      colorId: targetJob.colorId,
-      deltas: revDeltas,
-      reason: `Reversed Plate ${targetJob.plateNumber} (${targetJob.stage} -> ${nextStage})`,
-      timestampIso: nowIso,
-    });
     nextStockApplied = false;
     nextTxId = null;
     completedIso = null;

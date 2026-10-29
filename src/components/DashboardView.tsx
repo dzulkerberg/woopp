@@ -1,5 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { countLetters, SALES_CHANNELS } from '../constants';
+import {
+  countPlateKeycaps,
+  getProjectTotalTargetQuantity,
+  SALES_CHANNELS,
+} from '../constants';
 import { NavSection, ProductionWorkspaceV5 } from '../types';
 import {
   formatActivityTimestamp,
@@ -61,11 +65,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const completedJobs = filteredJobs.filter((j) => j.stage === 'Completed');
   const printingJobs = filteredJobs.filter((j) => j.stage === 'Printing');
   const totalProducedKeycaps = completedJobs.reduce(
-    (sum, j) => sum + countLetters(j.letters),
+    (sum, j) => sum + countPlateKeycaps(j),
     0
   );
   const totalPlannedKeycaps = filteredJobs.reduce(
-    (sum, j) => sum + countLetters(j.letters),
+    (sum, j) => sum + countPlateKeycaps(j),
     0
   );
   const totalEstMinutes = filteredJobs.reduce((sum, j) => sum + (j.estimatedMinutes || 0), 0);
@@ -82,8 +86,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const chProjectIds = new Set(chProjects.map((p) => p.id));
       const chJobs = workspace.jobs.filter((j) => chProjectIds.has(j.projectId));
       const done = chJobs.filter((j) => j.stage === 'Completed');
-      const donePcs = done.reduce((s, j) => s + countLetters(j.letters), 0);
-      const targetPcs = chProjects.reduce((s, p) => s + (p.targetQuantity || 0), 0);
+      const donePcs = done.reduce((s, j) => s + countPlateKeycaps(j), 0);
+      const targetPcs = chProjects.reduce(
+        (s, p) => s + getProjectTotalTargetQuantity(p),
+        0
+      );
       const pct = targetPcs > 0 ? Math.min(100, Math.round((donePcs / targetPcs) * 100)) : 0;
       return {
         channel: ch,
@@ -282,10 +289,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         const pJobs = workspace.jobs.filter((j) => j.projectId === proj.id);
                         const pDone = pJobs
                           .filter((j) => j.stage === 'Completed')
-                          .reduce((s, j) => s + countLetters(j.letters), 0);
+                          .reduce((s, j) => s + countPlateKeycaps(j), 0);
+                        const projTarget = getProjectTotalTargetQuantity(proj);
                         const pct =
-                          proj.targetQuantity > 0
-                            ? Math.min(100, Math.round((pDone / proj.targetQuantity) * 100))
+                          projTarget > 0
+                            ? Math.min(100, Math.round((pDone / projTarget) * 100))
                             : 0;
                         const comparableDeadline = toComparableYYYYMMDD(proj.deadline);
                         const etaInfo = projectEtaMap.get(proj.id);

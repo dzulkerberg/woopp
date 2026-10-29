@@ -6,14 +6,18 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import {
+  CHARM_IDS,
   KANBAN_STAGES,
   MACHINE_STATUSES,
+  PLATE_GENERATION_MODES,
   PRIORITIES,
   SALES_CHANNELS,
 } from '../constants';
 import {
   ActivityLogEntry,
   AlphabetPreset,
+  CharmId,
+  CharmsMap,
   ColorOption,
   InventoryMovement,
   InventoryState,
@@ -21,6 +25,7 @@ import {
   LedgerMovementType,
   LettersMap,
   MachineStatus,
+  PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
   ProductionProject,
@@ -410,6 +415,44 @@ function validateColorLettersMapRecord(
   return out;
 }
 
+function validateCharmsMap(val: unknown, path: string): CharmsMap {
+  if (!isPlainObject(val)) {
+    throw new FirestorePayloadValidationError(path, 'Expected charms map object.');
+  }
+  const out: CharmsMap = {};
+  for (const [k, rawQty] of Object.entries(val)) {
+    if (rawQty === undefined) continue;
+    const charmId = requireEnum<CharmId>(k, CHARM_IDS, joinPath(path, k));
+    const qty = requireFiniteNumber(rawQty, joinPath(path, charmId), { min: 0 });
+    const floored = Math.floor(qty);
+    if (floored > 0) {
+      out[charmId] = floored;
+    }
+  }
+  return out;
+}
+
+function validateColorCharmsMapRecord(
+  val: unknown,
+  path: string
+): Record<string, CharmsMap> {
+  if (!isPlainObject(val)) {
+    throw new FirestorePayloadValidationError(
+      path,
+      'Expected color-to-charms record object.'
+    );
+  }
+  const out: Record<string, CharmsMap> = {};
+  for (const [colorId, mapVal] of Object.entries(val)) {
+    if (mapVal === undefined) continue;
+    out[requireNonEmptyString(colorId, path)] = validateCharmsMap(
+      mapVal,
+      joinPath(path, colorId)
+    );
+  }
+  return out;
+}
+
 function validateColorOption(color: ColorOption, path: string): ColorOption {
   if (!isPlainObject(color)) {
     throw new FirestorePayloadValidationError(path, 'Expected color object.');
@@ -504,7 +547,7 @@ function validateProductionProject(
     );
   }
 
-  return {
+  const normalized: ProductionProject = {
     id: requireNonEmptyString(project.id, joinPath(path, 'id')),
     name: requireNonEmptyString(project.name, joinPath(path, 'name')),
     salesChannel: requireEnum<SalesChannel>(
@@ -562,6 +605,22 @@ function validateProductionProject(
       joinPath(path, 'updatedIso')
     ),
   };
+
+  if (project.charmTargetsByColor !== undefined) {
+    normalized.charmTargetsByColor = validateColorCharmsMapRecord(
+      project.charmTargetsByColor,
+      joinPath(path, 'charmTargetsByColor')
+    );
+  }
+
+  if (project.charmCarryForwardByColor !== undefined) {
+    normalized.charmCarryForwardByColor = validateColorCharmsMapRecord(
+      project.charmCarryForwardByColor,
+      joinPath(path, 'charmCarryForwardByColor')
+    );
+  }
+
+  return normalized;
 }
 
 function validateProductionJob(job: ProductionJob, path: string): ProductionJob {
@@ -622,6 +681,21 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
       joinPath(path, 'completedIso')
     ),
   };
+
+  if (job.charms !== undefined) {
+    const cleanedCharms = validateCharmsMap(job.charms, joinPath(path, 'charms'));
+    if (Object.keys(cleanedCharms).length > 0) {
+      normalized.charms = cleanedCharms;
+    }
+  }
+
+  if (job.plateMode !== undefined) {
+    normalized.plateMode = requireEnum<PlateGenerationMode>(
+      job.plateMode,
+      PLATE_GENERATION_MODES,
+      joinPath(path, 'plateMode')
+    );
+  }
 
   // Optional printer-specific duration overrides: omit if absent/empty, validate entries if present
   if (job.machineDurationOverrides !== undefined) {

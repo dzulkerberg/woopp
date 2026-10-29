@@ -1,11 +1,15 @@
 import {
   AlphabetPreset,
+  CharmDefinition,
+  CharmId,
+  CharmsMap,
   ColorOption,
   KanbanStage,
   LegacyJobStatus,
   LegacyTrackerState,
   LettersMap,
   MachineStatus,
+  PlateGenerationMode,
   PrinterMachine,
   ProductionJob,
   ProductionProject,
@@ -19,6 +23,30 @@ export const STORAGE_KEY_V5 = 'woopp-print-tracker-v5';
 export const STORAGE_KEY_V1 = 'woopp-print-tracker-v1';
 export const DEFAULT_PLATE_CAPACITY = 138;
 export const ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+export const CHARM_DEFINITIONS: readonly CharmDefinition[] = [
+  { id: 'CHARM_LOVE', label: 'LOVE', symbol: '♥' },
+  { id: 'CHARM_STAR', label: 'STAR', symbol: '★' },
+  { id: 'CHARM_FLOWER', label: 'FLOWER', symbol: '✿' },
+  { id: 'CHARM_HASH', label: 'HASHTAG', symbol: '#' },
+  { id: 'CHARM_AT', label: 'AT SIGN', symbol: '@' },
+] as const;
+
+export const CHARM_IDS: CharmId[] = CHARM_DEFINITIONS.map((c) => c.id);
+
+export const CHARM_BY_ID: Record<CharmId, CharmDefinition> = {
+  CHARM_LOVE: CHARM_DEFINITIONS[0],
+  CHARM_STAR: CHARM_DEFINITIONS[1],
+  CHARM_FLOWER: CHARM_DEFINITIONS[2],
+  CHARM_HASH: CHARM_DEFINITIONS[3],
+  CHARM_AT: CHARM_DEFINITIONS[4],
+};
+
+export const PLATE_GENERATION_MODES: readonly PlateGenerationMode[] = [
+  'alphabet_only',
+  'charm_only',
+  'mixed',
+] as const;
 
 export const SALES_CHANNELS: SalesChannel[] = [
   'Klebang Walk',
@@ -127,6 +155,131 @@ export function sumAlphabetMaps(maps: (LettersMap | undefined)[]): LettersMap {
     }
   }
   return res;
+}
+
+export function emptyCharmsMap(): Record<CharmId, number> {
+  return {
+    CHARM_LOVE: 0,
+    CHARM_STAR: 0,
+    CHARM_FLOWER: 0,
+    CHARM_HASH: 0,
+    CHARM_AT: 0,
+  };
+}
+
+export function normalizeCharmsMap(
+  map?: Partial<Record<string, number>> | null
+): Record<CharmId, number> {
+  const base = emptyCharmsMap();
+  if (!map) return base;
+  for (const charmId of CHARM_IDS) {
+    const val = Number(map[charmId] || 0);
+    base[charmId] = Number.isFinite(val) && val > 0 ? Math.floor(val) : 0;
+  }
+  return base;
+}
+
+export function compactCharmsMap(
+  map?: Partial<Record<string, number>> | null
+): CharmsMap {
+  const out: CharmsMap = {};
+  if (!map) return out;
+  for (const charmId of CHARM_IDS) {
+    const v = Math.floor(Number(map[charmId] || 0));
+    if (v > 0) out[charmId] = v;
+  }
+  return out;
+}
+
+export function countCharms(charms?: Partial<Record<string, number>> | null): number {
+  if (!charms) return 0;
+  return CHARM_IDS.reduce(
+    (sum, id) => sum + Math.max(0, Math.floor(Number(charms[id] || 0))),
+    0
+  );
+}
+
+export function sumCharmsMaps(
+  maps: (Partial<Record<string, number>> | undefined | null)[]
+): Record<CharmId, number> {
+  const res = emptyCharmsMap();
+  for (const m of maps) {
+    if (!m) continue;
+    for (const charmId of CHARM_IDS) {
+      const val = Number(m[charmId] || 0);
+      if (Number.isFinite(val) && val > 0) {
+        res[charmId] += Math.floor(val);
+      }
+    }
+  }
+  return res;
+}
+
+/**
+ * Counts total physical keycaps on a plate (1 letter = 1 pc, 1 charm = 1 pc).
+ * Treats missing charm quantities on legacy records as 0.
+ */
+export function countPlateKeycaps(item: {
+  letters?: LettersMap | null;
+  charms?: Partial<Record<string, number>> | null;
+}): number {
+  return countLetters(item.letters) + countCharms(item.charms);
+}
+
+/**
+ * Computes total planned keycaps (Alphabet + Charm) across assigned colors for a project,
+ * falling back to `project.targetQuantity` when per-color maps are still unpopulated.
+ */
+export function getProjectTotalTargetQuantity(project: ProductionProject): number {
+  const colorIds = project.assignedColorIds || [];
+  let sum = 0;
+  for (const cid of colorIds) {
+    sum += countLetters(project.targetsByColor?.[cid]);
+    sum += countCharms(project.charmTargetsByColor?.[cid]);
+  }
+  return sum > 0 ? sum : Math.max(0, Math.floor(Number(project.targetQuantity) || 0));
+}
+
+/**
+ * Formats a plate's Alphabet & Charm quantities into a clean plain-text summary
+ * for queue clipboard exports, tooltips, and select dropdowns.
+ */
+export function formatPlateItemsText(
+  item: {
+    letters?: LettersMap | null;
+    charms?: Partial<Record<string, number>> | null;
+  },
+  compact = false
+): string {
+  const letterParts: string[] = [];
+  if (item.letters) {
+    for (const k of ABC) {
+      const v = Math.floor(Number(item.letters[k] || 0));
+      if (v > 0) letterParts.push(compact ? `${k}${v}` : `${k}×${v}`);
+    }
+  }
+
+  const charmParts: string[] = [];
+  if (item.charms) {
+    for (const def of CHARM_DEFINITIONS) {
+      const v = Math.floor(Number(item.charms[def.id] || 0));
+      if (v > 0) {
+        charmParts.push(
+          compact ? `${def.symbol}${v}` : `${def.symbol} ${def.label}×${v}`
+        );
+      }
+    }
+  }
+
+  if (letterParts.length > 0 && charmParts.length > 0) {
+    return `${letterParts.join(compact ? ' ' : ' · ')} | ${charmParts.join(
+      compact ? ' ' : ' · '
+    )}`;
+  }
+  if (charmParts.length > 0) {
+    return charmParts.join(compact ? ' ' : ' · ');
+  }
+  return letterParts.join(compact ? ' ' : ' · ');
 }
 
 export function createStandard414Preset(): AlphabetPreset {
@@ -530,8 +683,65 @@ export function normalizeWorkspaceV5(
           : 0,
       maintenanceUntilMs: m.maintenanceUntilMs ?? null,
     })),
-    projects: Array.isArray(raw.projects) ? raw.projects : [],
-    jobs: Array.isArray(raw.jobs) ? raw.jobs : [],
+    projects: Array.isArray(raw.projects)
+      ? raw.projects.map((p) => {
+          const normalizedProj: ProductionProject = {
+            ...p,
+            targetsByColor: p.targetsByColor || {},
+            carryForwardByColor: p.carryForwardByColor || {},
+            allocatedStockByColor: p.allocatedStockByColor || {},
+          };
+          if (p.charmTargetsByColor && typeof p.charmTargetsByColor === 'object') {
+            const cleanedCharmTargets: Record<string, CharmsMap> = {};
+            for (const [cid, cMap] of Object.entries(p.charmTargetsByColor)) {
+              if (cMap && typeof cMap === 'object') {
+                cleanedCharmTargets[cid] = compactCharmsMap(cMap);
+              }
+            }
+            normalizedProj.charmTargetsByColor = cleanedCharmTargets;
+          }
+          if (
+            p.charmCarryForwardByColor &&
+            typeof p.charmCarryForwardByColor === 'object'
+          ) {
+            const cleanedCharmCarry: Record<string, CharmsMap> = {};
+            for (const [cid, cMap] of Object.entries(p.charmCarryForwardByColor)) {
+              if (cMap && typeof cMap === 'object') {
+                cleanedCharmCarry[cid] = compactCharmsMap(cMap);
+              }
+            }
+            normalizedProj.charmCarryForwardByColor = cleanedCharmCarry;
+          }
+          return normalizedProj;
+        })
+      : [],
+    jobs: Array.isArray(raw.jobs)
+      ? raw.jobs.map((j) => {
+          const normalizedJob: ProductionJob = {
+            ...j,
+            letters: j.letters || {},
+          };
+          if (j.charms && typeof j.charms === 'object') {
+            const compacted = compactCharmsMap(j.charms);
+            if (Object.keys(compacted).length > 0) {
+              normalizedJob.charms = compacted;
+            } else {
+              delete normalizedJob.charms;
+            }
+          } else {
+            delete normalizedJob.charms;
+          }
+          if (
+            j.plateMode &&
+            PLATE_GENERATION_MODES.includes(j.plateMode)
+          ) {
+            normalizedJob.plateMode = j.plateMode;
+          } else {
+            delete normalizedJob.plateMode;
+          }
+          return normalizedJob;
+        })
+      : [],
     presets: Array.isArray(raw.presets) && raw.presets.length > 0
       ? raw.presets
       : [createStandard414Preset(), createEqualSetPreset()],

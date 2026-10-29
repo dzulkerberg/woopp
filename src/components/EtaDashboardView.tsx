@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { countLetters } from '../constants';
+import { countLetters, countPlateKeycaps } from '../constants';
 import { KanbanStage, NavSection, ProductionWorkspaceV5 } from '../types';
 import {
   formatCountdownHMS,
@@ -9,6 +9,7 @@ import {
 } from '../utils/dateFormat';
 import { GlobalScheduleResult, ScheduledJobSlot } from '../utils/schedulingEngine';
 import { DurationHMInput } from './DurationHMInput';
+import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface EtaDashboardViewProps {
   workspace: ProductionWorkspaceV5;
@@ -346,7 +347,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
             {assignedMachineName} · Plate {job.plateNumber}
           </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
-            {project?.name || 'Project'} · {colorName} · {countLetters(job.letters)} pcs
+            {project?.name || 'Project'} · {colorName} · {countPlateKeycaps(job)}/{job.plateCapacity} pcs
           </div>
         </div>
         <span
@@ -361,6 +362,8 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           {isPaused ? 'Paused (Frozen)' : remainingSecondsLive === 0 ? 'Ready to Finish' : 'Printing Live'}
         </span>
       </div>
+
+      <PlateCompositionSummary letters={job.letters} charms={job.charms} compact />
 
       {/* Big Tabular Countdown & Finish Timestamp */}
       <div className="flex flex-wrap items-baseline justify-between gap-2 pt-1">
@@ -463,7 +466,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           onClick={onComplete}
           className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap"
         >
-          Complete Print (+Stock)
+          {countLetters(job.letters) > 0 ? 'Complete Print (+Stock)' : 'Complete Print'}
         </button>
       </div>
     </article>
