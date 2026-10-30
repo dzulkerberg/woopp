@@ -873,13 +873,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
         </div>
 
-        {/* Bambu Studio Physical Fit Notice & Carry-Forward Controls */}
-        <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2.5">
-          <div>
-            <span className="font-semibold">Numerical Capacity vs. Bambu Studio Physical Fit:</span>{' '}
-            Each letter and charm counts as 1 physical keycap toward {plateCapacity} pcs/plate (default 138 pcs). Wide letters (M, W) and sculpted charms (♥, ★, ✿, #, @) must always have their physical bed fit verified separately in Bambu Studio.
-          </div>
-          {carryForwardTotal > 0 && (
+        {/* Carry-Forward Controls */}
+        {carryForwardTotal > 0 && (
+          <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
               {missingCarryTotal > 0 ? (
                 <button
@@ -911,8 +907,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 </button>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       {/* Category 1: Alphabet A–Z */}

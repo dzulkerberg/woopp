@@ -401,7 +401,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
 
   return (
     <article
-      className={`rounded-xl border p-4 space-y-3 ${
+      className={`min-w-0 w-full max-w-full rounded-xl border p-4 space-y-3 ${
         needsEtaRecalibration || isPaused
           ? 'border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20'
           : isAwaitingConfirmation
@@ -409,17 +409,17 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-[#13111c]'
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold text-neutral-900 dark:text-white">
+      <div className="flex flex-wrap items-start justify-between gap-2 min-w-0">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-neutral-900 dark:text-white break-words">
             {assignedMachineName} · Plate {job.plateNumber}
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 break-words">
             {project?.name || 'Project'} · {colorName} · {countPlateKeycaps(job)}/{job.plateCapacity} pcs
           </div>
         </div>
         <span
-          className={`text-xs font-semibold text-right ${
+          className={`text-xs font-semibold break-words ${
             needsEtaRecalibration || isPaused
               ? 'text-amber-700 dark:text-amber-400'
               : isAwaitingConfirmation
@@ -516,8 +516,8 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
       )}
 
       {/* Action Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 min-w-0">
+        <div className="flex flex-wrap items-stretch gap-2 min-w-0 w-full sm:w-auto">
           {!needsEtaRecalibration &&
             (!isPaused ? (
               <button
@@ -528,7 +528,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                   setRemMinutesInput(Math.max(1, curMins));
                   onPauseOrResume(job.id, 'pause');
                 }}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-white dark:bg-[#191726] whitespace-nowrap"
+                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-white dark:bg-[#191726] hover:bg-amber-50/70 dark:hover:bg-amber-950/35 text-center leading-tight break-words disabled:opacity-50"
               >
                 Pause Print
               </button>
@@ -537,7 +537,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                 type="button"
                 disabled={isBusy}
                 onClick={() => onPauseOrResume(job.id, 'resume')}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-center leading-tight break-words disabled:opacity-50"
               >
                 Resume Countdown
               </button>
@@ -550,7 +550,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                 setRemMinutesInput(Math.max(1, Math.ceil(remainingSecondsLive / 60)));
                 setEditingRemaining(!editingRemaining);
               }}
-              className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-neutral-800 text-center leading-tight break-words"
             >
               {editingRemaining ? 'Close Adjust' : 'Adjust Remaining'}
             </button>
@@ -560,7 +560,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={onCancelPrinting}
-              className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-45 whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-45 text-center leading-tight break-words"
             >
               Cancel Print
             </button>
@@ -571,7 +571,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           type="button"
           disabled={isBusy}
           onClick={onComplete}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 whitespace-nowrap"
+          className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 text-center leading-tight break-words"
         >
           {countLetters(job.letters) > 0 ? 'Complete Print (+Stock)' : 'Complete Print'}
         </button>

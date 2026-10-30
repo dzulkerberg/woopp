@@ -628,9 +628,9 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
             return (
               <div
                 key={stage}
-                className="bg-neutral-100/70 dark:bg-[#151320] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-3.5 space-y-3"
+                className="min-w-0 bg-neutral-100/70 dark:bg-[#151320] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-3.5 space-y-3"
               >
-                <div className="flex items-center justify-between px-1">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 px-1">
                   <h3 className="text-xs font-semibold text-neutral-900 dark:text-white">
                     {stage}
                   </h3>
@@ -1021,14 +1021,14 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
   return (
     <article
-      className={`bg-white dark:bg-[#1b1829] border rounded-xl p-3.5 space-y-2.5 ${
+      className={`min-w-0 w-full max-w-full bg-white dark:bg-[#1b1829] border rounded-xl p-3.5 space-y-2.5 ${
         slot?.exceedsProjectDeadline
           ? 'border-red-400 dark:border-red-700'
           : 'border-neutral-200/90 dark:border-neutral-800'
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-neutral-900 dark:text-white">
               Plate {job.plateNumber}
@@ -1072,22 +1072,22 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {/* Cancelled Details */}
       {job.stage === 'Cancelled' && (
-        <div className="p-2.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/25 text-xs space-y-1">
-          <div className="flex items-center justify-between font-semibold text-red-700 dark:text-red-300">
+        <div className="min-w-0 p-2.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/25 text-xs space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-1 font-semibold text-red-700 dark:text-red-300">
             <span>Cancelled</span>
             {job.cancelledIso && (
-              <span className="text-[11px] font-mono-data font-normal">
+              <span className="text-[11px] font-mono-data font-normal break-words">
                 {formatDateTimeDDMMYYYY(new Date(job.cancelledIso), timezone)}
               </span>
             )}
           </div>
           {releasedMachine && (
-            <div className="text-[11px] text-neutral-600 dark:text-neutral-300">
+            <div className="text-[11px] text-neutral-600 dark:text-neutral-300 break-words">
               Released printer: {releasedMachine.name}
             </div>
           )}
           {job.cancellationReason && (
-            <div className="text-[11px] text-neutral-700 dark:text-neutral-200">
+            <div className="text-[11px] text-neutral-700 dark:text-neutral-200 break-words">
               Reason: {job.cancellationReason}
             </div>
           )}
@@ -1109,7 +1109,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           />
         ) : (
           <div
-            className={`p-2.5 rounded-lg border text-xs space-y-1.5 ${
+            className={`min-w-0 p-2.5 rounded-lg border text-xs space-y-2 ${
               slot.isPaused
                 ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
                 : slot.isAwaitingConfirmation
@@ -1117,12 +1117,12 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                 : 'bg-[#f6f3ff] dark:bg-[#251f3d] border-[#dcd2ff] dark:border-[#3f3469]'
             }`}
           >
-            <div className="flex items-center justify-between gap-2 font-mono-data">
+            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 font-mono-data min-w-0">
               <span className="font-bold text-sm text-neutral-900 dark:text-white">
                 {formatCountdownHMS(slot.remainingSecondsLive)}
               </span>
               <span
-                className={`text-[11px] font-sans font-semibold text-right ${
+                className={`text-[11px] font-sans font-semibold break-words ${
                   slot.isPaused
                     ? 'text-amber-700 dark:text-amber-400'
                     : slot.isAwaitingConfirmation
@@ -1138,14 +1138,14 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               </span>
             </div>
             {slot.endMs && (
-              <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-300">
+              <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-300 break-words">
                 Est. Finish: {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
               </div>
             )}
 
             {slot.isPaused ? (
-              <div className="pt-1 space-y-1.5">
-                <div className="flex items-center justify-between gap-1">
+              <div className="pt-1 space-y-2 min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 min-w-0">
                   <DurationHMInput
                     compact
                     minutes={pausedMinsDraft}
@@ -1158,17 +1158,17 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     onClick={() =>
                       onPauseOrResume(job.id, 'update_remaining', pausedMinsDraft)
                     }
-                    className="px-2 py-1 text-[11px] font-semibold rounded bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
+                    className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-[11px] font-semibold rounded bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-center leading-tight disabled:opacity-50"
                   >
                     Set
                   </button>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-stretch gap-1.5 min-w-0">
                   <button
                     type="button"
                     disabled={isBusy}
                     onClick={() => onPauseOrResume(job.id, 'resume')}
-                    className="flex-1 py-1 text-xs font-semibold rounded bg-[#6c4ce6] text-white whitespace-nowrap"
+                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-center leading-tight break-words disabled:opacity-50"
                   >
                     Resume Print
                   </button>
@@ -1176,14 +1176,14 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     type="button"
                     disabled={!isAdmin || isBusy}
                     onClick={() => onRequestCancelPrinting(job)}
-                    className="px-2 py-1 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#191726] whitespace-nowrap"
+                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#191726] text-center leading-tight break-words disabled:opacity-45"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-stretch gap-1.5 pt-0.5 min-w-0">
                 <button
                   type="button"
                   disabled={isBusy}
@@ -1193,7 +1193,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     );
                     onPauseOrResume(job.id, 'pause');
                   }}
-                  className="flex-1 py-1 text-[11px] font-semibold rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#191726] text-amber-800 dark:text-amber-300 whitespace-nowrap"
+                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#191726] hover:bg-amber-50/70 dark:hover:bg-amber-950/35 text-amber-800 dark:text-amber-300 text-center leading-tight break-words disabled:opacity-50"
                 >
                   Pause Countdown
                 </button>
@@ -1201,7 +1201,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                   type="button"
                   disabled={!isAdmin || isBusy}
                   onClick={() => onRequestCancelPrinting(job)}
-                  className="px-2 py-1 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#191726] whitespace-nowrap"
+                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#191726] text-center leading-tight break-words disabled:opacity-45"
                 >
                   Cancel Print
                 </button>
@@ -1214,7 +1214,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         job.stage !== 'Cancelled' &&
         slot?.startMs &&
         slot?.endMs ? (
-        <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-[#13111d] px-2.5 py-1.5 rounded-lg border border-neutral-100 dark:border-neutral-800">
+        <div className="min-w-0 text-[11px] font-mono-data text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-[#13111d] px-2.5 py-1.5 rounded-lg border border-neutral-100 dark:border-neutral-800 break-words">
           <div>Est Start: {formatDateTimeDDMMYYYY(slot.startMs, timezone)}</div>
           <div
             className={
@@ -1233,7 +1233,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {/* Printer Assignment */}
       {!isReadOnlyStage && (
-        <div>
+        <div className="min-w-0">
           <select
             aria-label={`Assign printer for Plate ${job.plateNumber}`}
             disabled={isBusy}
@@ -1241,7 +1241,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             onChange={(e) =>
               onUpdateJobMetadata(job.id, { machineId: e.target.value || null })
             }
-            className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#12101b] text-xs text-neutral-800 dark:text-neutral-200"
+            className="w-full min-w-0 max-w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#12101b] text-xs text-neutral-800 dark:text-neutral-200"
           >
             <option value="">
               {slot?.isVirtualAssignment
@@ -1259,8 +1259,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {/* Stage Selector + Quick Actions */}
       {isReadOnlyStage ? (
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 min-w-0">
+          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 min-w-0 break-words">
             Status: <b className="text-neutral-800 dark:text-neutral-200">{job.stage}</b>
           </span>
           {job.archived ? (
@@ -1268,7 +1268,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={() => onRestorePlate(job)}
-              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] disabled:opacity-45 whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] disabled:opacity-45 text-center leading-tight break-words"
             >
               Restore Plate
             </button>
@@ -1277,14 +1277,14 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={() => onArchivePlate(job)}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-45 whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-45 text-center leading-tight break-words"
             >
               Archive Plate
             </button>
           )}
         </div>
       ) : (
-        <div className="flex items-center justify-between gap-1.5 pt-1">
+        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 min-w-0">
           <select
             aria-label={`Stage for Plate ${job.plateNumber}`}
             disabled={isBusy}
@@ -1292,7 +1292,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             onChange={(e) =>
               onTransitionStage(job.id, e.target.value as KanbanStage)
             }
-            className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#12101b] text-xs font-medium text-neutral-900 dark:text-white"
+            className="w-full sm:w-auto flex-1 min-w-[7rem] max-w-full px-2 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#12101b] text-xs font-medium text-neutral-900 dark:text-white"
           >
             {ACTIVE_KANBAN_STAGES.map((st) => (
               <option key={st} value={st}>
@@ -1308,7 +1308,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               onClick={() =>
                 onTransitionStage(job.id, ACTIVE_KANBAN_STAGES[stageIndex + 1])
               }
-              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] text-center leading-tight break-words disabled:opacity-50"
             >
               Next →
             </button>
@@ -1319,7 +1319,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               type="button"
               disabled={isBusy}
               onClick={() => onTransitionStage(job.id, 'Ready to Print')}
-              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 whitespace-nowrap"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-center leading-tight break-words disabled:opacity-50"
             >
               Reprint
             </button>
@@ -1328,8 +1328,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       )}
 
       {/* Metadata footer & Expandable Bambu Studio Timing / Machine Overrides */}
-      <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
-        <span>
+      <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-neutral-500 dark:text-neutral-400 min-w-0">
+        <span className="min-w-0 break-words">
           {job.stage === 'Completed'
             ? `Done (${formatDurationHoursMinutes(
                 job.actualMinutes || job.estimatedMinutes
@@ -1341,7 +1341,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
+            className="text-[#6c4ce6] dark:text-[#b49eff] hover:underline shrink-0"
           >
             {expanded ? 'Hide' : 'Timing & Notes'}
           </button>
@@ -1349,8 +1349,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       </div>
 
       {expanded && !job.archived && (
-        <div className="pt-2 space-y-2.5 border-t border-neutral-100 dark:border-neutral-800 text-xs">
-          <div className="flex items-center justify-between gap-2">
+        <div className="pt-2 space-y-2.5 border-t border-neutral-100 dark:border-neutral-800 text-xs min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-neutral-500">Bambu Est. (h/m):</span>
             <DurationHMInput
               compact
@@ -1363,7 +1363,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           </div>
 
           {job.machineId && (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span
                 className="text-[11px] text-neutral-500"
                 title="Printer-specific duration from Bambu Studio"
@@ -1390,7 +1390,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           )}
 
           {job.stage === 'Completed' && (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-neutral-500">Actual Print (h/m):</span>
               <DurationHMInput
                 compact

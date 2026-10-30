@@ -158,20 +158,15 @@ interface TopHeaderProps {
   sectionTitle: string;
   subtitle?: string;
   onOpenMobileMenu: () => void;
-  primaryAction?: {
-    label: string;
-    onClick: () => void;
-  };
 }
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
   sectionTitle,
   subtitle,
   onOpenMobileMenu,
-  primaryAction,
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-[#faf9fd]/90 dark:bg-[#111018]/90 backdrop-blur border-b border-neutral-200/80 dark:border-neutral-800 px-6 py-3.5 flex items-center justify-between gap-8 no-print">
+    <header className="sticky top-0 z-30 min-h-[61px] bg-[#faf9fd]/90 dark:bg-[#111018]/90 backdrop-blur border-b border-neutral-200/80 dark:border-neutral-800 px-6 py-3.5 flex items-center justify-between gap-8 no-print">
       <div className="flex items-center gap-3 min-w-0">
         <button
           type="button"
@@ -202,18 +197,6 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             </>
           )}
         </div>
-      </div>
-
-      <div className="flex items-center gap-3 shrink-0">
-        {primaryAction && (
-          <button
-            type="button"
-            onClick={primaryAction.onClick}
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white transition-colors whitespace-nowrap shrink-0"
-          >
-            {primaryAction.label}
-          </button>
-        )}
       </div>
     </header>
   );

@@ -177,9 +177,9 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
           return (
             <section
               key={machine.id}
-              className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-5 flex flex-col justify-between space-y-4"
+              className="min-w-0 bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-5 flex flex-col justify-between space-y-4"
             >
-              <div className="space-y-4">
+              <div className="space-y-4 min-w-0">
                 {/* Machine Header & Editable Name */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
@@ -324,9 +324,9 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
 
                 {/* Active Print Slot (Overlap Protected + Live Countdown) */}
                 {activeSlot && activeJob ? (
-                  <div className="p-3.5 rounded-xl bg-[#f6f3ff] dark:bg-[#231d3a] border border-[#dcd2ff] dark:border-[#3e3366] space-y-2.5">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="font-semibold text-[#5b3cc4] dark:text-[#c7b8ff]">
+                  <div className="min-w-0 p-3.5 rounded-xl bg-[#f6f3ff] dark:bg-[#231d3a] border border-[#dcd2ff] dark:border-[#3e3366] space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs min-w-0">
+                      <span className="font-semibold text-[#5b3cc4] dark:text-[#c7b8ff] break-words">
                         Plate {activeJob.plateNumber} (
                         {activeSlot.needsEtaRecalibration
                           ? ETA_NEEDS_RECALIBRATION_LABEL
@@ -343,7 +343,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-neutral-700 dark:text-neutral-200">
+                    <div className="text-xs text-neutral-700 dark:text-neutral-200 break-words">
                       {activeSlot.project?.name} · {activeSlot.colorName} ({countPlateKeycaps(activeJob)}/
                       {activeJob.plateCapacity} pcs)
                     </div>
@@ -365,12 +365,12 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                       />
                     ) : (
                       activeSlot.endMs && (
-                        <div className="text-[11px] font-mono-data text-neutral-500">
+                        <div className="text-[11px] font-mono-data text-neutral-500 break-words">
                           Est Finish: {formatDateTimeDDMMYYYY(activeSlot.endMs, timezone)}
                         </div>
                       )
                     )}
-                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <div className="flex flex-wrap items-stretch gap-1.5 pt-1 min-w-0">
                       {!activeSlot.needsEtaRecalibration && (
                         <button
                           type="button"
@@ -380,7 +380,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               activeSlot.isPaused ? 'resume' : 'pause'
                             )
                           }
-                          className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 whitespace-nowrap"
+                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 text-center leading-tight break-words"
                         >
                           {activeSlot.isPaused ? 'Resume' : 'Pause'}
                         </button>
@@ -392,7 +392,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             machineId: machine.id,
                           })
                         }
-                        className="flex-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap"
+                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-center leading-tight break-words"
                       >
                         {countLetters(activeJob.letters) > 0 ? 'Complete (+Stock)' : 'Complete Print'}
                       </button>
@@ -404,7 +404,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             failureReason: 'Failed on ' + machine.name,
                           })
                         }
-                        className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#171522] whitespace-nowrap"
+                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#171522] text-center leading-tight break-words"
                       >
                         Fail
                       </button>
@@ -413,7 +413,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                           type="button"
                           disabled={!isAdmin || Boolean(busyJobIds?.has(activeJob.id))}
                           onClick={() => onRequestCancelPrinting(activeJob)}
-                          className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#171522] disabled:opacity-45 whitespace-nowrap"
+                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#171522] disabled:opacity-45 text-center leading-tight break-words"
                         >
                           Cancel
                         </button>
@@ -421,14 +421,14 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="p-3.5 rounded-xl bg-neutral-50 dark:bg-[#12101b] border border-neutral-200/70 dark:border-neutral-800 space-y-2">
+                  <div className="min-w-0 p-3.5 rounded-xl bg-neutral-50 dark:bg-[#12101b] border border-neutral-200/70 dark:border-neutral-800 space-y-2">
                     <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
                       {machine.status === 'Maintenance' || machine.status === 'Offline'
                         ? `Unavailable (${machine.status})`
                         : 'Ready for Print Assignment'}
                     </div>
                     {machine.status !== 'Maintenance' && machine.status !== 'Offline' && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
                         <select
                           aria-label={`Select plate to start on ${machine.name}`}
                           value={selectedJobForMachine[machine.id] || ''}
@@ -438,7 +438,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               [machine.id]: e.target.value,
                             })
                           }
-                          className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#171522] text-xs"
+                          className="w-full sm:w-auto flex-1 min-w-0 max-w-full px-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#171522] text-xs"
                         >
                           <option value="">Select queued plate...</option>
                           {readyOrPlannedJobs.map((j) => {
@@ -468,7 +468,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               });
                             }
                           }}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] disabled:opacity-40 text-white whitespace-nowrap"
+                          className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] disabled:opacity-40 text-white text-center leading-tight"
                         >
                           Start Print
                         </button>

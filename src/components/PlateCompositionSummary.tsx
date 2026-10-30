@@ -45,9 +45,9 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
 
   if (compact) {
     return (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono-data">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono-data min-w-0 break-words">
         {letterEntries.length > 0 && (
-          <span className="text-neutral-600 dark:text-neutral-300">
+          <span className="text-neutral-600 dark:text-neutral-300 min-w-0 break-words">
             <span className="font-semibold text-neutral-800 dark:text-neutral-200">
               A–Z ({alphabetTotal}):
             </span>{' '}
@@ -55,7 +55,7 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
           </span>
         )}
         {charmEntries.length > 0 && (
-          <span className="text-[#5b3cc4] dark:text-[#c7b8ff]">
+          <span className="text-[#5b3cc4] dark:text-[#c7b8ff] min-w-0 break-words">
             <span className="font-semibold">Charms ({charmTotal}):</span>{' '}
             {charmEntries.map((c) => `${c.symbol} ${c.label}×${c.qty}`).join(' · ')}
           </span>
@@ -65,7 +65,7 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
   }
 
   return (
-    <div className="space-y-1.5 text-[11px] font-mono-data">
+    <div className="space-y-1.5 text-[11px] font-mono-data min-w-0">
       {letterEntries.length > 0 && (
         <div className="text-neutral-700 dark:text-neutral-300 leading-relaxed break-words">
           {charmEntries.length > 0 && (
@@ -78,7 +78,7 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
       )}
 
       {charmEntries.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
           {letterEntries.length > 0 && (
             <span className="font-sans font-semibold text-[#5b3cc4] dark:text-[#c7b8ff] mr-0.5">
               Charms ({charmTotal}):
@@ -87,7 +87,7 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
           {charmEntries.map((c) => (
             <span
               key={c.id}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#f5f2ff] dark:bg-[#251f3d] border border-[#e3dbfc] dark:border-[#3c3163] text-[#4c32a8] dark:text-[#d5c8ff]"
+              className="inline-flex flex-wrap items-center gap-1 max-w-full px-1.5 py-0.5 rounded-md bg-[#f5f2ff] dark:bg-[#251f3d] border border-[#e3dbfc] dark:border-[#3c3163] text-[#4c32a8] dark:text-[#d5c8ff] break-words"
             >
               <span aria-hidden="true">{c.symbol}</span>
               <span className="font-sans text-[10px] font-semibold">{c.label}</span>

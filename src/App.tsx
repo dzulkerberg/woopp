@@ -1723,21 +1723,6 @@ export const App: React.FC = () => {
 
   const meta = SECTION_META[activeNav];
 
-  const getHeaderPrimaryAction = () => {
-    switch (activeNav) {
-      case 'dashboard':
-        return { label: 'View Print Queue', onClick: () => handleNavigate('queue') };
-      case 'projects':
-        return { label: 'Open Plate Planner', onClick: () => handleNavigate('planner') };
-      case 'planner':
-        return { label: 'View Print Queue', onClick: () => handleNavigate('queue') };
-      case 'queue':
-        return { label: 'Manage Machines', onClick: () => handleNavigate('machines') };
-      default:
-        return { label: 'Backup JSON', onClick: handleExportBackup };
-    }
-  };
-
   return (
     <div className="min-h-screen flex bg-[#faf9fd] dark:bg-[#111018] text-neutral-900 dark:text-neutral-100">
       <Sidebar
@@ -1757,7 +1742,6 @@ export const App: React.FC = () => {
           sectionTitle={meta.title}
           subtitle={meta.subtitle}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
-          primaryAction={getHeaderPrimaryAction()}
         />
 
         <main className="flex-1 max-w-[1320px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
