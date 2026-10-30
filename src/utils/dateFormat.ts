@@ -216,3 +216,70 @@ export function combineHMToMinutes(hours: number, minutes: number): number {
   const m = Math.max(0, Math.floor(Number(minutes) || 0));
   return h * 60 + m;
 }
+
+/**
+ * Formats a UTC epoch timestamp as a `YYYY-MM-DDTHH:mm` string in the given IANA timezone
+ * for `<input type="datetime-local" />` controls.
+ */
+export function formatDateTimeLocalInput(
+  epochMs: number,
+  timeZone: string = DEFAULT_TIMEZONE
+): string {
+  const d = new Date(epochMs);
+  if (Number.isNaN(d.getTime())) return '';
+  const { yyyy, mm, dd, hh, min } = extractZonedParts(d, timeZone);
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
+/**
+ * Parses a `YYYY-MM-DDTHH:mm` (or `YYYY-MM-DDTHH:mm:ss`) wall-clock string in the specified
+ * IANA timezone into exact UTC epoch milliseconds, independent of the host OS timezone.
+ */
+export function parseDateTimeLocalInputToUtcMs(
+  inputValue: string,
+  timeZone: string = DEFAULT_TIMEZONE
+): number | null {
+  if (!inputValue || typeof inputValue !== 'string') return null;
+  const trimmed = inputValue.trim();
+  const match = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (!match) {
+    const fallback = Date.parse(trimmed);
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  const hh = Number(match[4]);
+  const min = Number(match[5]);
+  const sec = Number(match[6] || '0');
+
+  if (m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || min > 59 || sec > 59) {
+    return null;
+  }
+
+  const targetAsUtc = Date.UTC(y, m - 1, d, hh, min, sec);
+
+  try {
+    // Two-pass timezone offset refinement handles fixed-offset and DST timezones accurately
+    let candidateUtc = targetAsUtc;
+    for (let pass = 0; pass < 2; pass += 1) {
+      const parts = extractZonedParts(new Date(candidateUtc), timeZone);
+      const zonedAsUtc = Date.UTC(
+        Number(parts.yyyy),
+        Number(parts.mm) - 1,
+        Number(parts.dd),
+        Number(parts.hh),
+        Number(parts.min),
+        Number(parts.sec)
+      );
+      const offsetMs = zonedAsUtc - candidateUtc;
+      candidateUtc = targetAsUtc - offsetMs;
+    }
+    return candidateUtc;
+  } catch {
+    return new Date(y, m - 1, d, hh, min, sec).getTime();
+  }
+}

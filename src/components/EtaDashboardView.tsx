@@ -1,14 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { countLetters, countPlateKeycaps } from '../constants';
-import { KanbanStage, NavSection, ProductionJob, ProductionWorkspaceV5 } from '../types';
+import {
+  EtaRecalibrationInput,
+  KanbanStage,
+  NavSection,
+  ProductionJob,
+  ProductionWorkspaceV5,
+} from '../types';
 import {
   formatCountdownHMS,
   formatDateDDMMYYYY,
   formatDateTimeDDMMYYYY,
   formatDurationHoursMinutes,
 } from '../utils/dateFormat';
+import {
+  ETA_NEEDS_RECALIBRATION_LABEL,
+  ETA_REACHED_LABEL,
+} from '../utils/productionCountdown';
 import { GlobalScheduleResult, ScheduledJobSlot } from '../utils/schedulingEngine';
 import { DurationHMInput } from './DurationHMInput';
+import { EtaRecalibrationBox } from './EtaRecalibrationBox';
 import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface EtaDashboardViewProps {
@@ -23,6 +34,7 @@ interface EtaDashboardViewProps {
     action: 'pause' | 'resume' | 'update_remaining',
     overrideRemainingMinutes?: number
   ) => void;
+  onRecalibrateJobEta: (jobId: string, input: EtaRecalibrationInput) => void;
   onTransitionStage: (
     jobId: string,
     nextStage: KanbanStage,
@@ -40,6 +52,7 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
   onNavigate,
   onSelectProject,
   onPauseOrResume,
+  onRecalibrateJobEta,
   onTransitionStage,
   onRequestCancelPrinting,
   onUpdateBufferMinutes,
@@ -205,10 +218,12 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
               <ActivePrintCountdownCard
                 key={slot.job.id}
                 slot={slot}
+                nowMs={schedule.nowMs}
                 timezone={timezone}
                 isAdmin={isAdmin}
                 isBusy={Boolean(busyJobIds?.has(slot.job.id))}
                 onPauseOrResume={onPauseOrResume}
+                onRecalibrateJobEta={onRecalibrateJobEta}
                 onComplete={() =>
                   onTransitionStage(slot.job.id, 'Completed', {
                     machineId: slot.job.machineId,
@@ -329,42 +344,68 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
 
 interface ActivePrintCountdownCardProps {
   slot: ScheduledJobSlot;
+  nowMs: number;
   timezone: string;
   isAdmin?: boolean;
   isBusy?: boolean;
   onPauseOrResume: EtaDashboardViewProps['onPauseOrResume'];
+  onRecalibrateJobEta: EtaDashboardViewProps['onRecalibrateJobEta'];
   onComplete: () => void;
   onCancelPrinting?: () => void;
 }
 
 const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
   slot,
+  nowMs,
   timezone,
   isAdmin = true,
   isBusy = false,
   onPauseOrResume,
+  onRecalibrateJobEta,
   onComplete,
   onCancelPrinting,
 }) => {
-  const { job, project, colorName, assignedMachineName, isPaused, remainingSecondsLive, endMs } =
-    slot;
+  const {
+    job,
+    project,
+    colorName,
+    assignedMachineName,
+    isPaused,
+    needsEtaRecalibration,
+    isAwaitingConfirmation,
+    remainingSecondsLive,
+    startMs,
+    endMs,
+  } = slot;
 
   const [editingRemaining, setEditingRemaining] = useState<boolean>(false);
   const [remMinutesInput, setRemMinutesInput] = useState<number>(() =>
-    Math.max(1, Math.ceil(remainingSecondsLive / 60))
+    Math.max(1, Math.ceil((remainingSecondsLive || slot.effectivePrintMinutes * 60) / 60))
   );
 
   const totalEstSecs = Math.max(60, slot.effectivePrintMinutes * 60);
-  const pctDone = Math.min(
-    100,
-    Math.max(0, Math.round(((totalEstSecs - remainingSecondsLive) / totalEstSecs) * 100))
-  );
+  const pctDone = needsEtaRecalibration
+    ? 0
+    : Math.min(
+        100,
+        Math.max(0, Math.round(((totalEstSecs - remainingSecondsLive) / totalEstSecs) * 100))
+      );
+
+  const statusText = needsEtaRecalibration
+    ? ETA_NEEDS_RECALIBRATION_LABEL
+    : isPaused
+    ? 'Paused (Frozen)'
+    : isAwaitingConfirmation
+    ? ETA_REACHED_LABEL
+    : 'Printing Live';
 
   return (
     <article
       className={`rounded-xl border p-4 space-y-3 ${
-        isPaused
+        needsEtaRecalibration || isPaused
           ? 'border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20'
+          : isAwaitingConfirmation
+          ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20'
           : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-[#13111c]'
       }`}
     >
@@ -378,103 +419,131 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           </div>
         </div>
         <span
-          className={`text-xs font-semibold ${
-            isPaused
+          className={`text-xs font-semibold text-right ${
+            needsEtaRecalibration || isPaused
               ? 'text-amber-700 dark:text-amber-400'
-              : remainingSecondsLive === 0
-              ? 'text-emerald-600 dark:text-emerald-400'
+              : isAwaitingConfirmation
+              ? 'text-emerald-700 dark:text-emerald-400'
               : 'text-[#6c4ce6] dark:text-[#b49eff]'
           }`}
         >
-          {isPaused ? 'Paused (Frozen)' : remainingSecondsLive === 0 ? 'Ready to Finish' : 'Printing Live'}
+          {statusText}
         </span>
       </div>
 
       <PlateCompositionSummary letters={job.letters} charms={job.charms} compact />
 
-      {/* Big Tabular Countdown & Finish Timestamp */}
-      <div className="flex flex-wrap items-baseline justify-between gap-2 pt-1">
-        <div>
-          <div className="text-[11px] text-neutral-400">Remaining Countdown</div>
-          <div className="text-2xl font-bold font-mono-data text-neutral-900 dark:text-white">
-            {formatCountdownHMS(remainingSecondsLive)}
+      {needsEtaRecalibration ? (
+        <EtaRecalibrationBox
+          jobId={job.id}
+          plateNumber={job.plateNumber}
+          defaultDurationMinutes={slot.effectivePrintMinutes}
+          nowMs={nowMs}
+          timezone={timezone}
+          disabled={isBusy}
+          onRecalibrate={onRecalibrateJobEta}
+        />
+      ) : (
+        <>
+          {/* Big Tabular Countdown & Finish Timestamp */}
+          <div className="flex flex-wrap items-baseline justify-between gap-2 pt-1">
+            <div>
+              <div className="text-[11px] text-neutral-400">Remaining Countdown</div>
+              <div className="text-2xl font-bold font-mono-data text-neutral-900 dark:text-white">
+                {formatCountdownHMS(remainingSecondsLive)}
+              </div>
+              {isAwaitingConfirmation && (
+                <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                  {ETA_REACHED_LABEL}
+                </div>
+              )}
+            </div>
+            <div className="text-right">
+              <div className="text-[11px] text-neutral-400">
+                {isPaused ? 'Projected Finish (if resumed now)' : 'Estimated Finish'}
+              </div>
+              <div className="text-xs font-mono-data font-semibold text-neutral-800 dark:text-neutral-200">
+                {endMs ? formatDateTimeDDMMYYYY(endMs, timezone) : '—'}
+              </div>
+              {startMs && (
+                <div className="text-[11px] font-mono-data text-neutral-400">
+                  Started: {formatDateTimeDDMMYYYY(startMs, timezone)}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="text-right">
-          <div className="text-[11px] text-neutral-400">
-            {isPaused ? 'Projected Finish (if resumed now)' : 'Estimated Finish'}
+
+          <div className="h-2 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+            <div
+              className={`h-full ${
+                isPaused
+                  ? 'bg-amber-500'
+                  : isAwaitingConfirmation
+                  ? 'bg-emerald-600'
+                  : 'bg-[#6c4ce6]'
+              }`}
+              style={{ width: `${pctDone}%` }}
+            />
           </div>
-          <div className="text-xs font-mono-data font-semibold text-neutral-800 dark:text-neutral-200">
-            {endMs ? formatDateTimeDDMMYYYY(endMs, timezone) : '—'}
-          </div>
-          {job.startedAtMs && (
-            <div className="text-[11px] font-mono-data text-neutral-400">
-              Started: {formatDateTimeDDMMYYYY(job.startedAtMs, timezone)}
+
+          {/* Update Remaining Duration Box (always accessible when paused or via Adjust button) */}
+          {(isPaused || editingRemaining) && (
+            <div className="p-3 rounded-lg bg-white dark:bg-[#191726] border border-neutral-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                Remaining time on Bambu screen:
+              </div>
+              <div className="flex items-center gap-2">
+                <DurationHMInput
+                  compact
+                  minutes={remMinutesInput}
+                  onChangeMinutes={setRemMinutesInput}
+                  ariaLabelPrefix={`Remaining time for Plate ${job.plateNumber}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPauseOrResume(job.id, 'update_remaining', remMinutesInput);
+                    setEditingRemaining(false);
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
+                >
+                  Update ETA
+                </button>
+              </div>
             </div>
           )}
-        </div>
-      </div>
-
-      <div className="h-2 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-        <div
-          className={`h-full ${isPaused ? 'bg-amber-500' : 'bg-[#6c4ce6]'}`}
-          style={{ width: `${pctDone}%` }}
-        />
-      </div>
-
-      {/* Update Remaining Duration Box (always accessible when paused or via Adjust button) */}
-      {(isPaused || editingRemaining) && (
-        <div className="p-3 rounded-lg bg-white dark:bg-[#191726] border border-neutral-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
-            Remaining time on Bambu screen:
-          </div>
-          <div className="flex items-center gap-2">
-            <DurationHMInput
-              compact
-              minutes={remMinutesInput}
-              onChangeMinutes={setRemMinutesInput}
-              ariaLabelPrefix={`Remaining time for Plate ${job.plateNumber}`}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                onPauseOrResume(job.id, 'update_remaining', remMinutesInput);
-                setEditingRemaining(false);
-              }}
-              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
-            >
-              Update ETA
-            </button>
-          </div>
-        </div>
+        </>
       )}
 
       {/* Action Controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
         <div className="flex items-center gap-2">
-          {!isPaused ? (
-            <button
-              type="button"
-              onClick={() => {
-                const curMins = Math.max(1, Math.ceil(remainingSecondsLive / 60));
-                setRemMinutesInput(curMins);
-                onPauseOrResume(job.id, 'pause');
-              }}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-white dark:bg-[#191726] whitespace-nowrap"
-            >
-              Pause Print
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onPauseOrResume(job.id, 'resume')}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
-            >
-              Resume Countdown
-            </button>
-          )}
+          {!needsEtaRecalibration &&
+            (!isPaused ? (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => {
+                  const curMins = Math.max(0, Math.ceil(remainingSecondsLive / 60));
+                  setRemMinutesInput(Math.max(1, curMins));
+                  onPauseOrResume(job.id, 'pause');
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-white dark:bg-[#191726] whitespace-nowrap"
+              >
+                Pause Print
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => onPauseOrResume(job.id, 'resume')}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+              >
+                Resume Countdown
+              </button>
+            ))}
 
-          {!isPaused && (
+          {!needsEtaRecalibration && !isPaused && (
             <button
               type="button"
               onClick={() => {

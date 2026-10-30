@@ -6,6 +6,7 @@ import {
   KANBAN_STAGES,
 } from '../constants';
 import {
+  EtaRecalibrationInput,
   KanbanStage,
   ProductionJob,
   ProductionWorkspaceV5,
@@ -17,6 +18,11 @@ import {
   formatDurationHoursMinutes,
 } from '../utils/dateFormat';
 import {
+  ETA_NEEDS_RECALIBRATION_LABEL,
+  ETA_REACHED_LABEL,
+  parseUtcTimestampMs,
+} from '../utils/productionCountdown';
+import {
   canArchivePlate,
   canDeletePlate,
   canRestorePlate,
@@ -24,6 +30,7 @@ import {
 } from '../utils/productionEngine';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
 import { DurationHMInput } from './DurationHMInput';
+import { EtaRecalibrationBox } from './EtaRecalibrationBox';
 import { PlateCompositionSummary } from './PlateCompositionSummary';
 import {
   BulkQueueActionKind,
@@ -47,6 +54,7 @@ interface KanbanQueueViewProps {
     action: 'pause' | 'resume' | 'update_remaining',
     overrideRemainingMinutes?: number
   ) => void;
+  onRecalibrateJobEta: (jobId: string, input: EtaRecalibrationInput) => void;
   onUpdateJobMetadata: (
     jobId: string,
     updates: Partial<
@@ -85,6 +93,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   onSelectProject,
   onTransitionStage,
   onPauseOrResume,
+  onRecalibrateJobEta,
   onUpdateJobMetadata,
   onCopyQueueSummary,
   onRequestDeletePlate,
@@ -652,6 +661,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         isBusy={busyJobIds.has(job.id)}
                         onTransitionStage={onTransitionStage}
                         onPauseOrResume={onPauseOrResume}
+                        onRecalibrateJobEta={onRecalibrateJobEta}
                         onUpdateJobMetadata={onUpdateJobMetadata}
                         onRequestDeletePlate={onRequestDeletePlate}
                         onRequestCancelPrinting={onRequestCancelPrinting}
@@ -823,24 +833,46 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                       ) : job.stage === 'Completed' ? (
                         <span className="text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                           Done{' '}
-                          {job.actualCompletedAtMs
-                            ? formatDateTimeDDMMYYYY(job.actualCompletedAtMs, timezone)
-                            : ''}
+                          {(() => {
+                            const doneMs =
+                              parseUtcTimestampMs(job.actualCompletedAt) ??
+                              job.actualCompletedAtMs ??
+                              parseUtcTimestampMs(job.completedIso);
+                            return doneMs ? formatDateTimeDDMMYYYY(doneMs, timezone) : '';
+                          })()}
                         </span>
                       ) : job.stage === 'Printing' && slot ? (
-                        <span
-                          className={
-                            job.isPaused
-                              ? 'text-amber-600 font-semibold whitespace-nowrap'
-                              : 'text-[#6c4ce6] dark:text-[#b49eff] font-semibold whitespace-nowrap'
-                          }
-                        >
-                          {job.isPaused ? 'Paused ' : ''}
-                          {formatCountdownHMS(slot.remainingSecondsLive)} →{' '}
-                          {slot.endMs
-                            ? formatDateTimeDDMMYYYY(slot.endMs, timezone)
-                            : ''}
-                        </span>
+                        slot.needsEtaRecalibration ? (
+                          <span className="text-amber-700 dark:text-amber-400 font-sans font-semibold whitespace-nowrap">
+                            {ETA_NEEDS_RECALIBRATION_LABEL}
+                          </span>
+                        ) : slot.isAwaitingConfirmation ? (
+                          <div className="space-y-0.5">
+                            <div className="text-emerald-700 dark:text-emerald-400 font-sans font-semibold whitespace-nowrap">
+                              {ETA_REACHED_LABEL}
+                            </div>
+                            <div className="text-[11px] text-neutral-500">
+                              00:00:00
+                              {slot.endMs
+                                ? ` · ETA ${formatDateTimeDDMMYYYY(slot.endMs, timezone)}`
+                                : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          <span
+                            className={
+                              slot.isPaused
+                                ? 'text-amber-600 font-semibold whitespace-nowrap'
+                                : 'text-[#6c4ce6] dark:text-[#b49eff] font-semibold whitespace-nowrap'
+                            }
+                          >
+                            {slot.isPaused ? 'Paused ' : ''}
+                            {formatCountdownHMS(slot.remainingSecondsLive)} →{' '}
+                            {slot.endMs
+                              ? formatDateTimeDDMMYYYY(slot.endMs, timezone)
+                              : ''}
+                          </span>
+                        )
                       ) : slot?.endMs ? (
                         <span
                           className={
@@ -942,6 +974,7 @@ interface KanbanJobCardProps {
   isBusy: boolean;
   onTransitionStage: KanbanQueueViewProps['onTransitionStage'];
   onPauseOrResume: KanbanQueueViewProps['onPauseOrResume'];
+  onRecalibrateJobEta: KanbanQueueViewProps['onRecalibrateJobEta'];
   onUpdateJobMetadata: KanbanQueueViewProps['onUpdateJobMetadata'];
   onRequestDeletePlate: (job: ProductionJob) => void;
   onRequestCancelPrinting: (job: ProductionJob) => void;
@@ -957,6 +990,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   isBusy,
   onTransitionStage,
   onPauseOrResume,
+  onRecalibrateJobEta,
   onUpdateJobMetadata,
   onRequestDeletePlate,
   onRequestCancelPrinting,
@@ -1062,55 +1096,106 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {/* Live Printing Countdown OR Queued Scheduled ETA */}
       {!job.archived && job.stage === 'Printing' && slot ? (
-        <div
-          className={`p-2.5 rounded-lg border text-xs space-y-1.5 ${
-            job.isPaused
-              ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
-              : 'bg-[#f6f3ff] dark:bg-[#251f3d] border-[#dcd2ff] dark:border-[#3f3469]'
-          }`}
-        >
-          <div className="flex items-center justify-between font-mono-data">
-            <span className="font-bold text-sm text-neutral-900 dark:text-white">
-              {formatCountdownHMS(slot.remainingSecondsLive)}
-            </span>
-            <span className="text-[11px] font-semibold">
-              {job.isPaused ? 'PAUSED' : 'LIVE'}
-            </span>
-          </div>
-          {slot.endMs && (
-            <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-300">
-              Est. Finish: {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
+        slot.needsEtaRecalibration ? (
+          <EtaRecalibrationBox
+            compact
+            jobId={job.id}
+            plateNumber={job.plateNumber}
+            defaultDurationMinutes={slot.effectivePrintMinutes}
+            nowMs={schedule.nowMs}
+            timezone={timezone}
+            disabled={isBusy}
+            onRecalibrate={onRecalibrateJobEta}
+          />
+        ) : (
+          <div
+            className={`p-2.5 rounded-lg border text-xs space-y-1.5 ${
+              slot.isPaused
+                ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+                : slot.isAwaitingConfirmation
+                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
+                : 'bg-[#f6f3ff] dark:bg-[#251f3d] border-[#dcd2ff] dark:border-[#3f3469]'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 font-mono-data">
+              <span className="font-bold text-sm text-neutral-900 dark:text-white">
+                {formatCountdownHMS(slot.remainingSecondsLive)}
+              </span>
+              <span
+                className={`text-[11px] font-sans font-semibold text-right ${
+                  slot.isPaused
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : slot.isAwaitingConfirmation
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-[#5b3cc4] dark:text-[#c7b8ff]'
+                }`}
+              >
+                {slot.isPaused
+                  ? 'PAUSED'
+                  : slot.isAwaitingConfirmation
+                  ? ETA_REACHED_LABEL
+                  : 'LIVE'}
+              </span>
             </div>
-          )}
-
-          {job.isPaused ? (
-            <div className="pt-1 space-y-1.5">
-              <div className="flex items-center justify-between gap-1">
-                <DurationHMInput
-                  compact
-                  minutes={pausedMinsDraft}
-                  onChangeMinutes={setPausedMinsDraft}
-                  ariaLabelPrefix="Paused remaining duration"
-                />
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() =>
-                    onPauseOrResume(job.id, 'update_remaining', pausedMinsDraft)
-                  }
-                  className="px-2 py-1 text-[11px] font-semibold rounded bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
-                >
-                  Set
-                </button>
+            {slot.endMs && (
+              <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-300">
+                Est. Finish: {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
               </div>
+            )}
+
+            {slot.isPaused ? (
+              <div className="pt-1 space-y-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <DurationHMInput
+                    compact
+                    minutes={pausedMinsDraft}
+                    onChangeMinutes={setPausedMinsDraft}
+                    ariaLabelPrefix="Paused remaining duration"
+                  />
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() =>
+                      onPauseOrResume(job.id, 'update_remaining', pausedMinsDraft)
+                    }
+                    className="px-2 py-1 text-[11px] font-semibold rounded bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
+                  >
+                    Set
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => onPauseOrResume(job.id, 'resume')}
+                    className="flex-1 py-1 text-xs font-semibold rounded bg-[#6c4ce6] text-white whitespace-nowrap"
+                  >
+                    Resume Print
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isAdmin || isBusy}
+                    onClick={() => onRequestCancelPrinting(job)}
+                    className="px-2 py-1 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#191726] whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   disabled={isBusy}
-                  onClick={() => onPauseOrResume(job.id, 'resume')}
-                  className="flex-1 py-1 text-xs font-semibold rounded bg-[#6c4ce6] text-white whitespace-nowrap"
+                  onClick={() => {
+                    setPausedMinsDraft(
+                      Math.max(1, Math.ceil(slot.remainingSecondsLive / 60))
+                    );
+                    onPauseOrResume(job.id, 'pause');
+                  }}
+                  className="flex-1 py-1 text-[11px] font-semibold rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#191726] text-amber-800 dark:text-amber-300 whitespace-nowrap"
                 >
-                  Resume Print
+                  Pause Countdown
                 </button>
                 <button
                   type="button"
@@ -1118,36 +1203,12 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                   onClick={() => onRequestCancelPrinting(job)}
                   className="px-2 py-1 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#191726] whitespace-nowrap"
                 >
-                  Cancel
+                  Cancel Print
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                disabled={isBusy}
-                onClick={() => {
-                  setPausedMinsDraft(
-                    Math.max(1, Math.ceil(slot.remainingSecondsLive / 60))
-                  );
-                  onPauseOrResume(job.id, 'pause');
-                }}
-                className="flex-1 py-1 text-[11px] font-semibold rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#191726] text-amber-800 dark:text-amber-300 whitespace-nowrap"
-              >
-                Pause Countdown
-              </button>
-              <button
-                type="button"
-                disabled={!isAdmin || isBusy}
-                onClick={() => onRequestCancelPrinting(job)}
-                className="px-2 py-1 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#191726] whitespace-nowrap"
-              >
-                Cancel Print
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )
       ) : !job.archived &&
         job.stage !== 'Completed' &&
         job.stage !== 'Cancelled' &&

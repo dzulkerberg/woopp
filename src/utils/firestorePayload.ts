@@ -377,6 +377,53 @@ function normalizeNullableNumber(val: unknown, path: string): number | null {
   return val;
 }
 
+function normalizeNullableUtcTimestampString(
+  val: unknown,
+  path: string
+): string | null {
+  if (val === undefined || val === null || val === '') {
+    return null;
+  }
+  if (val instanceof Date) {
+    if (Number.isNaN(val.getTime())) {
+      throw new FirestorePayloadValidationError(path, 'Invalid Date value.');
+    }
+    return val.toISOString();
+  }
+  if (val instanceof Timestamp) {
+    return val.toDate().toISOString();
+  }
+  if (typeof val === 'object') {
+    const candidate = val as { toDate?: () => Date; toMillis?: () => number };
+    if (typeof candidate.toDate === 'function') {
+      const d = candidate.toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) {
+        return d.toISOString();
+      }
+    }
+    if (typeof candidate.toMillis === 'function') {
+      const ms = candidate.toMillis();
+      if (typeof ms === 'number' && Number.isFinite(ms)) {
+        return new Date(ms).toISOString();
+      }
+    }
+  }
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    if (!Number.isFinite(parsed)) {
+      throw new FirestorePayloadValidationError(
+        path,
+        `Expected valid ISO-8601 UTC timestamp string or null (received "${val}").`
+      );
+    }
+    return new Date(parsed).toISOString();
+  }
+  throw new FirestorePayloadValidationError(
+    path,
+    `Expected ISO timestamp string, Firestore Timestamp, Date, or null (received ${typeof val}).`
+  );
+}
+
 function validateLettersMap(
   val: unknown,
   path: string,
@@ -803,8 +850,25 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
     }
   }
 
-  // Nullable scheduling timestamps: omit if truly never set (`undefined`), keep `null` or finite number if present
+  // Nullable timestamp-based countdown ISO strings: omit if undefined, preserve null or canonical UTC ISO-8601 string
+  const nullableUtcIsoTimingKeys = [
+    'actualStartedAt',
+    'estimatedFinishAt',
+    'pausedAt',
+    'actualCompletedAt',
+  ] as const;
+
+  for (const key of nullableUtcIsoTimingKeys) {
+    const val = job[key];
+    if (val !== undefined) {
+      normalized[key] = normalizeNullableUtcTimestampString(val, joinPath(path, key));
+    }
+  }
+
+  // Nullable millisecond countdown durations & companion numeric timestamps
   const nullableTimingKeys = [
+    'estimatedDurationMs',
+    'remainingAtPauseMs',
     'startedAtMs',
     'runResumedAtMs',
     'pausedAtMs',
@@ -816,8 +880,26 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
   for (const key of nullableTimingKeys) {
     const val = job[key];
     if (val !== undefined) {
-      normalized[key] = normalizeNullableNumber(val, joinPath(path, key));
+      const numOrNull = normalizeNullableNumber(val, joinPath(path, key));
+      if (
+        numOrNull !== null &&
+        (key === 'estimatedDurationMs' || key === 'remainingAtPauseMs') &&
+        numOrNull < 0
+      ) {
+        throw new FirestorePayloadValidationError(
+          joinPath(path, key),
+          `Expected non-negative duration in ms or null (received ${numOrNull}).`
+        );
+      }
+      normalized[key] = numOrNull;
     }
+  }
+
+  if (job.needsEtaRecalibration !== undefined) {
+    normalized.needsEtaRecalibration = requireBoolean(
+      job.needsEtaRecalibration,
+      joinPath(path, 'needsEtaRecalibration')
+    );
   }
 
   if (job.isPaused !== undefined) {

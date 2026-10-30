@@ -20,6 +20,7 @@ import {
   AdminActorContext,
   CharmId,
   CharmsMap,
+  EtaRecalibrationInput,
   InventoryMovement,
   InventoryState,
   KanbanStage,
@@ -33,7 +34,17 @@ import {
   QueueLifecycleTab,
 } from '../types';
 import { DEFAULT_TIMEZONE, formatDateTimeDDMMYYYY } from './dateFormat';
-import { getEffectivePrintMinutes, getLiveRemainingSeconds } from './schedulingEngine';
+import {
+  buildPausedPrintingTiming,
+  buildRecalibratedPrintingTiming,
+  buildResumedPrintingTiming,
+  buildStartedPrintingTiming,
+  computeEffectiveDurationMs,
+  computeJobCountdownSnapshot,
+  resolveJobTimingFields,
+  toUtcTimestampIso,
+} from './productionCountdown';
+import { getEffectivePrintMinutes } from './schedulingEngine';
 
 /**
  * Constructs a Firestore-compatible ActivityLogEntry.
@@ -510,70 +521,171 @@ export function transitionJobState(
     completedIso = null;
   }
 
-  // Smart Timing & Server Timestamp Reconciliation State
-  let startedAtMs = targetJob.startedAtMs ?? null;
-  let runResumedAtMs = targetJob.runResumedAtMs ?? null;
-  let isPaused = Boolean(targetJob.isPaused);
-  let pausedAtMs = targetJob.pausedAtMs ?? null;
-  let remainingSecondsAtPause = targetJob.remainingSecondsAtPause ?? null;
-  let accumulatedElapsedSeconds = targetJob.accumulatedElapsedSeconds || 0;
-  let estimatedFinishAtMs = targetJob.estimatedFinishAtMs ?? null;
-  let actualCompletedAtMs = targetJob.actualCompletedAtMs ?? null;
-  let pendingServerStartSync = false;
-  let pendingServerCompleteSync = false;
-
+  // Timestamp-Based Live Countdown State (UTC ISO-8601 & millisecond durations)
+  const previousMachine =
+    workspace.machines.find((m) => m.id === targetJob.machineId) || null;
+  const resolvedPrevTiming = resolveJobTimingFields(targetJob, previousMachine);
   const effPrintMins = getEffectivePrintMinutes(targetJob, selectedMachine);
+  const effDurationMs = computeEffectiveDurationMs(targetJob, selectedMachine);
+
+  let timingPatch: Partial<ProductionJob> = {};
+  let clearNeedsRecalibration = false;
 
   if (nextStage === 'Printing' && targetJob.stage !== 'Printing') {
-    // Fresh start of printing
-    startedAtMs = nowMs;
-    runResumedAtMs = nowMs;
-    isPaused = false;
-    pausedAtMs = null;
-    remainingSecondsAtPause = null;
-    accumulatedElapsedSeconds = 0;
-    estimatedFinishAtMs = nowMs + effPrintMins * 60_000;
-    actualCompletedAtMs = null;
-    pendingServerStartSync = true;
+    // Fresh start of printing: record authoritative UTC start, duration, and finish timestamps
+    timingPatch = buildStartedPrintingTiming(effDurationMs, nowMs);
+    clearNeedsRecalibration = true;
   } else if (nextStage === 'Printing' && targetJob.stage === 'Printing') {
-    // Reassigning machine while already printing: recalculate finish time from remaining seconds
-    const currentRemSecs = getLiveRemainingSeconds(targetJob, nowMs, selectedMachine);
-    if (!isPaused) {
-      estimatedFinishAtMs = nowMs + currentRemSecs * 1000;
+    // Reassigning machine while already printing:
+    // Never reset actualStartedAt! If effective duration is unchanged, preserve estimatedFinishAt verbatim.
+    // Only adjust estimatedFinishAt / remainingAtPauseMs if the new machine has a different effective duration.
+    const oldEffDurationMs = resolvedPrevTiming.estimatedDurationMs;
+    if (resolvedPrevTiming.needsEtaRecalibration) {
+      timingPatch = {
+        estimatedDurationMs: effDurationMs,
+        needsEtaRecalibration: true,
+      };
+    } else if (effDurationMs === oldEffDurationMs) {
+      // Exact same duration: preserve every active timestamp without 1ms of drift
+      timingPatch = {
+        actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+        startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+        estimatedDurationMs: oldEffDurationMs,
+        isPaused: resolvedPrevTiming.isPaused,
+        pausedAt: resolvedPrevTiming.isPaused
+          ? toUtcTimestampIso(resolvedPrevTiming.pausedAtMs)
+          : null,
+        pausedAtMs: resolvedPrevTiming.isPaused ? resolvedPrevTiming.pausedAtMs : null,
+        remainingAtPauseMs: resolvedPrevTiming.isPaused
+          ? resolvedPrevTiming.remainingAtPauseMs
+          : null,
+        remainingSecondsAtPause:
+          resolvedPrevTiming.isPaused && resolvedPrevTiming.remainingAtPauseMs !== null
+            ? Math.ceil(resolvedPrevTiming.remainingAtPauseMs / 1000)
+            : null,
+        estimatedFinishAt: resolvedPrevTiming.isPaused
+          ? null
+          : toUtcTimestampIso(resolvedPrevTiming.estimatedFinishAtMs),
+        estimatedFinishAtMs: resolvedPrevTiming.isPaused
+          ? null
+          : resolvedPrevTiming.estimatedFinishAtMs,
+      };
+      clearNeedsRecalibration = true;
+    } else {
+      const snapBeforeSwitch = computeJobCountdownSnapshot(targetJob, nowMs, previousMachine);
+      const elapsedWorkMs = Math.max(0, oldEffDurationMs - snapBeforeSwitch.remainingMs);
+      const adjustedRemMs = Math.max(0, effDurationMs - elapsedWorkMs);
+      if (resolvedPrevTiming.isPaused) {
+        timingPatch = {
+          actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+          startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+          estimatedDurationMs: effDurationMs,
+          isPaused: true,
+          pausedAt: toUtcTimestampIso(resolvedPrevTiming.pausedAtMs ?? nowMs),
+          pausedAtMs: resolvedPrevTiming.pausedAtMs ?? nowMs,
+          remainingAtPauseMs: adjustedRemMs,
+          remainingSecondsAtPause: Math.ceil(adjustedRemMs / 1000),
+          estimatedFinishAt: null,
+          estimatedFinishAtMs: null,
+        };
+      } else {
+        const nextFinishMs = nowMs + adjustedRemMs;
+        timingPatch = {
+          actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+          startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+          estimatedDurationMs: effDurationMs,
+          isPaused: false,
+          pausedAt: null,
+          pausedAtMs: null,
+          remainingAtPauseMs: null,
+          remainingSecondsAtPause: null,
+          estimatedFinishAt: toUtcTimestampIso(nextFinishMs),
+          estimatedFinishAtMs: nextFinishMs,
+        };
+      }
+      clearNeedsRecalibration = true;
     }
   } else if (nextStage === 'Completed') {
-    actualCompletedAtMs = nowMs;
-    pendingServerCompleteSync = targetJob.stage !== 'Completed';
-    if (!isPaused && runResumedAtMs) {
-      accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - runResumedAtMs) / 1000));
+    let accumulatedElapsedSeconds = targetJob.accumulatedElapsedSeconds || 0;
+    const anchorMs = targetJob.runResumedAtMs ?? resolvedPrevTiming.actualStartedAtMs;
+    if (!resolvedPrevTiming.isPaused && anchorMs !== null && nowMs > anchorMs) {
+      accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
     }
-    isPaused = false;
-    pausedAtMs = null;
-    remainingSecondsAtPause = 0;
-    estimatedFinishAtMs = null;
+    timingPatch = {
+      actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+      startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+      estimatedDurationMs: resolvedPrevTiming.estimatedDurationMs,
+      isPaused: false,
+      pausedAt: null,
+      pausedAtMs: null,
+      remainingAtPauseMs: 0,
+      remainingSecondsAtPause: 0,
+      accumulatedElapsedSeconds,
+      estimatedFinishAt: null,
+      estimatedFinishAtMs: null,
+      actualCompletedAt: nowIso,
+      actualCompletedAtMs: nowMs,
+    };
+    clearNeedsRecalibration = true;
   } else {
-    // Planned, Ready to Print, or Failed / Reprint -> reset active timer
-    isPaused = false;
-    pausedAtMs = null;
-    remainingSecondsAtPause = null;
-    estimatedFinishAtMs = null;
+    // Planned, Ready to Print, or Failed / Reprint -> clear active countdown state
     if (nextStage === 'Planned' || nextStage === 'Ready to Print') {
-      startedAtMs = null;
-      runResumedAtMs = null;
-      accumulatedElapsedSeconds = 0;
-      actualCompletedAtMs = null;
+      timingPatch = {
+        actualStartedAt: null,
+        startedAtMs: null,
+        runResumedAtMs: null,
+        estimatedDurationMs: null,
+        isPaused: false,
+        pausedAt: null,
+        pausedAtMs: null,
+        remainingAtPauseMs: null,
+        remainingSecondsAtPause: null,
+        accumulatedElapsedSeconds: 0,
+        estimatedFinishAt: null,
+        estimatedFinishAtMs: null,
+        actualCompletedAt: null,
+        actualCompletedAtMs: null,
+      };
+    } else {
+      timingPatch = {
+        actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+        startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+        isPaused: false,
+        pausedAt: null,
+        pausedAtMs: null,
+        remainingAtPauseMs: null,
+        remainingSecondsAtPause: null,
+        estimatedFinishAt: null,
+        estimatedFinishAtMs: null,
+      };
     }
+    clearNeedsRecalibration = true;
   }
 
   // Calculate actual print duration (minutes) on completion
+  const finalAccumulatedSecs =
+    timingPatch.accumulatedElapsedSeconds ?? (targetJob.accumulatedElapsedSeconds || 0);
+  const finalStartedAtMs =
+    timingPatch.startedAtMs !== undefined
+      ? timingPatch.startedAtMs
+      : resolvedPrevTiming.actualStartedAtMs;
+  const finalCompletedAtMs =
+    timingPatch.actualCompletedAtMs !== undefined
+      ? timingPatch.actualCompletedAtMs
+      : resolvedPrevTiming.actualCompletedAtMs;
+
   let actualMins = targetJob.actualMinutes;
   if (options?.actualMinutes !== undefined) {
     actualMins = Math.max(0, Math.round(options.actualMinutes));
   } else if (nextStage === 'Completed') {
-    if (accumulatedElapsedSeconds > 0) {
-      actualMins = Math.max(1, Math.round(accumulatedElapsedSeconds / 60));
-    } else if (startedAtMs && actualCompletedAtMs && actualCompletedAtMs > startedAtMs) {
-      actualMins = Math.max(1, Math.round((actualCompletedAtMs - startedAtMs) / 60_000));
+    if (finalAccumulatedSecs > 0) {
+      actualMins = Math.max(1, Math.round(finalAccumulatedSecs / 60));
+    } else if (
+      finalStartedAtMs &&
+      finalCompletedAtMs &&
+      finalCompletedAtMs > finalStartedAtMs
+    ) {
+      actualMins = Math.max(1, Math.round((finalCompletedAtMs - finalStartedAtMs) / 60_000));
     } else if (targetJob.actualMinutes === 0) {
       actualMins = effPrintMins;
     }
@@ -584,6 +696,7 @@ export function transitionJobState(
 
   const updatedJob: ProductionJob = {
     ...targetJob,
+    ...timingPatch,
     stage: nextStage,
     machineId: nextMachineId,
     actualMinutes: actualMins,
@@ -597,18 +710,14 @@ export function transitionJobState(
         : isEnteringFailed && !targetJob.failureReason
         ? 'Print interrupted / adhesion issue'
         : targetJob.failureReason,
-    startedAtMs,
-    runResumedAtMs,
-    isPaused,
-    pausedAtMs,
-    remainingSecondsAtPause,
-    accumulatedElapsedSeconds,
-    estimatedFinishAtMs,
-    actualCompletedAtMs,
-    pendingServerStartSync,
-    pendingServerCompleteSync,
     updatedIso: nowIso,
   };
+
+  delete updatedJob.pendingServerStartSync;
+  delete updatedJob.pendingServerCompleteSync;
+  if (clearNeedsRecalibration) {
+    delete updatedJob.needsEtaRecalibration;
+  }
 
   const nextJobs = workspace.jobs.map((j) => (j.id === jobId ? updatedJob : j));
 
@@ -702,8 +811,9 @@ export function transitionJobState(
 }
 
 /**
- * Pauses, updates remaining time while paused, or resumes an actively Printing plate.
- * Guarantees countdown NEVER decreases while `isPaused` is true.
+ * Pauses, updates remaining time, or resumes an actively Printing plate using
+ * Firestore-compatible UTC timestamps (`pausedAt`, `remainingAtPauseMs`, `estimatedFinishAt`).
+ * Guarantees countdown NEVER decreases while paused and paused duration is never counted as active printing time.
  */
 export function pauseOrResumePrintingJob(
   workspace: ProductionWorkspaceV5,
@@ -725,58 +835,80 @@ export function pauseOrResumePrintingJob(
   let actionLabel = '';
 
   if (action === 'pause') {
-    const currentRemSecs =
-      overrideRemainingMinutes !== undefined
-        ? Math.max(0, Math.round(overrideRemainingMinutes * 60))
-        : getLiveRemainingSeconds(job, nowMs, machine);
-
-    const anchorMs = job.runResumedAtMs || job.startedAtMs || nowMs;
-    const addElapsed = job.isPaused ? 0 : Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
-
-    updatedJob = {
-      ...updatedJob,
-      isPaused: true,
-      pausedAtMs: nowMs,
-      remainingSecondsAtPause: currentRemSecs,
-      accumulatedElapsedSeconds: (job.accumulatedElapsedSeconds || 0) + addElapsed,
-      estimatedFinishAtMs: null,
-    };
-    actionLabel = `Paused Plate ${job.plateNumber} (${Math.ceil(currentRemSecs / 60)}m remaining)`;
-  } else if (action === 'update_remaining') {
-    const nextRemSecs = Math.max(0, Math.round((overrideRemainingMinutes ?? 0) * 60));
-    if (job.isPaused) {
-      updatedJob = {
-        ...updatedJob,
-        remainingSecondsAtPause: nextRemSecs,
-        estimatedFinishAtMs: null,
-      };
-    } else {
-      updatedJob = {
-        ...updatedJob,
-        runResumedAtMs: nowMs,
-        estimatedFinishAtMs: nowMs + nextRemSecs * 1000,
+    const resolved = resolveJobTimingFields(job, machine);
+    if (resolved.needsEtaRecalibration && overrideRemainingMinutes === undefined) {
+      return {
+        error:
+          'Recalibrate ETA (enter actual start time or remaining duration) before pausing this legacy job.',
       };
     }
-    actionLabel = `Updated Plate ${job.plateNumber} remaining time to ${Math.round(
-      nextRemSecs / 60
-    )}m`;
-  } else if (action === 'resume') {
-    const frozenSecs =
+    const overrideMs =
       overrideRemainingMinutes !== undefined
-        ? Math.max(0, Math.round(overrideRemainingMinutes * 60))
-        : typeof job.remainingSecondsAtPause === 'number'
-        ? job.remainingSecondsAtPause
-        : getLiveRemainingSeconds(job, nowMs, machine);
-
+        ? Math.max(0, Math.round(overrideRemainingMinutes * 60_000))
+        : undefined;
+    const { timing, remainingAtPauseMs } = buildPausedPrintingTiming(
+      job,
+      nowMs,
+      overrideMs,
+      machine
+    );
     updatedJob = {
       ...updatedJob,
-      isPaused: false,
-      pausedAtMs: null,
-      runResumedAtMs: nowMs,
-      remainingSecondsAtPause: null,
-      estimatedFinishAtMs: nowMs + frozenSecs * 1000,
+      ...timing,
     };
-    actionLabel = `Resumed Plate ${job.plateNumber} (ETA +${Math.ceil(frozenSecs / 60)}m)`;
+    delete updatedJob.needsEtaRecalibration;
+    delete updatedJob.pendingServerStartSync;
+    delete updatedJob.pendingServerCompleteSync;
+    actionLabel = `Paused Plate ${job.plateNumber} (${Math.ceil(
+      remainingAtPauseMs / 60_000
+    )}m remaining)`;
+  } else if (action === 'update_remaining') {
+    const mins = Math.max(0, overrideRemainingMinutes ?? 0);
+    const recal = buildRecalibratedPrintingTiming(
+      job,
+      { mode: 'remaining_duration', remainingMinutes: mins },
+      nowMs,
+      machine
+    );
+    if (recal.error) {
+      return { error: recal.error };
+    }
+    updatedJob = {
+      ...updatedJob,
+      ...recal.timing,
+    };
+    delete updatedJob.needsEtaRecalibration;
+    delete updatedJob.pendingServerStartSync;
+    delete updatedJob.pendingServerCompleteSync;
+    actionLabel = `Updated Plate ${job.plateNumber} remaining time to ${Math.round(mins)}m`;
+  } else if (action === 'resume') {
+    const resolved = resolveJobTimingFields(job, machine);
+    if (resolved.needsEtaRecalibration && overrideRemainingMinutes === undefined) {
+      return {
+        error:
+          'Recalibrate ETA (enter actual start time or remaining duration) before resuming this legacy job.',
+      };
+    }
+    const overrideMs =
+      overrideRemainingMinutes !== undefined
+        ? Math.max(0, Math.round(overrideRemainingMinutes * 60_000))
+        : undefined;
+    const { timing, resumedRemainingMs } = buildResumedPrintingTiming(
+      job,
+      nowMs,
+      overrideMs,
+      machine
+    );
+    updatedJob = {
+      ...updatedJob,
+      ...timing,
+    };
+    delete updatedJob.needsEtaRecalibration;
+    delete updatedJob.pendingServerStartSync;
+    delete updatedJob.pendingServerCompleteSync;
+    actionLabel = `Resumed Plate ${job.plateNumber} (ETA +${Math.ceil(
+      resumedRemainingMs / 60_000
+    )}m)`;
   }
 
   return {
@@ -787,6 +919,64 @@ export function pauseOrResumePrintingJob(
         createActivityLogEntry({
           category: 'plate',
           msg: actionLabel,
+          projectId: job.projectId,
+          nowMs,
+          timezone,
+        }),
+        ...workspace.log,
+      ].slice(0, 200),
+      updatedIso: nowIso,
+    },
+  };
+}
+
+/**
+ * Recalibrates an active `Printing` job whose ETA lacked sufficient historical timestamps
+ * (or needs operator recalibration) by accepting either the actual start time or remaining duration.
+ * Never silently restarts a job or invents historical start times.
+ */
+export function recalibratePrintingJobEta(
+  workspace: ProductionWorkspaceV5,
+  jobId: string,
+  input: EtaRecalibrationInput,
+  nowMs: number = Date.now()
+): { nextWorkspace?: ProductionWorkspaceV5; error?: string } {
+  const job = workspace.jobs.find((j) => j.id === jobId);
+  if (!job || job.stage !== 'Printing' || job.archived) {
+    return { error: 'Only active Printing plates can be recalibrated.' };
+  }
+
+  const machine = workspace.machines.find((m) => m.id === job.machineId) || null;
+  const timezone = workspace.settings?.timezone || DEFAULT_TIMEZONE;
+  const nowIso = new Date(nowMs).toISOString();
+
+  const { timing, error } = buildRecalibratedPrintingTiming(job, input, nowMs, machine);
+  if (error) {
+    return { error };
+  }
+
+  const updatedJob: ProductionJob = {
+    ...job,
+    ...timing,
+    updatedIso: nowIso,
+  };
+  delete updatedJob.needsEtaRecalibration;
+  delete updatedJob.pendingServerStartSync;
+  delete updatedJob.pendingServerCompleteSync;
+
+  const actionDetail =
+    input.mode === 'actual_start_time'
+      ? `from actual start ${formatDateTimeDDMMYYYY(input.actualStartedAtMs, timezone)}`
+      : `to ${Math.round(input.remainingMinutes)}m remaining`;
+
+  return {
+    nextWorkspace: {
+      ...workspace,
+      jobs: workspace.jobs.map((j) => (j.id === jobId ? updatedJob : j)),
+      log: [
+        createActivityLogEntry({
+          category: 'plate',
+          msg: `Recalibrated ETA for Plate ${job.plateNumber} (${actionDetail})`,
           projectId: job.projectId,
           nowMs,
           timezone,
@@ -1272,29 +1462,36 @@ export function cancelPrintingJob(
     ? workspace.machines.find((m) => m.id === previousMachineId) || null
     : null;
 
+  const resolvedCancelTiming = resolveJobTimingFields(targetJob, previousMachine);
   let accumulatedElapsedSeconds = targetJob.accumulatedElapsedSeconds || 0;
-  if (!targetJob.isPaused) {
-    const anchorMs = targetJob.runResumedAtMs || targetJob.startedAtMs || nowMs;
-    accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
+  const cancelAnchorMs = targetJob.runResumedAtMs ?? resolvedCancelTiming.actualStartedAtMs;
+  if (!resolvedCancelTiming.isPaused && cancelAnchorMs !== null && nowMs > cancelAnchorMs) {
+    accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - cancelAnchorMs) / 1000));
   }
 
   const updatedJob: ProductionJob = {
     ...targetJob,
     stage: 'Cancelled',
     machineId: null, // Release scheduled/active machine assignment
+    actualStartedAt: toUtcTimestampIso(resolvedCancelTiming.actualStartedAtMs),
+    startedAtMs: resolvedCancelTiming.actualStartedAtMs,
     isPaused: false,
+    pausedAt: null,
     pausedAtMs: null,
+    remainingAtPauseMs: null,
     remainingSecondsAtPause: null,
     accumulatedElapsedSeconds,
+    estimatedFinishAt: null,
     estimatedFinishAtMs: null,
-    pendingServerStartSync: false,
-    pendingServerCompleteSync: false,
     cancelledIso: nowIso,
     cancellationReason: trimmedReason.length > 0 ? trimmedReason : null,
     cancelledBy: actorLabel,
     cancelledFromMachineId: previousMachineId,
     updatedIso: nowIso,
   };
+  delete updatedJob.needsEtaRecalibration;
+  delete updatedJob.pendingServerStartSync;
+  delete updatedJob.pendingServerCompleteSync;
 
   const nextJobs = workspace.jobs.map((j) => (j.id === jobId ? updatedJob : j));
 

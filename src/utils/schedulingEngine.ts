@@ -1,4 +1,5 @@
 import {
+  ActiveCountdownStatus,
   PrinterMachine,
   ProductionJob,
   ProductionProject,
@@ -6,6 +7,7 @@ import {
   ProjectPriority,
 } from '../types';
 import { DEFAULT_TIMEZONE, getDeadlineEndOfDayMs } from './dateFormat';
+import { computeJobCountdownSnapshot } from './productionCountdown';
 
 export interface ScheduledJobSlot {
   job: ProductionJob;
@@ -16,10 +18,14 @@ export interface ScheduledJobSlot {
   isVirtualAssignment: boolean; // True when auto-routed across pool because machineId was unassigned
   isActivePrinting: boolean;
   isPaused: boolean;
+  countdownStatus: ActiveCountdownStatus;
+  needsEtaRecalibration: boolean;
+  isAwaitingConfirmation: boolean;
   effectivePrintMinutes: number;
   setupAndBufferMinutes: number;
   startMs: number | null;
   endMs: number | null;
+  remainingMsLive: number;
   remainingSecondsLive: number;
   exceedsProjectDeadline: boolean;
 }
@@ -93,38 +99,28 @@ export function getEffectivePrintMinutes(
 }
 
 /**
- * Calculates live remaining seconds for an actively Printing job.
- * - If paused (`job.isPaused`), strictly returns `remainingSecondsAtPause` WITHOUT decreasing!
- * - If actively running, subtracts elapsed time since `runResumedAtMs` (or `startedAtMs`).
+ * Calculates live remaining milliseconds for an actively Printing job using UTC timestamps:
+ * - Active running job: `Math.max(0, estimatedFinishAtMs - nowMs)`
+ * - Paused job: `Math.max(0, remainingAtPauseMs)` (frozen)
+ * - Uncalibrated legacy job: `0` (flagged via `needsEtaRecalibration`)
+ */
+export function getLiveRemainingMs(
+  job: ProductionJob,
+  nowMs: number,
+  machine?: PrinterMachine | null
+): number {
+  return computeJobCountdownSnapshot(job, nowMs, machine).remainingMs;
+}
+
+/**
+ * Calculates live remaining seconds for an actively Printing job from persisted UTC timestamps.
  */
 export function getLiveRemainingSeconds(
   job: ProductionJob,
   nowMs: number,
   machine?: PrinterMachine | null
 ): number {
-  const effMinutes = getEffectivePrintMinutes(job, machine);
-  const totalEstSeconds = effMinutes * 60;
-
-  if (job.stage === 'Completed' || job.stage === 'Cancelled') return 0;
-  if (job.stage !== 'Printing') return totalEstSeconds;
-
-  if (job.isPaused) {
-    if (typeof job.remainingSecondsAtPause === 'number' && job.remainingSecondsAtPause >= 0) {
-      return Math.round(job.remainingSecondsAtPause);
-    }
-    const priorElapsed = job.accumulatedElapsedSeconds || 0;
-    return Math.max(0, totalEstSeconds - priorElapsed);
-  }
-
-  // Active running state
-  if (typeof job.estimatedFinishAtMs === 'number' && job.estimatedFinishAtMs > 0) {
-    return Math.max(0, Math.round((job.estimatedFinishAtMs - nowMs) / 1000));
-  }
-
-  const anchorMs = job.runResumedAtMs || job.startedAtMs || nowMs;
-  const currentSegmentSeconds = Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
-  const totalElapsed = (job.accumulatedElapsedSeconds || 0) + currentSegmentSeconds;
-  return Math.max(0, totalEstSeconds - totalElapsed);
+  return computeJobCountdownSnapshot(job, nowMs, machine).remainingSeconds;
 }
 
 /**
@@ -190,10 +186,16 @@ export function computeGlobalSchedule(
     const proj = projectMap.get(job.projectId);
     const machine = workspace.machines.find((m) => m.id === job.machineId) || null;
     const effMins = getEffectivePrintMinutes(job, machine);
-    const remSecs = getLiveRemainingSeconds(job, nowMs, machine);
-    const startMs = job.startedAtMs || nowMs;
-    const finishMs = nowMs + remSecs * 1000;
+    const countdown = computeJobCountdownSnapshot(job, nowMs, machine);
     const setupBuf = (machine?.setupBufferMinutes || 0) + turnaroundBuffer;
+
+    // Never invent historical start times or finish times when a legacy active job needs recalibration
+    const startMs = countdown.actualStartedAtMs;
+    const finishMs = countdown.needsEtaRecalibration
+      ? null
+      : countdown.isPaused
+      ? nowMs + countdown.remainingMs
+      : countdown.estimatedFinishAtMs;
 
     const deadlineMs = proj?.deadline
       ? getDeadlineEndOfDayMs(proj.deadline, timezone)
@@ -207,13 +209,22 @@ export function computeGlobalSchedule(
       assignedMachineName: machine?.name || 'Unassigned Printer',
       isVirtualAssignment: false,
       isActivePrinting: true,
-      isPaused: Boolean(job.isPaused),
-      effectivePrintMinutes: effMins,
+      isPaused: countdown.isPaused,
+      countdownStatus: countdown.status,
+      needsEtaRecalibration: countdown.needsEtaRecalibration,
+      isAwaitingConfirmation: countdown.isAwaitingConfirmation,
+      effectivePrintMinutes: Math.max(1, Math.round(countdown.estimatedDurationMs / 60_000)) || effMins,
       setupAndBufferMinutes: setupBuf,
       startMs,
       endMs: finishMs,
-      remainingSecondsLive: remSecs,
-      exceedsProjectDeadline: Boolean(deadlineMs && finishMs > deadlineMs),
+      remainingMsLive: countdown.remainingMs,
+      remainingSecondsLive: countdown.remainingSeconds,
+      exceedsProjectDeadline: Boolean(
+        deadlineMs &&
+          (finishMs !== null
+            ? Math.max(finishMs, countdown.isAwaitingConfirmation ? nowMs : finishMs) > deadlineMs
+            : false)
+      ),
     };
 
     slotsByJobId[job.id] = slot;
@@ -221,8 +232,14 @@ export function computeGlobalSchedule(
 
     if (machine) {
       machineActiveSlot.set(machine.id, slot);
-      // Next job on this machine can start after finishMs + plate removal/cleaning/restart buffer
-      const nextReadyMs = finishMs + turnaroundBuffer * 60_000;
+      // Reserve printer until active print finishes (or conservative effective duration if uncalibrated,
+      // or current wall-clock if awaiting operator confirmation) + turnaround buffer
+      const machineOccupancyEndMs = countdown.needsEtaRecalibration
+        ? nowMs + effMins * 60_000
+        : finishMs !== null
+        ? Math.max(nowMs, finishMs)
+        : nowMs;
+      const nextReadyMs = machineOccupancyEndMs + turnaroundBuffer * 60_000;
       const existingCursor = machineCursorMs.get(machine.id);
       machineCursorMs.set(
         machine.id,
@@ -230,9 +247,12 @@ export function computeGlobalSchedule(
           ? Math.max(existingCursor, nextReadyMs)
           : nextReadyMs
       );
+      const utilRemMins = countdown.needsEtaRecalibration
+        ? effMins
+        : Math.ceil(countdown.remainingSeconds / 60);
       machineUtilMinutes.set(
         machine.id,
-        (machineUtilMinutes.get(machine.id) || 0) + Math.ceil(remSecs / 60)
+        (machineUtilMinutes.get(machine.id) || 0) + utilRemMins
       );
     }
   }
@@ -318,10 +338,14 @@ export function computeGlobalSchedule(
         isVirtualAssignment: true,
         isActivePrinting: false,
         isPaused: false,
+        countdownStatus: 'inactive',
+        needsEtaRecalibration: false,
+        isAwaitingConfirmation: false,
         effectivePrintMinutes: effMins,
         setupAndBufferMinutes: turnaroundBuffer,
         startMs: null,
         endMs: null,
+        remainingMsLive: effMins * 60_000,
         remainingSecondsLive: effMins * 60,
         exceedsProjectDeadline: false,
       };
@@ -351,10 +375,14 @@ export function computeGlobalSchedule(
       isVirtualAssignment: isVirtual,
       isActivePrinting: false,
       isPaused: false,
+      countdownStatus: 'inactive',
+      needsEtaRecalibration: false,
+      isAwaitingConfirmation: false,
       effectivePrintMinutes: effMins,
       setupAndBufferMinutes: machineSetupMins + turnaroundBuffer,
       startMs,
       endMs,
+      remainingMsLive: effMins * 60_000,
       remainingSecondsLive: effMins * 60,
       exceedsProjectDeadline: Boolean(deadlineMs && endMs > deadlineMs),
     };
@@ -378,8 +406,13 @@ export function computeGlobalSchedule(
         typeof m.maintenanceUntilMs === 'number' && m.maintenanceUntilMs > nowMs
           ? m.maintenanceUntilMs
           : null;
-    } else if (activeSlot && activeSlot.endMs) {
-      immediateOpeningMs = activeSlot.endMs + turnaroundBuffer * 60_000;
+    } else if (activeSlot) {
+      const occupancyEndMs = activeSlot.needsEtaRecalibration
+        ? nowMs + activeSlot.effectivePrintMinutes * 60_000
+        : activeSlot.endMs !== null
+        ? Math.max(nowMs, activeSlot.endMs)
+        : nowMs;
+      immediateOpeningMs = occupancyEndMs + turnaroundBuffer * 60_000;
     } else {
       immediateOpeningMs = nowMs;
     }

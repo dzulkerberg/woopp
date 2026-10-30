@@ -30,6 +30,7 @@ import {
   AdminActorContext,
   AlphabetPreset,
   CharmsMap,
+  EtaRecalibrationInput,
   KanbanStage,
   LegacyTrackerState,
   LettersMap,
@@ -57,6 +58,7 @@ import {
   getReservedStockForColor,
   isAuthorizedAdmin,
   pauseOrResumePrintingJob,
+  recalibratePrintingJobEta,
   restorePrintPlate,
   transitionJobState,
 } from './utils/productionEngine';
@@ -70,9 +72,12 @@ import {
   inspectUnsyncedLocalData,
 } from './utils/legacyLocalBackup';
 import {
-  computeGlobalSchedule,
-  getEffectivePrintMinutes,
-} from './utils/schedulingEngine';
+  computeEffectiveDurationMs,
+  computeJobCountdownSnapshot,
+  resolveJobTimingFields,
+  toUtcTimestampIso,
+} from './utils/productionCountdown';
+import { computeGlobalSchedule } from './utils/schedulingEngine';
 import {
   DEFAULT_TIMEZONE,
   formatDateDDMMYYYY,
@@ -141,6 +146,11 @@ export const App: React.FC = () => {
   const latestWorkspaceRef = useRef<ProductionWorkspaceV5>(initialWorkspace);
   const serverClockOffsetMsRef = useRef<number>(0);
   const serverTimestampSupportedRef = useRef<boolean>(true);
+  const lastLocalWriteWindowRef = useRef<{
+    startedClientMs: number;
+    updatedIso: string;
+    awaitingCalibration: boolean;
+  } | null>(null);
 
   useEffect(() => {
     latestWorkspaceRef.current = workspace;
@@ -191,12 +201,31 @@ export const App: React.FC = () => {
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  // 1-second live tick for active printing countdowns and real-time ETA recalculation
+  // 1-second UI re-render tick + immediate wall-clock resync on tab visibility, focus, and wake from sleep
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const refreshWallClockNow = () => {
       setNowMs(Date.now() + serverClockOffsetMsRef.current);
-    }, 1000);
-    return () => window.clearInterval(timer);
+    };
+
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshWallClockNow();
+      }
+    };
+
+    const timer = window.setInterval(refreshWallClockNow, 1000);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', refreshWallClockNow);
+    window.addEventListener('pageshow', refreshWallClockNow);
+    window.addEventListener('online', refreshWallClockNow);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', refreshWallClockNow);
+      window.removeEventListener('pageshow', refreshWallClockNow);
+      window.removeEventListener('online', refreshWallClockNow);
+    };
   }, []);
 
   // Global multi-project Bambu fleet schedule (automatically updates on every state change & clock tick)
@@ -314,9 +343,15 @@ export const App: React.FC = () => {
           },
           docPath
         );
+        lastLocalWriteWindowRef.current = {
+          startedClientMs: Date.now(),
+          updatedIso: validatedPayload.updatedIso,
+          awaitingCalibration: true,
+        };
         await setDoc(docRef, docWithServerTime);
         return;
       } catch (err: unknown) {
+        lastLocalWriteWindowRef.current = null;
         const code =
           err && typeof err === 'object' && 'code' in err
             ? String((err as { code?: unknown }).code)
@@ -458,90 +493,50 @@ export const App: React.FC = () => {
       unsubV5Snapshot = onSnapshot(
         userV5DocRef,
         async (v5Snap) => {
+          // Measure minor server clock skew ONLY for a write initiated in this live session
+          // (never from historical `serverUpdatedAt` on page load / browser reopen!).
+          if (v5Snap.exists() && !v5Snap.metadata.hasPendingWrites && !v5Snap.metadata.fromCache) {
+            const rawCheck = v5Snap.data() as Record<string, unknown>;
+            const rawServerTs = rawCheck.serverUpdatedAt as
+              | { toMillis?: () => number }
+              | undefined;
+            const writeWin = lastLocalWriteWindowRef.current;
+            if (
+              writeWin?.awaitingCalibration &&
+              rawCheck.updatedIso === writeWin.updatedIso &&
+              rawServerTs &&
+              typeof rawServerTs.toMillis === 'function'
+            ) {
+              const finishedClientMs = Date.now();
+              const rttMs = finishedClientMs - writeWin.startedClientMs;
+              writeWin.awaitingCalibration = false;
+              if (rttMs >= 0 && rttMs <= 15_000) {
+                const midpointMs = writeWin.startedClientMs + Math.round(rttMs / 2);
+                const resolvedServerMs = rawServerTs.toMillis();
+                const skewMs = resolvedServerMs - midpointMs;
+                // Guard against anomalous offsets > 10 minutes
+                if (Math.abs(skewMs) <= 10 * 60_000) {
+                  serverClockOffsetMsRef.current = skewMs;
+                }
+              }
+            }
+          }
+
           if (pendingWritesRef.current > 0) return;
 
           if (v5Snap.exists()) {
             const rawDoc = v5Snap.data() as Record<string, unknown>;
-            const rawServerTs = rawDoc.serverUpdatedAt as
-              | { toMillis?: () => number }
-              | undefined;
 
-            let resolvedServerMs: number | null = null;
-            if (
-              rawServerTs &&
-              typeof rawServerTs.toMillis === 'function' &&
-              !v5Snap.metadata.hasPendingWrites
-            ) {
-              resolvedServerMs = rawServerTs.toMillis();
-              if (!v5Snap.metadata.fromCache) {
-                serverClockOffsetMsRef.current = resolvedServerMs - Date.now();
-                setNowMs(resolvedServerMs);
-              }
-            }
-
-            let normalized = normalizeWorkspaceV5(
+            // Hydrate workspace and persisted job timestamps without ever resetting
+            // actualStartedAt or estimatedFinishAt on reload, login, or browser reopen
+            const normalized = normalizeWorkspaceV5(
               rawDoc as unknown as ProductionWorkspaceV5,
               firebaseUser.uid
             );
 
-            // Reconcile pending job start/completion timestamps with authoritative Firebase server time
-            if (resolvedServerMs !== null) {
-              let reconciledAny = false;
-              const reconciledJobs = normalized.jobs.map((j) => {
-                if (j.pendingServerStartSync && j.stage === 'Printing') {
-                  reconciledAny = true;
-                  const machine =
-                    normalized.machines.find((m) => m.id === j.machineId) || null;
-                  const effMins = getEffectivePrintMinutes(j, machine);
-                  return {
-                    ...j,
-                    startedAtMs: resolvedServerMs,
-                    runResumedAtMs: j.isPaused ? j.runResumedAtMs : resolvedServerMs,
-                    estimatedFinishAtMs: j.isPaused
-                      ? null
-                      : resolvedServerMs + effMins * 60_000,
-                    pendingServerStartSync: false,
-                  };
-                }
-                if (j.pendingServerCompleteSync && j.stage === 'Completed') {
-                  reconciledAny = true;
-                  const calcActual =
-                    (j.accumulatedElapsedSeconds || 0) > 0
-                      ? Math.max(1, Math.round((j.accumulatedElapsedSeconds || 0) / 60))
-                      : j.startedAtMs && resolvedServerMs > j.startedAtMs
-                      ? Math.max(1, Math.round((resolvedServerMs - j.startedAtMs) / 60_000))
-                      : j.actualMinutes;
-                  return {
-                    ...j,
-                    actualCompletedAtMs: resolvedServerMs,
-                    completedIso: new Date(resolvedServerMs).toISOString(),
-                    actualMinutes: calcActual,
-                    pendingServerCompleteSync: false,
-                  };
-                }
-                return j;
-              });
-
-              if (reconciledAny) {
-                normalized = prepareWorkspaceForFirestore(
-                  { ...normalized, jobs: reconciledJobs },
-                  firebaseUser.uid,
-                  { documentLabel: v5Path }
-                );
-                pendingWritesRef.current += 1;
-                writeQueueRef.current = writeQueueRef.current
-                  .catch(() => {})
-                  .then(() =>
-                    writeSnapshotWithServerTime(userV5DocRef, normalized, v5Path)
-                  )
-                  .finally(() => {
-                    pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
-                  });
-              }
-            }
-
             lastConfirmedWorkspaceRef.current = normalized;
             setWorkspace(normalized);
+            setNowMs(Date.now() + serverClockOffsetMsRef.current);
             setCloudError(null);
             setReady(true);
             setSyncStatus('Synced · Cloud Firestore');
@@ -852,6 +847,22 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleRecalibrateJobEta = (jobId: string, input: EtaRecalibrationInput) => {
+    const result = recalibratePrintingJobEta(
+      workspace,
+      jobId,
+      input,
+      getAuthoritativeNowMs()
+    );
+    if (result.error) {
+      showAlert(result.error, 'ETA Recalibration Notice');
+      return;
+    }
+    if (result.nextWorkspace) {
+      void persistWorkspace(result.nextWorkspace);
+    }
+  };
+
   const handleUpdateJobMetadata = (
     jobId: string,
     updates: Partial<
@@ -880,6 +891,7 @@ export const App: React.FC = () => {
     const authNow = getAuthoritativeNowMs();
 
     // If changing machine while job is actively Printing, enforce overlap & availability rules
+    // while preserving active timestamps on this and all other jobs
     if (updates.machineId !== undefined && job.stage === 'Printing') {
       const result = transitionJobState(workspace, jobId, 'Printing', {
         machineId: updates.machineId,
@@ -890,7 +902,7 @@ export const App: React.FC = () => {
         return;
       }
       if (result.nextWorkspace) {
-        persistWorkspace(result.nextWorkspace);
+        void persistWorkspace(result.nextWorkspace);
       }
       return;
     }
@@ -909,25 +921,36 @@ export const App: React.FC = () => {
         updatedIso: new Date(authNow).toISOString(),
       };
 
-      // Recalculate live finish ETA if Bambu Studio duration or printer override was updated during an active print
+      // Recalculate live finish ETA if Bambu Studio duration or printer override was updated during a calibrated active print
       if (
         merged.stage === 'Printing' &&
-        !merged.isPaused &&
         (definedUpdates.estimatedMinutes !== undefined ||
           definedUpdates.machineDurationOverrides !== undefined)
       ) {
         const machine =
           workspace.machines.find((m) => m.id === merged.machineId) || null;
-        const effMins = getEffectivePrintMinutes(merged, machine);
-        const alreadyElapsedSecs =
-          (merged.accumulatedElapsedSeconds || 0) +
-          (merged.runResumedAtMs
-            ? Math.max(0, Math.floor((authNow - merged.runResumedAtMs) / 1000))
-            : merged.startedAtMs
-            ? Math.max(0, Math.floor((authNow - merged.startedAtMs) / 1000))
-            : 0);
-        const remSecs = Math.max(0, effMins * 60 - alreadyElapsedSecs);
-        merged.estimatedFinishAtMs = authNow + remSecs * 1000;
+        const resolvedPrev = resolveJobTimingFields(j, machine);
+        const newDurationMs = computeEffectiveDurationMs(merged, machine);
+        merged.estimatedDurationMs = newDurationMs;
+
+        if (!resolvedPrev.needsEtaRecalibration) {
+          const prevSnap = computeJobCountdownSnapshot(j, authNow, machine);
+          const elapsedWorkMs = Math.max(
+            0,
+            resolvedPrev.estimatedDurationMs - prevSnap.remainingMs
+          );
+          const nextRemMs = Math.max(0, newDurationMs - elapsedWorkMs);
+          if (resolvedPrev.isPaused) {
+            merged.remainingAtPauseMs = nextRemMs;
+            merged.remainingSecondsAtPause = Math.ceil(nextRemMs / 1000);
+            merged.estimatedFinishAt = null;
+            merged.estimatedFinishAtMs = null;
+          } else {
+            const nextFinishMs = authNow + nextRemMs;
+            merged.estimatedFinishAt = toUtcTimestampIso(nextFinishMs);
+            merged.estimatedFinishAtMs = nextFinishMs;
+          }
+        }
       }
 
       return merged;
@@ -1778,6 +1801,7 @@ export const App: React.FC = () => {
               onNavigate={handleNavigate}
               onSelectProject={setSelectedProjectId}
               onPauseOrResume={handlePauseOrResume}
+              onRecalibrateJobEta={handleRecalibrateJobEta}
               onTransitionStage={handleTransitionStage}
               onRequestCancelPrinting={handleRequestCancelPrinting}
               onUpdateBufferMinutes={handleUpdateBufferMinutes}
@@ -1818,6 +1842,7 @@ export const App: React.FC = () => {
               onSelectProject={setSelectedProjectId}
               onTransitionStage={handleTransitionStage}
               onPauseOrResume={handlePauseOrResume}
+              onRecalibrateJobEta={handleRecalibrateJobEta}
               onUpdateJobMetadata={handleUpdateJobMetadata}
               onCopyQueueSummary={handleCopyQueueSummary}
               onRequestDeletePlate={handleRequestDeletePlate}
@@ -1841,6 +1866,7 @@ export const App: React.FC = () => {
                 handleTransitionStage(jobId, 'Printing', { machineId })
               }
               onPauseOrResume={handlePauseOrResume}
+              onRecalibrateJobEta={handleRecalibrateJobEta}
               onTransitionStage={handleTransitionStage}
               onRequestCancelPrinting={handleRequestCancelPrinting}
             />

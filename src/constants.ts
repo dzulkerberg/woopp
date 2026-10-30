@@ -20,6 +20,7 @@ import {
   SalesChannel,
 } from './types';
 import { DEFAULT_TIMEZONE, formatDateTimeDDMMYYYY } from './utils/dateFormat';
+import { hydrateJobCountdownFields } from './utils/productionCountdown';
 
 export const STORAGE_KEY_V5 = 'woopp-print-tracker-v5';
 export const STORAGE_KEY_V1 = 'woopp-print-tracker-v1';
@@ -444,7 +445,9 @@ export function migrateFromLegacyV1(
     const isCompleted = stage === 'Completed';
     const isFailed = stage === 'Failed / Reprint';
 
-    return {
+    const isPrinting = stage === 'Printing';
+
+    const migratedJob: ProductionJob = {
       id: lj.id || `legacy-job-${index}`,
       projectId: legacyProjectId,
       colorId: colorOpt.id,
@@ -455,7 +458,7 @@ export function migrateFromLegacyV1(
       machineId: matchedMachine ? matchedMachine.id : null,
       estimatedMinutes: 195,
       actualMinutes: isCompleted ? 195 : 0,
-      slicerVerified: isCompleted || stage === 'Printing',
+      slicerVerified: isCompleted || isPrinting,
       stockApplied: isCompleted,
       stockTransactionId: isCompleted ? `mig-tx-${lj.id || index}` : null,
       failedCount: isFailed ? 1 : 0,
@@ -464,7 +467,33 @@ export function migrateFromLegacyV1(
       createdIso: nowIso,
       updatedIso: nowIso,
       completedIso: isCompleted ? nowIso : null,
+      ...(isCompleted
+        ? {
+            actualCompletedAt: nowIso,
+            actualCompletedAtMs: Date.parse(nowIso),
+          }
+        : {}),
+      ...(isPrinting
+        ? {
+            // Legacy v1 lacked print start timestamps: never invent a historical start time
+            actualStartedAt: null,
+            startedAtMs: null,
+            estimatedDurationMs: 195 * 60_000,
+            estimatedFinishAt: null,
+            estimatedFinishAtMs: null,
+            pausedAt: null,
+            pausedAtMs: null,
+            remainingAtPauseMs: null,
+            remainingSecondsAtPause: null,
+            actualCompletedAt: null,
+            actualCompletedAtMs: null,
+            isPaused: false,
+            needsEtaRecalibration: true,
+          }
+        : {}),
     };
+
+    return migratedJob;
   });
 
   // Update machine telemetry & active Printing status from migrated jobs
@@ -888,7 +917,7 @@ export function normalizeWorkspaceV5(
               delete normalizedJob[key];
             }
           }
-          return normalizedJob;
+          return hydrateJobCountdownFields(normalizedJob);
         })
       : [],
     presets: Array.isArray(raw.presets) && raw.presets.length > 0

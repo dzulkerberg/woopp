@@ -113,6 +113,23 @@ export interface ProductionProject {
   updatedIso: string;
 }
 
+export type ActiveCountdownStatus =
+  | 'running'
+  | 'paused'
+  | 'awaiting_confirmation'
+  | 'needs_recalibration'
+  | 'inactive';
+
+export type EtaRecalibrationInput =
+  | {
+      mode: 'remaining_duration';
+      remainingMinutes: number;
+    }
+  | {
+      mode: 'actual_start_time';
+      actualStartedAtMs: number;
+    };
+
 export interface ProductionJob {
   id: string;
   projectId: string;
@@ -138,18 +155,26 @@ export interface ProductionJob {
   createdIso: string;
   updatedIso: string;
   completedIso: string | null;
-  // Smart Production ETA & Live Countdown Fields (additive, backward-compatible)
+  // Timestamp-Based Live Countdown Fields (Firestore-compatible UTC ISO-8601 & millisecond durations)
+  actualStartedAt?: string | null;
+  estimatedDurationMs?: number | null;
+  estimatedFinishAt?: string | null;
+  pausedAt?: string | null;
+  remainingAtPauseMs?: number | null;
+  actualCompletedAt?: string | null;
+  needsEtaRecalibration?: boolean;
+  // Smart Production ETA & Legacy Companion Timing Fields (additive, backward-compatible)
   machineDurationOverrides?: Record<string, number>; // machineId -> custom minutes from Bambu Studio for specific printer
-  startedAtMs?: number | null; // Initial print start epoch ms (synced via Firebase serverTimestamp)
+  startedAtMs?: number | null; // Initial print start epoch ms
   runResumedAtMs?: number | null; // Epoch ms of current active printing segment
   isPaused?: boolean; // True when paused; countdown freezes until resumed
   pausedAtMs?: number | null; // Epoch ms when paused
   remainingSecondsAtPause?: number | null; // Remaining seconds frozen at pause or manually updated by operator
   accumulatedElapsedSeconds?: number; // Seconds printed prior to latest resume/pause
   estimatedFinishAtMs?: number | null; // Projected completion epoch ms while actively printing
-  actualCompletedAtMs?: number | null; // Actual completion epoch ms (synced via Firebase serverTimestamp)
-  pendingServerStartSync?: boolean; // Reconciles startedAtMs with Firestore serverUpdatedAt snapshot
-  pendingServerCompleteSync?: boolean; // Reconciles actualCompletedAtMs with Firestore serverUpdatedAt snapshot
+  actualCompletedAtMs?: number | null; // Actual completion epoch ms
+  pendingServerStartSync?: boolean;
+  pendingServerCompleteSync?: boolean;
   // Print Queue Lifecycle Management Fields (additive, backward-compatible)
   archived?: boolean; // True when hidden from Active Queue and stored in Archived view
   archivedIso?: string | null; // ISO timestamp when archived

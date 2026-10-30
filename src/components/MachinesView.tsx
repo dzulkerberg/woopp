@@ -7,6 +7,7 @@ import {
   MACHINE_STATUSES,
 } from '../constants';
 import {
+  EtaRecalibrationInput,
   KanbanStage,
   MachineStatus,
   PrinterMachine,
@@ -18,7 +19,12 @@ import {
   formatDateTimeDDMMYYYY,
   formatDurationHoursMinutes,
 } from '../utils/dateFormat';
+import {
+  ETA_NEEDS_RECALIBRATION_LABEL,
+  ETA_REACHED_LABEL,
+} from '../utils/productionCountdown';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
+import { EtaRecalibrationBox } from './EtaRecalibrationBox';
 import { PlateCompositionSummary } from './PlateCompositionSummary';
 
 interface MachinesViewProps {
@@ -50,6 +56,7 @@ interface MachinesViewProps {
     action: 'pause' | 'resume' | 'update_remaining',
     overrideRemainingMinutes?: number
   ) => void;
+  onRecalibrateJobEta: (jobId: string, input: EtaRecalibrationInput) => void;
   onTransitionStage: (
     jobId: string,
     nextStage: KanbanStage,
@@ -68,6 +75,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
   onRemoveMachine,
   onAssignAndStartJob,
   onPauseOrResume,
+  onRecalibrateJobEta,
   onTransitionStage,
   onRequestCancelPrinting,
 }) => {
@@ -317,13 +325,23 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                 {/* Active Print Slot (Overlap Protected + Live Countdown) */}
                 {activeSlot && activeJob ? (
                   <div className="p-3.5 rounded-xl bg-[#f6f3ff] dark:bg-[#231d3a] border border-[#dcd2ff] dark:border-[#3e3366] space-y-2.5">
-                    <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="font-semibold text-[#5b3cc4] dark:text-[#c7b8ff]">
-                        Plate {activeJob.plateNumber} ({activeSlot.isPaused ? 'Paused' : 'Printing'})
+                        Plate {activeJob.plateNumber} (
+                        {activeSlot.needsEtaRecalibration
+                          ? ETA_NEEDS_RECALIBRATION_LABEL
+                          : activeSlot.isPaused
+                          ? 'Paused'
+                          : activeSlot.isAwaitingConfirmation
+                          ? ETA_REACHED_LABEL
+                          : 'Printing'}
+                        )
                       </span>
-                      <span className="font-mono-data font-bold text-neutral-900 dark:text-white">
-                        {formatCountdownHMS(activeSlot.remainingSecondsLive)}
-                      </span>
+                      {!activeSlot.needsEtaRecalibration && (
+                        <span className="font-mono-data font-bold text-neutral-900 dark:text-white">
+                          {formatCountdownHMS(activeSlot.remainingSecondsLive)}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-neutral-700 dark:text-neutral-200">
                       {activeSlot.project?.name} · {activeSlot.colorName} ({countPlateKeycaps(activeJob)}/
@@ -334,24 +352,39 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                       charms={activeJob.charms}
                       compact
                     />
-                    {activeSlot.endMs && (
-                      <div className="text-[11px] font-mono-data text-neutral-500">
-                        Est Finish: {formatDateTimeDDMMYYYY(activeSlot.endMs, timezone)}
-                      </div>
+                    {activeSlot.needsEtaRecalibration ? (
+                      <EtaRecalibrationBox
+                        compact
+                        jobId={activeJob.id}
+                        plateNumber={activeJob.plateNumber}
+                        defaultDurationMinutes={activeSlot.effectivePrintMinutes}
+                        nowMs={schedule.nowMs}
+                        timezone={timezone}
+                        disabled={Boolean(busyJobIds?.has(activeJob.id))}
+                        onRecalibrate={onRecalibrateJobEta}
+                      />
+                    ) : (
+                      activeSlot.endMs && (
+                        <div className="text-[11px] font-mono-data text-neutral-500">
+                          Est Finish: {formatDateTimeDDMMYYYY(activeSlot.endMs, timezone)}
+                        </div>
+                      )
                     )}
                     <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onPauseOrResume(
-                            activeJob.id,
-                            activeSlot.isPaused ? 'resume' : 'pause'
-                          )
-                        }
-                        className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 whitespace-nowrap"
-                      >
-                        {activeSlot.isPaused ? 'Resume' : 'Pause'}
-                      </button>
+                      {!activeSlot.needsEtaRecalibration && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onPauseOrResume(
+                              activeJob.id,
+                              activeSlot.isPaused ? 'resume' : 'pause'
+                            )
+                          }
+                          className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 whitespace-nowrap"
+                        >
+                          {activeSlot.isPaused ? 'Resume' : 'Pause'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() =>
