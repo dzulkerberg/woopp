@@ -144,16 +144,16 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 bg-neutral-100 dark:bg-[#1a1826] rounded-xl border border-neutral-200/70 dark:border-neutral-800">
+        <div className="flex items-center gap-1 p-1 bg-recessed rounded-lg border border-line">
           {(['Active', 'Completed', 'Archived', 'ALL'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setStatusFilter(tab)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                 statusFilter === tab
-                  ? 'bg-white dark:bg-[#2a2440] text-neutral-900 dark:text-white shadow-xs'
-                  : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                  ? 'bg-surface text-ink border border-line shadow-xs font-semibold'
+                  : 'border border-transparent text-ink-secondary hover:text-ink'
               }`}
             >
               {tab === 'ALL' ? 'All Projects' : tab}
@@ -164,7 +164,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         <button
           type="button"
           onClick={openNewProjectForm}
-          className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white transition-colors whitespace-nowrap"
+          className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors whitespace-nowrap"
         >
           + New Production Project
         </button>
@@ -174,30 +174,30 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       {editingProject && (
         <form
           onSubmit={handleSubmitForm}
-          className="bg-white dark:bg-[#171522] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 space-y-5"
+          className="bg-surface border border-line rounded-xl p-6 space-y-5"
         >
-          <div className="flex items-center justify-between border-b border-neutral-100 dark:border-neutral-800 pb-3">
-            <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+          <div className="flex items-center justify-between border-b border-line pb-3">
+            <h3 className="text-base font-semibold text-ink">
               {isCreating ? 'Create Production Project' : `Edit Project: ${editingProject.name}`}
             </h3>
             <button
               type="button"
               onClick={() => setEditingProject(null)}
-              className="text-xs text-neutral-500 hover:text-neutral-800 dark:hover:text-white"
+              className="text-xs text-muted hover:text-ink transition-colors"
             >
               Cancel
             </button>
           </div>
 
           {formError && (
-            <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300">
+            <div className="p-3 rounded-lg bg-error-soft border border-error-border text-xs text-error-text">
               {formError}
             </div>
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Project Name
               </label>
               <input
@@ -206,12 +206,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 placeholder="e.g. Weekend Booth Restock"
                 value={editingProject.name}
                 onChange={(e) => setEditingProject({ ...editingProject, name: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Sales Channel
               </label>
               <select
@@ -222,7 +222,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     salesChannel: e.target.value as SalesChannel,
                   })
                 }
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand"
               >
                 {SALES_CHANNELS.map((ch) => (
                   <option key={ch} value={ch}>
@@ -233,7 +233,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Production Priority
               </label>
               <select
@@ -244,7 +244,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     priority: e.target.value as ProjectPriority,
                   })
                 }
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand"
               >
                 {PRIORITIES.map((p) => (
                   <option key={p} value={p}>
@@ -255,7 +255,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Deadline (DD/MM/YYYY)
               </label>
               <DateInputDDMMYYYY
@@ -268,7 +268,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Product Type
               </label>
               <input
@@ -278,12 +278,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 onChange={(e) =>
                   setEditingProject({ ...editingProject, productType: e.target.value })
                 }
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <label className="block text-xs font-semibold text-ink-secondary mb-1">
                 Plate Capacity (pcs/plate)
               </label>
               <input
@@ -297,13 +297,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     plateCapacity: Math.max(1, Number(e.target.value) || DEFAULT_PLATE_CAPACITY),
                   })
                 }
-                className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white font-mono-data"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink font-mono-data focus:border-brand"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1.5">
               Assigned Colors
             </label>
             <div className="flex flex-wrap gap-2">
@@ -316,8 +316,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     onClick={() => toggleAssignedColor(c.id)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-2 whitespace-nowrap ${
                       selected
-                        ? 'border-[#6c4ce6] bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff]'
-                        : 'border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                        ? 'border-brand bg-brand-soft text-brand-text font-semibold'
+                        : 'border-line bg-surface text-ink-secondary hover:text-ink hover:bg-elevated'
                     }`}
                   >
                     <span
@@ -332,7 +332,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Project Notes
             </label>
             <textarea
@@ -341,7 +341,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               placeholder="Packaging instructions, booth requirements, or filament brand..."
               value={editingProject.notes}
               onChange={(e) => setEditingProject({ ...editingProject, notes: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
             />
           </div>
 
@@ -349,13 +349,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             <button
               type="button"
               onClick={() => setEditingProject(null)}
-              className="px-4 py-2 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300"
+              className="px-4 py-2 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white"
+              className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors"
             >
               {isCreating ? 'Create Project' : 'Save Changes'}
             </button>
@@ -365,14 +365,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
       {/* Projects List */}
       {visibleProjects.length === 0 ? (
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-10 text-center">
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-4">
-            No projects in <span className="font-semibold">{statusFilter}</span> status.
+        <div className="bg-surface border border-line rounded-xl p-10 text-center">
+          <p className="text-sm text-muted mb-4">
+            No projects in <span className="font-semibold text-ink">{statusFilter}</span> status.
           </p>
           <button
             type="button"
             onClick={openNewProjectForm}
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] text-white"
+            className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors"
           >
             Create First Project
           </button>
@@ -391,23 +391,31 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             return (
               <article
                 key={project.id}
-                className={`bg-white dark:bg-[#171522] border rounded-2xl p-6 transition-colors flex flex-col justify-between ${
+                className={`bg-surface border rounded-xl p-6 transition-colors flex flex-col justify-between ${
                   isSelected
-                    ? 'border-[#6c4ce6] dark:border-[#9479ff]'
-                    : 'border-neutral-200/80 dark:border-neutral-800'
+                    ? 'border-brand ring-1 ring-brand/25'
+                    : 'border-line'
                 }`}
               >
                 <div>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+                      <h3 className="text-base font-semibold text-ink">
                         {project.name}
                       </h3>
-                      <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                      <div className="text-xs text-muted mt-0.5">
                         {project.salesChannel} · Priority: {project.priority} · {project.productType}
                       </div>
                     </div>
-                    <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 shrink-0">
+                    <span
+                      className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold shrink-0 ${
+                        project.status === 'Completed'
+                          ? 'border-brand-border bg-brand-soft text-brand-text'
+                          : project.status === 'Archived'
+                          ? 'border-line bg-recessed text-muted'
+                          : 'border-info-border bg-info-soft text-info-text'
+                      }`}
+                    >
                       {project.status}
                     </span>
                   </div>
@@ -415,26 +423,26 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   {/* Progress Bar (driven strictly by valid plate records) */}
                   <div className="mt-4">
                     <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="text-neutral-600 dark:text-neutral-300">
+                      <span className="text-ink-secondary">
                         Printed Progress ({progress.completedPlates}/{progress.totalValidPlates} plates)
                       </span>
-                      <span className="font-mono-data font-semibold text-neutral-900 dark:text-white">
+                      <span className="font-mono-data font-semibold text-ink">
                         {progress.producedKeycaps.toLocaleString()} / {progress.plannedKeycaps.toLocaleString()} pcs ({progress.progressPct}%)
                       </span>
                     </div>
-                    <div className="h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+                    <div className="h-2 rounded-full bg-recessed border border-line/60 overflow-hidden">
                       <div
-                        className="h-full bg-[#6c4ce6]"
+                        className="h-full bg-brand transition-all"
                         style={{ width: `${progress.progressPct}%` }}
                       />
                     </div>
                     {(progress.plannedCharms > 0 || progress.producedCharms > 0) && (
-                      <div className="mt-1.5 text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 flex flex-wrap items-center justify-between gap-2">
+                      <div className="mt-1.5 text-[11px] font-mono-data text-muted flex flex-wrap items-center justify-between gap-2">
                         <span>
                           Alphabet A–Z: {progress.producedLetters.toLocaleString()} /{' '}
                           {progress.plannedLetters.toLocaleString()} printed
                         </span>
-                        <span className="text-[#5b3cc4] dark:text-[#c7b8ff]">
+                        <span className="text-brand-text font-semibold">
                           Charms: {progress.producedCharms.toLocaleString()} /{' '}
                           {progress.plannedCharms.toLocaleString()} printed
                         </span>
@@ -443,44 +451,48 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   </div>
 
                   {/* Unboxed Metadata Details */}
-                  <div className="mt-4 grid grid-cols-3 gap-3 pt-3 border-t border-neutral-100 dark:border-neutral-800/80 text-xs">
+                  <div className="mt-4 grid grid-cols-3 gap-3 pt-3 border-t border-line text-xs">
                     <div>
-                      <div className="text-neutral-400 dark:text-neutral-500">Deadline</div>
-                      <div className="font-mono-data text-neutral-800 dark:text-neutral-200 mt-0.5">
+                      <div className="text-muted">Deadline</div>
+                      <div className="font-mono-data text-ink mt-0.5">
                         {project.deadline ? formatDateDDMMYYYY(project.deadline) : 'Flexible'}
                       </div>
                     </div>
                     <div>
-                      <div className="text-neutral-400 dark:text-neutral-500">Plate Cap</div>
-                      <div className="font-mono-data text-neutral-800 dark:text-neutral-200 mt-0.5">
+                      <div className="text-muted">Plate Cap</div>
+                      <div className="font-mono-data text-ink mt-0.5">
                         {project.plateCapacity} pcs
                       </div>
                     </div>
                     <div>
-                      <div className="text-neutral-400 dark:text-neutral-500">Reserved Stock</div>
-                      <div className="font-mono-data text-neutral-800 dark:text-neutral-200 mt-0.5">
+                      <div className="text-muted">Reserved Stock</div>
+                      <div className="font-mono-data text-ink mt-0.5">
                         {allocatedPcs.toLocaleString()} pcs
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-3 text-xs text-neutral-500 dark:text-neutral-400">
+                  <div className="mt-3 text-xs text-muted">
                     Colors:{' '}
                     {project.assignedColorIds
                       .map((cid) => workspace.colors.find((c) => c.id === cid)?.name)
                       .filter(Boolean)
                       .join(', ') || 'None'}
-                    {progress.printingPlates > 0 && ` · ${progress.printingPlates} currently printing`}
+                    {progress.printingPlates > 0 && (
+                      <span className="text-brand-text font-medium">
+                        {` · ${progress.printingPlates} currently printing`}
+                      </span>
+                    )}
                   </div>
 
                   {project.notes && (
-                    <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2">
+                    <p className="mt-2 text-xs text-ink-secondary line-clamp-2">
                       {project.notes}
                     </p>
                   )}
                 </div>
 
-                <div className="mt-5 pt-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="mt-5 pt-4 border-t border-line flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -488,7 +500,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         onSelectProject(project.id);
                         onNavigate('planner');
                       }}
-                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] hover:opacity-90 whitespace-nowrap"
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors whitespace-nowrap"
                     >
                       Plan Plates
                     </button>
@@ -498,14 +510,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         onSelectProject(project.id);
                         onNavigate('queue');
                       }}
-                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink transition-colors whitespace-nowrap"
                     >
                       View Queue
                     </button>
                     <button
                       type="button"
                       onClick={() => openEditProjectForm(project)}
-                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink transition-colors whitespace-nowrap"
                     >
                       Edit
                     </button>
@@ -516,7 +528,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onUpdateProjectStatus(project.id, 'Archived')}
-                        className="text-xs text-neutral-500 hover:text-red-600 dark:hover:text-red-400 whitespace-nowrap"
+                        className="text-xs text-muted hover:text-error-text transition-colors whitespace-nowrap"
                       >
                         Archive
                       </button>
@@ -524,7 +536,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onUpdateProjectStatus(project.id, 'Active')}
-                        className="text-xs text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
+                        className="text-xs font-semibold text-brand-text hover:underline whitespace-nowrap"
                       >
                         Restore
                       </button>

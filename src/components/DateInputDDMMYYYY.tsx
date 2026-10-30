@@ -72,7 +72,7 @@ export const DateInputDDMMYYYY: React.FC<DateInputDDMMYYYYProps> = ({
         value={text}
         onChange={(e) => handleTextChange(e.target.value)}
         onBlur={handleBlur}
-        className="w-full pr-8 px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-xs sm:text-sm text-neutral-900 dark:text-white font-mono-data"
+        className="w-full pr-8 px-3 py-2 rounded-lg border border-line bg-input text-xs sm:text-sm text-ink placeholder:text-muted font-mono-data transition-colors focus:border-brand"
       />
       <button
         type="button"
@@ -86,7 +86,7 @@ export const DateInputDDMMYYYY: React.FC<DateInputDDMMYYYYProps> = ({
             el.click();
           }
         }}
-        className="absolute right-2 p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+        className="absolute right-2 p-1 rounded text-muted hover:text-ink transition-colors"
         title="Pick date from calendar"
         aria-label="Open calendar picker"
       >

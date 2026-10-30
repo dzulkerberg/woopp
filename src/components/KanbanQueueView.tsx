@@ -281,13 +281,13 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   return (
     <div className="space-y-5">
       {/* Lifecycle Tabs + Filter Bar */}
-      <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 space-y-4">
+      <div className="bg-surface border border-line rounded-xl p-4 space-y-4">
         {/* Top Row: Lifecycle Tabs & View Switcher */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 dark:border-neutral-800 pb-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3.5">
           <div
             role="tablist"
             aria-label="Print queue lifecycle views"
-            className="flex flex-wrap items-center gap-1 p-1 bg-neutral-100 dark:bg-[#111018] rounded-xl border border-neutral-200/70 dark:border-neutral-800"
+            className="flex flex-wrap items-center gap-1 p-1 bg-recessed rounded-xl border border-line"
           >
             {TABS.map((tab) => {
               const active = lifecycleTab === tab.id;
@@ -300,16 +300,16 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   onClick={() => handleSwitchTab(tab.id)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                     active
-                      ? 'bg-white dark:bg-[#2a2440] text-neutral-900 dark:text-white shadow-xs'
-                      : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                      ? 'bg-surface text-ink border border-line shadow-xs'
+                      : 'text-ink-secondary hover:text-ink'
                   }`}
                 >
                   <span>{tab.label}</span>
                   <span
                     className={`font-mono-data text-[11px] px-1.5 py-0.5 rounded-md ${
                       active
-                        ? 'bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#3a3158] dark:text-[#d8ccff]'
-                        : 'bg-neutral-200/70 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
+                        ? 'bg-brand-soft text-brand-text font-semibold'
+                        : 'bg-elevated text-muted'
                     }`}
                   >
                     {tab.count}
@@ -320,14 +320,14 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 p-1 bg-neutral-100 dark:bg-[#111018] rounded-lg border border-neutral-200/70 dark:border-neutral-800">
+            <div className="flex items-center gap-1 p-1 bg-recessed rounded-lg border border-line">
               <button
                 type="button"
                 onClick={() => setViewMode('kanban')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
+                className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors ${
                   viewMode === 'kanban'
-                    ? 'bg-white dark:bg-[#2a2440] text-neutral-900 dark:text-white'
-                    : 'text-neutral-500 dark:text-neutral-400'
+                    ? 'bg-surface text-ink border border-line shadow-xs'
+                    : 'text-ink-secondary hover:text-ink'
                 }`}
               >
                 Kanban Board
@@ -335,10 +335,10 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap ${
+                className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors ${
                   viewMode === 'list'
-                    ? 'bg-white dark:bg-[#2a2440] text-neutral-900 dark:text-white'
-                    : 'text-neutral-500 dark:text-neutral-400'
+                    ? 'bg-surface text-ink border border-line shadow-xs'
+                    : 'text-ink-secondary hover:text-ink'
                 }`}
               >
                 Table View
@@ -348,7 +348,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
             <button
               type="button"
               onClick={() => onCopyQueueSummary(filteredJobs)}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Copy Queue
             </button>
@@ -366,7 +366,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                 setProjectFilter(val);
                 if (val !== 'ALL') onSelectProject(val);
               }}
-              className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs text-neutral-800 dark:text-neutral-200"
+              className="px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             >
               <option value="ALL">All Projects</option>
               {workspace.projects.map((p) => (
@@ -380,7 +380,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               aria-label="Filter queue by color"
               value={colorFilter}
               onChange={(e) => setColorFilter(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs text-neutral-800 dark:text-neutral-200"
+              className="px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             >
               <option value="ALL">All Colors</option>
               {workspace.colors.map((c) => (
@@ -394,7 +394,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               aria-label="Filter queue by printer"
               value={machineFilter}
               onChange={(e) => setMachineFilter(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs text-neutral-800 dark:text-neutral-200"
+              className="px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             >
               <option value="ALL">All Machines</option>
               <option value="UNASSIGNED">Unassigned (Auto-Schedule)</option>
@@ -409,7 +409,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               aria-label="Filter queue by status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs text-neutral-800 dark:text-neutral-200"
+              className="px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             >
               <option value="ALL">All Statuses</option>
               {(lifecycleTab === 'active'
@@ -436,17 +436,17 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   setMachineFilter('ALL');
                   setStatusFilter('ALL');
                 }}
-                className="px-2.5 py-1.5 text-xs text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
+                className="px-2.5 py-1.5 text-xs font-medium text-brand-text hover:underline whitespace-nowrap"
               >
                 Reset Filters
               </button>
             )}
           </div>
 
-          <div className="text-xs font-mono-data text-neutral-500 dark:text-neutral-400">
-            Showing <b className="text-neutral-900 dark:text-white">{filteredJobs.length}</b>{' '}
+          <div className="text-xs font-mono-data text-muted">
+            Showing <b className="text-ink">{filteredJobs.length}</b>{' '}
             plate{filteredJobs.length === 1 ? '' : 's'} ·{' '}
-            <b className="text-neutral-900 dark:text-white">
+            <b className="text-ink">
               {filteredTotalKeycaps.toLocaleString()}
             </b>{' '}
             pcs
@@ -456,13 +456,13 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
 
       {/* Bulk Selection Bar in Table View */}
       {viewMode === 'list' && filteredJobs.length > 0 && (
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="bg-surface border border-line rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-mono-data font-semibold text-neutral-900 dark:text-white">
+            <span className="font-mono-data font-semibold text-ink">
               {selectedJobs.length} plate{selectedJobs.length === 1 ? '' : 's'} selected
             </span>
-            <span className="text-neutral-400">·</span>
-            <span className="font-mono-data text-neutral-600 dark:text-neutral-300">
+            <span className="text-muted">·</span>
+            <span className="font-mono-data text-ink-secondary">
               {selectedTotalKeycaps.toLocaleString()} keycaps affected
             </span>
 
@@ -473,7 +473,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   onClick={() =>
                     setSelectedIds(new Set(deletableInView.map((j) => j.id)))
                   }
-                  className="px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+                  className="px-2 py-1 rounded-md border border-line bg-elevated text-[11px] text-ink-secondary hover:text-ink hover:bg-recessed whitespace-nowrap transition-colors"
                 >
                   Select Deletable ({deletableInView.length})
                 </button>
@@ -484,7 +484,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   onClick={() =>
                     setSelectedIds(new Set(archivableInView.map((j) => j.id)))
                   }
-                  className="px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+                  className="px-2 py-1 rounded-md border border-line bg-elevated text-[11px] text-ink-secondary hover:text-ink hover:bg-recessed whitespace-nowrap transition-colors"
                 >
                   Select Archivable ({archivableInView.length})
                 </button>
@@ -495,7 +495,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   onClick={() =>
                     setSelectedIds(new Set(restorableInView.map((j) => j.id)))
                   }
-                  className="px-2 py-1 rounded-md border border-neutral-200 dark:border-neutral-700 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+                  className="px-2 py-1 rounded-md border border-line bg-elevated text-[11px] text-ink-secondary hover:text-ink hover:bg-recessed whitespace-nowrap transition-colors"
                 >
                   Select Archived ({restorableInView.length})
                 </button>
@@ -504,7 +504,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
-                  className="px-2 py-1 text-[11px] text-neutral-500 hover:text-neutral-900 dark:hover:text-white whitespace-nowrap"
+                  className="px-2 py-1 text-[11px] text-muted hover:text-ink whitespace-nowrap"
                 >
                   Clear
                 </button>
@@ -525,7 +525,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                       )
                     )
                   }
-                  className="text-[11px] text-amber-700 dark:text-amber-400 hover:underline whitespace-nowrap"
+                  className="text-[11px] text-warning-text hover:underline whitespace-nowrap"
                 >
                   Keep only {someSelectedCanDeleteCount} deletable
                 </button>
@@ -543,7 +543,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                       )
                     )
                   }
-                  className="text-[11px] text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
+                  className="text-[11px] text-brand-text hover:underline whitespace-nowrap"
                 >
                   Keep only {someSelectedCanArchiveCount} archivable
                 </button>
@@ -561,7 +561,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                     : `Restore ${selectedJobs.length} archived plate(s)`
                 }
                 onClick={() => onRequestBulkAction('bulk_restore', selectedJobs)}
-                className="px-3 py-1.5 rounded-lg border border-[#cfc2ff] dark:border-[#433575] bg-[#f6f3ff] dark:bg-[#251f3d] text-xs font-semibold text-[#5b3cc4] dark:text-[#d5c8ff] disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap"
+                className="px-3 py-1.5 rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-xs font-semibold text-brand-text disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Bulk Restore</span>
@@ -579,7 +579,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   : `Archive ${selectedJobs.length} historical plate(s)`
               }
               onClick={() => onRequestBulkAction('bulk_archive', selectedJobs)}
-              className="px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold text-neutral-800 dark:text-neutral-200 disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap"
+              className="px-3 py-1.5 rounded-lg border border-line bg-elevated hover:bg-recessed text-xs font-semibold text-ink disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap transition-colors"
             >
               <Archive className="w-3.5 h-3.5" />
               <span>Bulk Archive</span>
@@ -596,7 +596,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                   : `Delete ${selectedJobs.length} selected plate(s)`
               }
               onClick={() => onRequestBulkAction('bulk_delete', selectedJobs)}
-              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap"
+              className="px-3 py-1.5 rounded-lg bg-status-error hover:opacity-90 text-white text-xs font-semibold disabled:opacity-40 flex items-center gap-1.5 whitespace-nowrap transition-opacity"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Bulk Delete</span>
@@ -628,19 +628,19 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
             return (
               <div
                 key={stage}
-                className="min-w-0 bg-neutral-100/70 dark:bg-[#151320] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-3.5 space-y-3"
+                className="min-w-0 bg-recessed border border-line rounded-xl p-3.5 space-y-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-1.5 px-1">
-                  <h3 className="text-xs font-semibold text-neutral-900 dark:text-white">
+                  <h3 className="text-xs font-semibold text-ink">
                     {stage}
                   </h3>
-                  <span className="text-xs font-mono-data text-neutral-500 dark:text-neutral-400">
+                  <span className="text-xs font-mono-data text-muted">
                     {stageJobs.length} · {stageKeycaps.toLocaleString()} pcs
                   </span>
                 </div>
 
                 {stageJobs.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-neutral-400 dark:text-neutral-500 border border-dashed border-neutral-200 dark:border-neutral-800 rounded-xl">
+                  <div className="py-8 text-center text-xs text-muted border border-dashed border-line rounded-xl">
                     No plates in {stage}
                   </div>
                 ) : (
@@ -676,19 +676,19 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
           })}
         </div>
       ) : filteredJobs.length === 0 ? (
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-10 text-center space-y-2">
-          <div className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+        <div className="bg-surface border border-line rounded-xl p-10 text-center space-y-2">
+          <div className="text-sm font-medium text-ink">
             No print plates match the current view and filters.
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+          <div className="text-xs text-muted">
             Switch lifecycle tabs above or reset filters to view plates across other stages.
           </div>
         </div>
       ) : (
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl overflow-x-auto">
+        <div className="bg-surface border border-line rounded-xl overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400">
+              <tr className="border-b border-line text-muted bg-recessed">
                 <th className="py-3 pl-4 pr-2 w-9">
                   <input
                     ref={selectAllRef}
@@ -696,7 +696,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                     aria-label="Select all visible plates"
                     checked={allVisibleSelected}
                     onChange={toggleSelectAllVisible}
-                    className="rounded border-neutral-300 dark:border-neutral-700"
+                    className="rounded border-line"
                   />
                 </th>
                 <th className="py-3 px-3 font-medium">Plate</th>
@@ -708,7 +708,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                 <th className="py-3 pl-2 pr-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70">
+            <tbody className="divide-y divide-line">
               {filteredJobs.map((job) => {
                 const proj = workspace.projects.find((p) => p.id === job.projectId);
                 const color = workspace.colors.find((c) => c.id === job.colorId);
@@ -727,8 +727,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                     key={job.id}
                     className={`transition-colors ${
                       isSelected
-                        ? 'bg-[#f8f6ff] dark:bg-[#221d36]/60'
-                        : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/30'
+                        ? 'bg-brand-soft'
+                        : 'hover:bg-elevated'
                     }`}
                   >
                     <td className="py-3 pl-4 pr-2 align-top">
@@ -737,21 +737,21 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         aria-label={`Select Plate ${job.plateNumber} (${job.id})`}
                         checked={isSelected}
                         onChange={() => toggleSelectOne(job.id)}
-                        className="mt-0.5 rounded border-neutral-300 dark:border-neutral-700"
+                        className="mt-0.5 rounded border-line"
                       />
                     </td>
-                    <td className="py-3 px-3 text-neutral-900 dark:text-white align-top">
+                    <td className="py-3 px-3 text-ink align-top">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold font-mono-data whitespace-nowrap">
                           Plate {job.plateNumber} ({qty}/{job.plateCapacity})
                         </span>
                         {job.archived && (
-                          <span className="px-1.5 py-0.5 rounded bg-neutral-200/80 dark:bg-neutral-800 text-[10px] font-medium text-neutral-700 dark:text-neutral-300">
-                            Archived
+                          <span className="text-[10px] font-medium text-muted">
+                            · Archived
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] font-mono-data text-neutral-400 dark:text-neutral-500 mt-0.5">
+                      <div className="text-[11px] font-mono-data text-muted mt-0.5">
                         {job.id}
                       </div>
                       <div className="mt-1">
@@ -762,14 +762,14 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         />
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-neutral-700 dark:text-neutral-300 align-top">
-                      <div className="font-medium text-neutral-900 dark:text-white">
+                    <td className="py-3 px-3 text-ink-secondary align-top">
+                      <div className="font-medium text-ink">
                         {proj?.name || 'Project'}
                       </div>
-                      <div className="text-neutral-500 flex items-center gap-1.5 mt-0.5">
+                      <div className="text-muted flex items-center gap-1.5 mt-0.5">
                         {color && (
                           <span
-                            className="w-2 h-2 rounded-full shrink-0"
+                            className="w-2 h-2 rounded-full shrink-0 border border-line"
                             style={{ backgroundColor: color.hex }}
                           />
                         )}
@@ -778,7 +778,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                     </td>
                     <td className="py-3 px-3 align-top">
                       {isReadOnlyStage ? (
-                        <span className="text-neutral-500 dark:text-neutral-400">
+                        <span className="text-muted">
                           {job.stage === 'Cancelled'
                             ? releasedMachine
                               ? `Released (${releasedMachine.name})`
@@ -798,7 +798,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                               machineId: e.target.value || null,
                             })
                           }
-                          className="px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#111018]"
+                          className="px-2 py-1 rounded border border-line bg-input text-ink focus:border-brand focus:outline-none"
                         >
                           <option value="">Auto-Schedule</option>
                           {workspace.machines.map((m) => (
@@ -809,7 +809,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         </select>
                       )}
                     </td>
-                    <td className="py-3 px-3 font-mono-data text-neutral-600 dark:text-neutral-300 whitespace-nowrap align-top">
+                    <td className="py-3 px-3 font-mono-data text-ink-secondary whitespace-nowrap align-top">
                       {formatDurationHoursMinutes(job.estimatedMinutes)} /{' '}
                       {job.actualMinutes
                         ? formatDurationHoursMinutes(job.actualMinutes)
@@ -818,20 +818,20 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                     <td className="py-3 px-3 font-mono-data align-top">
                       {job.stage === 'Cancelled' ? (
                         <div className="space-y-0.5">
-                          <div className="text-red-600 dark:text-red-400 font-sans font-medium">
+                          <div className="text-error-text font-sans font-medium">
                             Cancelled{' '}
                             {job.cancelledIso
                               ? formatDateTimeDDMMYYYY(new Date(job.cancelledIso), timezone)
                               : ''}
                           </div>
                           {job.cancellationReason && (
-                            <div className="text-[11px] font-sans text-neutral-500 dark:text-neutral-400 max-w-xs truncate">
+                            <div className="text-[11px] font-sans text-muted max-w-xs truncate">
                               Reason: {job.cancellationReason}
                             </div>
                           )}
                         </div>
                       ) : job.stage === 'Completed' ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                        <span className="text-brand-text font-semibold whitespace-nowrap">
                           Done{' '}
                           {(() => {
                             const doneMs =
@@ -843,15 +843,15 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         </span>
                       ) : job.stage === 'Printing' && slot ? (
                         slot.needsEtaRecalibration ? (
-                          <span className="text-amber-700 dark:text-amber-400 font-sans font-semibold whitespace-nowrap">
+                          <span className="text-warning-text font-sans font-semibold whitespace-nowrap">
                             {ETA_NEEDS_RECALIBRATION_LABEL}
                           </span>
                         ) : slot.isAwaitingConfirmation ? (
                           <div className="space-y-0.5">
-                            <div className="text-emerald-700 dark:text-emerald-400 font-sans font-semibold whitespace-nowrap">
+                            <div className="text-brand-text font-sans font-semibold whitespace-nowrap">
                               {ETA_REACHED_LABEL}
                             </div>
-                            <div className="text-[11px] text-neutral-500">
+                            <div className="text-[11px] text-muted">
                               00:00:00
                               {slot.endMs
                                 ? ` · ETA ${formatDateTimeDDMMYYYY(slot.endMs, timezone)}`
@@ -862,8 +862,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                           <span
                             className={
                               slot.isPaused
-                                ? 'text-amber-600 font-semibold whitespace-nowrap'
-                                : 'text-[#6c4ce6] dark:text-[#b49eff] font-semibold whitespace-nowrap'
+                                ? 'text-warning-text font-semibold whitespace-nowrap'
+                                : 'text-brand-text font-semibold whitespace-nowrap'
                             }
                           >
                             {slot.isPaused ? 'Paused ' : ''}
@@ -877,25 +877,25 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         <span
                           className={
                             slot.exceedsProjectDeadline
-                              ? 'text-red-600 font-semibold whitespace-nowrap'
-                              : 'text-neutral-700 dark:text-neutral-300 whitespace-nowrap'
+                              ? 'text-error-text font-semibold whitespace-nowrap'
+                              : 'text-ink-secondary whitespace-nowrap'
                           }
                         >
                           ETA {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
                         </span>
                       ) : (
-                        <span className="text-neutral-400">—</span>
+                        <span className="text-muted">—</span>
                       )}
                     </td>
                     <td className="py-3 px-3 align-top">
                       {isReadOnlyStage ? (
                         <span
-                          className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap ${
+                          className={`inline-block text-xs font-semibold whitespace-nowrap ${
                             job.stage === 'Cancelled'
-                              ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                              ? 'text-error-text'
                               : job.stage === 'Completed'
-                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                              : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                              ? 'text-brand-text'
+                              : 'text-warning-text'
                           }`}
                         >
                           {job.stage}
@@ -908,7 +908,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                           onChange={(e) =>
                             onTransitionStage(job.id, e.target.value as KanbanStage)
                           }
-                          className="px-2.5 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#111018] font-medium"
+                          className="px-2.5 py-1 rounded border border-line bg-input text-ink font-medium focus:border-brand focus:outline-none"
                         >
                           {ACTIVE_KANBAN_STAGES.map((st) => (
                             <option key={st} value={st}>
@@ -926,7 +926,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                             disabled={!isAdmin || isBusy}
                             title="Delete Plate"
                             onClick={() => onRequestDeletePlate(job)}
-                            className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-40 transition-colors"
+                            className="p-1.5 rounded-lg text-muted hover:text-error-text hover:bg-error-soft disabled:opacity-40 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -937,7 +937,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                             disabled={!isAdmin || isBusy}
                             title="Cancel Printing"
                             onClick={() => onRequestCancelPrinting(job)}
-                            className="p-1.5 rounded-lg text-neutral-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-40 transition-colors"
+                            className="p-1.5 rounded-lg text-muted hover:text-error-text hover:bg-error-soft disabled:opacity-40 transition-colors"
                           >
                             <XCircle className="w-3.5 h-3.5" />
                           </button>
@@ -1021,28 +1021,28 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
   return (
     <article
-      className={`min-w-0 w-full max-w-full bg-white dark:bg-[#1b1829] border rounded-xl p-3.5 space-y-2.5 ${
+      className={`min-w-0 w-full max-w-full bg-surface border rounded-xl p-3.5 space-y-2.5 ${
         slot?.exceedsProjectDeadline
-          ? 'border-red-400 dark:border-red-700'
-          : 'border-neutral-200/90 dark:border-neutral-800'
+          ? 'border-status-error'
+          : 'border-line'
       }`}
     >
       <div className="flex items-start justify-between gap-2 min-w-0">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm font-semibold text-neutral-900 dark:text-white">
+            <span className="text-sm font-semibold text-ink">
               Plate {job.plateNumber}
             </span>
             {job.archived && (
-              <span className="px-1.5 py-0.5 rounded bg-neutral-200/80 dark:bg-neutral-800 text-[10px] font-medium text-neutral-700 dark:text-neutral-300">
-                Archived
+              <span className="text-[10px] font-medium text-muted">
+                · Archived
               </span>
             )}
           </div>
-          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5 truncate">
+          <div className="text-[11px] text-muted flex items-center gap-1.5 truncate">
             {color && (
               <span
-                className="w-2 h-2 rounded-full shrink-0"
+                className="w-2 h-2 rounded-full shrink-0 border border-line"
                 style={{ backgroundColor: color.hex }}
               />
             )}
@@ -1053,7 +1053,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <span className="text-xs font-mono-data font-semibold text-neutral-700 dark:text-neutral-200 whitespace-nowrap">
+          <span className="text-xs font-mono-data font-semibold text-ink-secondary whitespace-nowrap">
             {qty}/{job.plateCapacity}
           </span>
           <PlateLifecycleMenu
@@ -1072,8 +1072,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {/* Cancelled Details */}
       {job.stage === 'Cancelled' && (
-        <div className="min-w-0 p-2.5 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/25 text-xs space-y-1">
-          <div className="flex flex-wrap items-center justify-between gap-1 font-semibold text-red-700 dark:text-red-300">
+        <div className="min-w-0 p-2.5 rounded-lg border border-error-border bg-error-soft text-xs space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-1 font-semibold text-error-text">
             <span>Cancelled</span>
             {job.cancelledIso && (
               <span className="text-[11px] font-mono-data font-normal break-words">
@@ -1082,12 +1082,12 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             )}
           </div>
           {releasedMachine && (
-            <div className="text-[11px] text-neutral-600 dark:text-neutral-300 break-words">
+            <div className="text-[11px] text-ink-secondary break-words">
               Released printer: {releasedMachine.name}
             </div>
           )}
           {job.cancellationReason && (
-            <div className="text-[11px] text-neutral-700 dark:text-neutral-200 break-words">
+            <div className="text-[11px] text-ink break-words">
               Reason: {job.cancellationReason}
             </div>
           )}
@@ -1111,34 +1111,28 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           <div
             className={`min-w-0 p-2.5 rounded-lg border text-xs space-y-2 ${
               slot.isPaused
-                ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
-                : slot.isAwaitingConfirmation
-                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
-                : 'bg-[#f6f3ff] dark:bg-[#251f3d] border-[#dcd2ff] dark:border-[#3f3469]'
+                ? 'bg-warning-soft border-warning-border'
+                : 'bg-brand-soft border-brand-border'
             }`}
           >
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 font-mono-data min-w-0">
-              <span className="font-bold text-sm text-neutral-900 dark:text-white">
+              <span className="font-bold text-sm text-ink">
                 {formatCountdownHMS(slot.remainingSecondsLive)}
               </span>
               <span
                 className={`text-[11px] font-sans font-semibold break-words ${
-                  slot.isPaused
-                    ? 'text-amber-700 dark:text-amber-400'
-                    : slot.isAwaitingConfirmation
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : 'text-[#5b3cc4] dark:text-[#c7b8ff]'
+                  slot.isPaused ? 'text-warning-text' : 'text-brand-text'
                 }`}
               >
                 {slot.isPaused
-                  ? 'PAUSED'
+                  ? 'Paused'
                   : slot.isAwaitingConfirmation
                   ? ETA_REACHED_LABEL
-                  : 'LIVE'}
+                  : 'Printing'}
               </span>
             </div>
             {slot.endMs && (
-              <div className="text-[11px] font-mono-data text-neutral-600 dark:text-neutral-300 break-words">
+              <div className="text-[11px] font-mono-data text-ink-secondary break-words">
                 Est. Finish: {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
               </div>
             )}
@@ -1158,7 +1152,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     onClick={() =>
                       onPauseOrResume(job.id, 'update_remaining', pausedMinsDraft)
                     }
-                    className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-[11px] font-semibold rounded bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-center leading-tight disabled:opacity-50"
+                    className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-[11px] font-semibold rounded border border-line bg-surface hover:bg-elevated text-ink text-center leading-tight disabled:opacity-50 transition-colors"
                   >
                     Set
                   </button>
@@ -1168,7 +1162,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     type="button"
                     disabled={isBusy}
                     onClick={() => onPauseOrResume(job.id, 'resume')}
-                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-center leading-tight break-words disabled:opacity-50"
+                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded bg-brand hover:bg-brand-hover text-white text-center leading-tight break-words disabled:opacity-50 transition-colors"
                   >
                     Resume Print
                   </button>
@@ -1176,7 +1170,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     type="button"
                     disabled={!isAdmin || isBusy}
                     onClick={() => onRequestCancelPrinting(job)}
-                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#191726] text-center leading-tight break-words disabled:opacity-45"
+                    className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-error-border text-error-text hover:bg-error-soft bg-surface text-center leading-tight break-words disabled:opacity-45 transition-colors"
                   >
                     Cancel
                   </button>
@@ -1193,7 +1187,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                     );
                     onPauseOrResume(job.id, 'pause');
                   }}
-                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#191726] hover:bg-amber-50/70 dark:hover:bg-amber-950/35 text-amber-800 dark:text-amber-300 text-center leading-tight break-words disabled:opacity-50"
+                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-warning-border bg-surface hover:bg-warning-soft text-warning-text text-center leading-tight break-words disabled:opacity-50 transition-colors"
                 >
                   Pause Countdown
                 </button>
@@ -1201,7 +1195,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                   type="button"
                   disabled={!isAdmin || isBusy}
                   onClick={() => onRequestCancelPrinting(job)}
-                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#191726] text-center leading-tight break-words disabled:opacity-45"
+                  className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-[11px] font-semibold rounded border border-error-border text-error-text hover:bg-error-soft bg-surface text-center leading-tight break-words disabled:opacity-45 transition-colors"
                 >
                   Cancel Print
                 </button>
@@ -1214,13 +1208,11 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         job.stage !== 'Cancelled' &&
         slot?.startMs &&
         slot?.endMs ? (
-        <div className="min-w-0 text-[11px] font-mono-data text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-[#13111d] px-2.5 py-1.5 rounded-lg border border-neutral-100 dark:border-neutral-800 break-words">
+        <div className="min-w-0 text-[11px] font-mono-data text-ink-secondary bg-elevated px-2.5 py-1.5 rounded-lg border border-line break-words">
           <div>Est Start: {formatDateTimeDDMMYYYY(slot.startMs, timezone)}</div>
           <div
             className={
-              slot.exceedsProjectDeadline
-                ? 'text-red-600 dark:text-red-400 font-semibold'
-                : ''
+              slot.exceedsProjectDeadline ? 'text-error-text font-semibold' : ''
             }
           >
             Est Finish: {formatDateTimeDDMMYYYY(slot.endMs, timezone)}
@@ -1241,7 +1233,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             onChange={(e) =>
               onUpdateJobMetadata(job.id, { machineId: e.target.value || null })
             }
-            className="w-full min-w-0 max-w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#12101b] text-xs text-neutral-800 dark:text-neutral-200"
+            className="w-full min-w-0 max-w-full px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
           >
             <option value="">
               {slot?.isVirtualAssignment
@@ -1260,15 +1252,15 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       {/* Stage Selector + Quick Actions */}
       {isReadOnlyStage ? (
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 min-w-0">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400 min-w-0 break-words">
-            Status: <b className="text-neutral-800 dark:text-neutral-200">{job.stage}</b>
+          <span className="text-xs font-medium text-muted min-w-0 break-words">
+            Status: <b className="text-ink">{job.stage}</b>
           </span>
           {job.archived ? (
             <button
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={() => onRestorePlate(job)}
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] disabled:opacity-45 text-center leading-tight break-words"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text disabled:opacity-45 text-center leading-tight break-words transition-colors"
             >
               Restore Plate
             </button>
@@ -1277,7 +1269,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={() => onArchivePlate(job)}
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-45 text-center leading-tight break-words"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-45 text-center leading-tight break-words transition-colors"
             >
               Archive Plate
             </button>
@@ -1292,7 +1284,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             onChange={(e) =>
               onTransitionStage(job.id, e.target.value as KanbanStage)
             }
-            className="w-full sm:w-auto flex-1 min-w-[7rem] max-w-full px-2 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#12101b] text-xs font-medium text-neutral-900 dark:text-white"
+            className="w-full sm:w-auto flex-1 min-w-[7rem] max-w-full px-2 py-1 rounded-lg border border-line bg-input text-xs font-medium text-ink focus:border-brand focus:outline-none"
           >
             {ACTIVE_KANBAN_STAGES.map((st) => (
               <option key={st} value={st}>
@@ -1308,7 +1300,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               onClick={() =>
                 onTransitionStage(job.id, ACTIVE_KANBAN_STAGES[stageIndex + 1])
               }
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff] text-center leading-tight break-words disabled:opacity-50"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text text-center leading-tight break-words disabled:opacity-50 transition-colors"
             >
               Next →
             </button>
@@ -1319,7 +1311,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               type="button"
               disabled={isBusy}
               onClick={() => onTransitionStage(job.id, 'Ready to Print')}
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-center leading-tight break-words disabled:opacity-50"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg border border-warning-border bg-warning-soft text-warning-text text-center leading-tight break-words disabled:opacity-50 transition-colors"
             >
               Reprint
             </button>
@@ -1328,7 +1320,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       )}
 
       {/* Metadata footer & Expandable Bambu Studio Timing / Machine Overrides */}
-      <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-neutral-500 dark:text-neutral-400 min-w-0">
+      <div className="pt-2 border-t border-line flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-muted min-w-0">
         <span className="min-w-0 break-words">
           {job.stage === 'Completed'
             ? `Done (${formatDurationHoursMinutes(
@@ -1341,7 +1333,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
-            className="text-[#6c4ce6] dark:text-[#b49eff] hover:underline shrink-0"
+            className="text-brand-text font-medium hover:underline shrink-0"
           >
             {expanded ? 'Hide' : 'Timing & Notes'}
           </button>
@@ -1349,9 +1341,9 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       </div>
 
       {expanded && !job.archived && (
-        <div className="pt-2 space-y-2.5 border-t border-neutral-100 dark:border-neutral-800 text-xs min-w-0">
+        <div className="pt-2 space-y-2.5 border-t border-line text-xs min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] text-neutral-500">Bambu Est. (h/m):</span>
+            <span className="text-[11px] text-muted">Bambu Est. (h/m):</span>
             <DurationHMInput
               compact
               minutes={job.estimatedMinutes}
@@ -1365,7 +1357,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
           {job.machineId && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span
-                className="text-[11px] text-neutral-500"
+                className="text-[11px] text-muted"
                 title="Printer-specific duration from Bambu Studio"
               >
                 Printer-Specific (h/m):
@@ -1391,7 +1383,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
           {job.stage === 'Completed' && (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[11px] text-neutral-500">Actual Print (h/m):</span>
+              <span className="text-[11px] text-muted">Actual Print (h/m):</span>
               <DurationHMInput
                 compact
                 minutes={job.actualMinutes || job.estimatedMinutes}
@@ -1403,7 +1395,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             </div>
           )}
 
-          <label className="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-300 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs text-ink-secondary cursor-pointer">
             <input
               type="checkbox"
               checked={job.slicerVerified}
@@ -1416,7 +1408,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
           {job.stage === 'Failed / Reprint' && (
             <div>
-              <label className="block text-[11px] text-neutral-500 mb-0.5">
+              <label className="block text-[11px] text-muted mb-0.5">
                 Failure Reason
               </label>
               <input
@@ -1425,13 +1417,13 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
                 onChange={(e) =>
                   onUpdateJobMetadata(job.id, { failureReason: e.target.value })
                 }
-                className="w-full px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#12101b]"
+                className="w-full px-2 py-1 rounded border border-line bg-input text-ink focus:border-brand focus:outline-none"
               />
             </div>
           )}
 
           <div>
-            <label className="block text-[11px] text-neutral-500 mb-0.5">
+            <label className="block text-[11px] text-muted mb-0.5">
               Print Notes
             </label>
             <input
@@ -1440,7 +1432,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               onChange={(e) =>
                 onUpdateJobMetadata(job.id, { notes: e.target.value })
               }
-              className="w-full px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#12101b]"
+              className="w-full px-2 py-1 rounded border border-line bg-input text-ink focus:border-brand focus:outline-none"
             />
           </div>
         </div>

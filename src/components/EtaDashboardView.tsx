@@ -76,8 +76,8 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
     <div className="space-y-6">
       {/* Deadline Warning Banner */}
       {deadlineWarningsCount > 0 && (
-        <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/35 border border-red-200 dark:border-red-900/60 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-red-800 dark:text-red-200">
+        <div className="p-4 rounded-xl bg-error-soft border border-error-border flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-error-text">
             <span className="font-semibold">
               Deadline Alert ({deadlineWarningsCount}{' '}
               {deadlineWarningsCount === 1 ? 'project exceeds' : 'projects exceed'} target deadline):
@@ -87,7 +87,7 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('queue')}
-            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold whitespace-nowrap"
+            className="px-3 py-1.5 rounded-lg bg-status-error hover:opacity-90 text-white text-xs font-semibold whitespace-nowrap transition-opacity"
           >
             Manage Print Queue
           </button>
@@ -96,30 +96,30 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
 
       {/* Top Global ETA KPI Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">
             Active Printing Plates
           </div>
-          <div className="text-2xl font-bold text-[#6c4ce6] dark:text-[#b49eff] font-mono-data mt-1">
+          <div className="text-2xl font-bold text-brand-text font-mono-data mt-1">
             {activePrintingSlots.length}
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+          <div className="text-xs text-muted mt-1">
             {activePrintingSlots.filter((s) => s.isPaused).length > 0
               ? `${activePrintingSlots.filter((s) => s.isPaused).length} currently paused`
               : `Across ${workspace.machines.length} registered printers`}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">
             Next Available Machine
           </div>
           {nextAvailableMachine ? (
             <>
-              <div className="text-lg font-bold text-neutral-900 dark:text-white mt-1 truncate">
+              <div className="text-lg font-bold text-ink mt-1 truncate">
                 {nextAvailableMachine.machine.name}
               </div>
-              <div className="text-xs font-mono-data text-emerald-600 dark:text-emerald-400 mt-1">
+              <div className="text-xs font-mono-data text-brand-text mt-1">
                 {nextAvailableMachine.waitSeconds === 0
                   ? 'Available Immediately'
                   : `Free in ${formatCountdownHMS(nextAvailableMachine.waitSeconds)} (${formatDateTimeDDMMYYYY(
@@ -130,18 +130,18 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
             </>
           ) : (
             <>
-              <div className="text-lg font-bold text-red-600 dark:text-red-400 mt-1">
+              <div className="text-lg font-bold text-error-text mt-1">
                 No Online Printers
               </div>
-              <div className="text-xs text-neutral-500 mt-1">
+              <div className="text-xs text-muted mt-1">
                 Set at least one printer to Idle
               </div>
             </>
           )}
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">
             Plate Turnaround Buffer
           </div>
           <div className="flex items-center gap-2 mt-1.5">
@@ -152,64 +152,64 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
               aria-label="Turnaround buffer minutes"
               value={bufferDraft}
               onChange={(e) => setBufferDraft(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-              className="w-16 px-2 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-sm font-mono-data text-neutral-900 dark:text-white"
+              className="w-16 px-2 py-1 rounded-lg border border-line bg-input text-sm font-mono-data text-ink focus:border-brand"
             />
-            <span className="text-xs text-neutral-500">min</span>
+            <span className="text-xs text-muted">min</span>
             {bufferDraft !== turnaroundBufferMinutes && (
               <button
                 type="button"
                 onClick={() => onUpdateBufferMinutes(bufferDraft)}
-                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#6c4ce6] text-white whitespace-nowrap"
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
               >
                 Apply
               </button>
             )}
           </div>
-          <div className="text-[11px] text-neutral-400 mt-1">
+          <div className="text-[11px] text-muted mt-1">
             Removal, bed cleaning &amp; restart
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">
             Display Timezone
           </div>
-          <div className="text-base font-bold text-neutral-900 dark:text-white mt-1 truncate">
+          <div className="text-base font-bold text-ink mt-1 truncate">
             {timezone}
           </div>
-          <div className="text-xs font-mono-data text-neutral-500 dark:text-neutral-400 mt-1">
+          <div className="text-xs font-mono-data text-muted mt-1">
             Now: {formatDateTimeDDMMYYYY(schedule.nowMs, timezone)}
           </div>
         </div>
       </div>
 
       {/* Live Printing Countdown Cards (with Pause / Update Remaining / Resume / Complete) */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 sm:p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+            <h2 className="text-base font-semibold text-ink">
               Live Printing Jobs &amp; Real-Time Countdown
             </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-muted mt-0.5">
               Start timestamps sync with Firebase server time. Pausing freezes the countdown immediately and lets you enter an updated remaining time from Bambu Studio.
             </p>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('machines')}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink-secondary hover:text-ink hover:border-brand-border transition-colors whitespace-nowrap"
           >
             Start Another Plate
           </button>
         </div>
 
         {activePrintingSlots.length === 0 ? (
-          <div className="p-8 rounded-xl border border-dashed border-neutral-200 dark:border-neutral-800 text-center space-y-2">
-            <div className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+          <div className="p-8 rounded-xl border border-dashed border-line bg-recessed/50 text-center space-y-2">
+            <div className="text-sm font-medium text-ink">
               No plates are actively printing right now.
             </div>
-            <div className="text-xs text-neutral-500">
-              Move a queued plate to <span className="font-semibold">Printing</span> in Print Queue or Machines to start live ETA tracking.
+            <div className="text-xs text-muted">
+              Move a queued plate to <span className="font-semibold text-ink">Printing</span> in Print Queue or Machines to start live ETA tracking.
             </div>
           </div>
         ) : (
@@ -241,20 +241,20 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
       </section>
 
       {/* Project Completion ETA Table (Parallel-Aware: Final Outstanding Job) */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 sm:p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+            <h2 className="text-base font-semibold text-ink">
               Estimated Project Completion (Parallel Fleet Schedule)
             </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-muted mt-0.5">
               Calculated from each project&apos;s final outstanding plate across parallel Bambu printers — never naively summed.
             </p>
           </div>
           <button
             type="button"
             onClick={() => onNavigate('queue')}
-            className="text-xs font-semibold text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
+            className="text-xs font-semibold text-brand-text hover:underline whitespace-nowrap"
           >
             View Print Queue →
           </button>
@@ -263,16 +263,16 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400">
-                <th className="py-3 pr-4 font-medium">Project</th>
-                <th className="py-3 px-3 font-medium">Priority</th>
-                <th className="py-3 px-3 font-medium text-right">Plates (Done / Total)</th>
-                <th className="py-3 px-3 font-medium">Project Deadline</th>
-                <th className="py-3 px-3 font-medium">Estimated Completion</th>
-                <th className="py-3 pl-3 font-medium text-right">Schedule Status</th>
+              <tr className="border-b border-line text-muted">
+                <th className="py-3 pr-4 font-semibold">Project</th>
+                <th className="py-3 px-3 font-semibold">Priority</th>
+                <th className="py-3 px-3 font-semibold text-right">Plates (Done / Total)</th>
+                <th className="py-3 px-3 font-semibold">Project Deadline</th>
+                <th className="py-3 px-3 font-semibold">Estimated Completion</th>
+                <th className="py-3 pl-3 font-semibold text-right">Schedule Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70">
+            <tbody className="divide-y divide-line">
               {projectEtas.map((pe) => {
                 const allDone =
                   pe.outstandingPlates === 0 && pe.totalPlates > 0;
@@ -283,29 +283,29 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
                       onSelectProject(pe.project.id);
                       onNavigate('projects');
                     }}
-                    className="hover:bg-neutral-50 dark:hover:bg-neutral-800/30 cursor-pointer transition-colors"
+                    className="hover:bg-elevated cursor-pointer transition-colors"
                   >
                     <td className="py-3.5 pr-4">
-                      <div className="font-semibold text-neutral-900 dark:text-white">
+                      <div className="font-semibold text-ink">
                         {pe.project.name}
                       </div>
-                      <div className="text-[11px] text-neutral-500">
+                      <div className="text-[11px] text-muted">
                         {pe.project.salesChannel} · {pe.activePrintingPlates} printing
                         {pe.cancelledPlates > 0 ? ` · ${pe.cancelledPlates} cancelled` : ''}
                       </div>
                     </td>
-                    <td className="py-3.5 px-3 text-neutral-700 dark:text-neutral-300">
+                    <td className="py-3.5 px-3 text-ink-secondary">
                       {pe.project.priority}
                     </td>
-                    <td className="py-3.5 px-3 text-right font-mono-data text-neutral-800 dark:text-neutral-200">
+                    <td className="py-3.5 px-3 text-right font-mono-data text-ink">
                       {pe.completedPlates} / {pe.totalPlates}
                     </td>
-                    <td className="py-3.5 px-3 font-mono-data text-neutral-700 dark:text-neutral-300">
+                    <td className="py-3.5 px-3 font-mono-data text-ink-secondary">
                       {pe.project.deadline
                         ? `${formatDateDDMMYYYY(pe.project.deadline)} 23:59`
                         : 'Flexible'}
                     </td>
-                    <td className="py-3.5 px-3 font-mono-data font-semibold text-neutral-900 dark:text-white">
+                    <td className="py-3.5 px-3 font-mono-data font-semibold text-ink">
                       {allDone
                         ? 'All Plates Completed'
                         : pe.estimatedCompletionMs
@@ -316,19 +316,19 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
                     </td>
                     <td className="py-3.5 pl-3 text-right font-semibold whitespace-nowrap">
                       {allDone ? (
-                        <span className="text-emerald-600 dark:text-emerald-400">Completed</span>
+                        <span className="text-brand-text">Completed</span>
                       ) : pe.totalPlates === 0 ? (
-                        <span className="text-neutral-400">No plates</span>
+                        <span className="text-muted">No plates</span>
                       ) : pe.isDeadlineExceeded ? (
-                        <span className="text-red-600 dark:text-red-400">
+                        <span className="text-error-text">
                           Late by {formatDurationHoursMinutes(Math.abs(pe.slackMinutes || 0))}
                         </span>
                       ) : pe.slackMinutes !== null ? (
-                        <span className="text-emerald-600 dark:text-emerald-400">
+                        <span className="text-brand-text">
                           On Track ({formatDurationHoursMinutes(pe.slackMinutes)} buffer)
                         </span>
                       ) : (
-                        <span className="text-neutral-500">Scheduled</span>
+                        <span className="text-info-text">Scheduled</span>
                       )}
                     </td>
                   </tr>
@@ -403,28 +403,26 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
     <article
       className={`min-w-0 w-full max-w-full rounded-xl border p-4 space-y-3 ${
         needsEtaRecalibration || isPaused
-          ? 'border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20'
+          ? 'border-warning-border bg-warning-soft'
           : isAwaitingConfirmation
-          ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20'
-          : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-[#13111c]'
+          ? 'border-brand-border bg-brand-soft'
+          : 'border-line bg-elevated'
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2 min-w-0">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-neutral-900 dark:text-white break-words">
+          <div className="text-sm font-semibold text-ink break-words">
             {assignedMachineName} · Plate {job.plateNumber}
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400 break-words">
+          <div className="text-xs text-muted break-words">
             {project?.name || 'Project'} · {colorName} · {countPlateKeycaps(job)}/{job.plateCapacity} pcs
           </div>
         </div>
         <span
-          className={`text-xs font-semibold break-words ${
+          className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold break-words ${
             needsEtaRecalibration || isPaused
-              ? 'text-amber-700 dark:text-amber-400'
-              : isAwaitingConfirmation
-              ? 'text-emerald-700 dark:text-emerald-400'
-              : 'text-[#6c4ce6] dark:text-[#b49eff]'
+              ? 'border-warning-border bg-surface text-warning-text'
+              : 'border-brand-border bg-brand-soft text-brand-text'
           }`}
         >
           {statusText}
@@ -448,39 +446,37 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           {/* Big Tabular Countdown & Finish Timestamp */}
           <div className="flex flex-wrap items-baseline justify-between gap-2 pt-1">
             <div>
-              <div className="text-[11px] text-neutral-400">Remaining Countdown</div>
-              <div className="text-2xl font-bold font-mono-data text-neutral-900 dark:text-white">
+              <div className="text-[11px] text-muted">Remaining Countdown</div>
+              <div className="text-2xl font-bold font-mono-data text-ink">
                 {formatCountdownHMS(remainingSecondsLive)}
               </div>
               {isAwaitingConfirmation && (
-                <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                <div className="text-[11px] font-semibold text-brand-text mt-0.5">
                   {ETA_REACHED_LABEL}
                 </div>
               )}
             </div>
             <div className="text-right">
-              <div className="text-[11px] text-neutral-400">
+              <div className="text-[11px] text-muted">
                 {isPaused ? 'Projected Finish (if resumed now)' : 'Estimated Finish'}
               </div>
-              <div className="text-xs font-mono-data font-semibold text-neutral-800 dark:text-neutral-200">
+              <div className="text-xs font-mono-data font-semibold text-ink">
                 {endMs ? formatDateTimeDDMMYYYY(endMs, timezone) : '—'}
               </div>
               {startMs && (
-                <div className="text-[11px] font-mono-data text-neutral-400">
+                <div className="text-[11px] font-mono-data text-muted">
                   Started: {formatDateTimeDDMMYYYY(startMs, timezone)}
                 </div>
               )}
             </div>
           </div>
 
-          <div className="h-2 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+          <div className="h-2 rounded-full bg-recessed border border-line/60 overflow-hidden">
             <div
-              className={`h-full ${
+              className={`h-full transition-all ${
                 isPaused
-                  ? 'bg-amber-500'
-                  : isAwaitingConfirmation
-                  ? 'bg-emerald-600'
-                  : 'bg-[#6c4ce6]'
+                  ? 'bg-status-warning'
+                  : 'bg-brand'
               }`}
               style={{ width: `${pctDone}%` }}
             />
@@ -488,8 +484,8 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
 
           {/* Update Remaining Duration Box (always accessible when paused or via Adjust button) */}
           {(isPaused || editingRemaining) && (
-            <div className="p-3 rounded-lg bg-white dark:bg-[#191726] border border-neutral-200 dark:border-neutral-700 flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <div className="p-3 rounded-lg bg-surface border border-line flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-medium text-ink-secondary">
                 Remaining time on Bambu screen:
               </div>
               <div className="flex items-center gap-2">
@@ -505,7 +501,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                     onPauseOrResume(job.id, 'update_remaining', remMinutesInput);
                     setEditingRemaining(false);
                   }}
-                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 whitespace-nowrap"
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
                 >
                   Update ETA
                 </button>
@@ -528,7 +524,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                   setRemMinutesInput(Math.max(1, curMins));
                   onPauseOrResume(job.id, 'pause');
                 }}
-                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-white dark:bg-[#191726] hover:bg-amber-50/70 dark:hover:bg-amber-950/35 text-center leading-tight break-words disabled:opacity-50"
+                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg border border-warning-border text-warning-text bg-surface hover:bg-warning-soft text-center leading-tight break-words disabled:opacity-50 transition-colors"
               >
                 Pause Print
               </button>
@@ -537,7 +533,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                 type="button"
                 disabled={isBusy}
                 onClick={() => onPauseOrResume(job.id, 'resume')}
-                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-center leading-tight break-words disabled:opacity-50"
+                className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white text-center leading-tight break-words disabled:opacity-50 transition-colors"
               >
                 Resume Countdown
               </button>
@@ -550,7 +546,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
                 setRemMinutesInput(Math.max(1, Math.ceil(remainingSecondsLive / 60)));
                 setEditingRemaining(!editingRemaining);
               }}
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-neutral-800 text-center leading-tight break-words"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-recessed text-ink-secondary hover:text-ink text-center leading-tight break-words transition-colors"
             >
               {editingRemaining ? 'Close Adjust' : 'Adjust Remaining'}
             </button>
@@ -560,7 +556,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
               type="button"
               disabled={!isAdmin || isBusy}
               onClick={onCancelPrinting}
-              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 disabled:opacity-45 text-center leading-tight break-words"
+              className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-error-border bg-surface hover:bg-error-soft text-error-text disabled:opacity-45 text-center leading-tight break-words transition-colors"
             >
               Cancel Print
             </button>
@@ -571,7 +567,7 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
           type="button"
           disabled={isBusy}
           onClick={onComplete}
-          className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 text-center leading-tight break-words"
+          className="w-full sm:w-auto grow sm:grow-0 min-w-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white disabled:opacity-50 text-center leading-tight break-words transition-colors"
         >
           {countLetters(job.letters) > 0 ? 'Complete Print (+Stock)' : 'Complete Print'}
         </button>

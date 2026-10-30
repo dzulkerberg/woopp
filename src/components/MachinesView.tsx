@@ -109,10 +109,10 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
       {/* Add Printer Form */}
       <form
         onSubmit={handleCreate}
-        className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-5 flex flex-wrap items-end gap-4"
+        className="bg-surface border border-line rounded-xl p-5 flex flex-wrap items-end gap-4"
       >
         <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+          <label className="block text-xs font-semibold text-ink-secondary mb-1">
             Printer Name
           </label>
           <input
@@ -120,12 +120,12 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             maxLength={60}
-            className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+            className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
           />
         </div>
 
         <div className="w-48">
-          <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+          <label className="block text-xs font-semibold text-ink-secondary mb-1">
             Printer Model
           </label>
           <input
@@ -133,12 +133,12 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
             value={newModel}
             onChange={(e) => setNewModel(e.target.value)}
             maxLength={60}
-            className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+            className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
           />
         </div>
 
         <div className="w-36">
-          <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+          <label className="block text-xs font-semibold text-ink-secondary mb-1">
             Bed Cap (pcs)
           </label>
           <input
@@ -147,13 +147,13 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
             max={1000}
             value={newCap}
             onChange={(e) => setNewCap(Math.max(1, Number(e.target.value) || 138))}
-            className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm font-mono-data text-neutral-900 dark:text-white"
+            className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm font-mono-data text-ink focus:border-brand"
           />
         </div>
 
         <button
           type="submit"
-          className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap h-[38px]"
+          className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap h-[38px] transition-colors"
         >
           + Add Printer
         </button>
@@ -174,20 +174,45 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
               ? Math.round(((machine.totalPrintMinutes || 0) / totalFleetMinutes) * 100)
               : 0;
 
+          const statusSelectClass =
+            machine.status === 'Printing'
+              ? 'border-brand-border bg-brand-soft text-brand-text'
+              : machine.status === 'Maintenance'
+              ? 'border-warning-border bg-warning-soft text-warning-text'
+              : machine.status === 'Offline'
+              ? 'border-line bg-recessed text-muted'
+              : machine.status === 'Completed'
+              ? 'border-brand-border bg-brand-soft text-brand-text'
+              : 'border-line bg-input text-ink';
+
           return (
             <section
               key={machine.id}
-              className="min-w-0 bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-5 flex flex-col justify-between space-y-4"
+              className="min-w-0 bg-surface border border-line rounded-xl p-5 flex flex-col justify-between space-y-4"
             >
               <div className="space-y-4 min-w-0">
                 {/* Machine Header & Editable Name */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <EditableMachineTitle
-                      name={machine.name}
-                      onRename={(next) => onUpdateMachine(machine.id, { name: next })}
-                    />
-                    <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`w-2 h-2 rounded-xs shrink-0 ${
+                          machine.status === 'Printing' || machine.status === 'Completed'
+                            ? 'bg-status-success'
+                            : machine.status === 'Maintenance'
+                            ? 'bg-status-warning'
+                            : machine.status === 'Offline'
+                            ? 'bg-status-neutral'
+                            : 'bg-status-info'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <EditableMachineTitle
+                        name={machine.name}
+                        onRename={(next) => onUpdateMachine(machine.id, { name: next })}
+                      />
+                    </div>
+                    <div className="text-xs text-muted mt-0.5 pl-4">
                       {machine.model} · Bed: {machine.plateCapacity} pcs
                     </div>
                   </div>
@@ -205,10 +230,10 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             : null,
                       });
                     }}
-                    className="px-2.5 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs font-semibold text-neutral-800 dark:text-neutral-200"
+                    className={`px-2.5 py-1 rounded-lg border text-xs font-semibold transition-colors ${statusSelectClass}`}
                   >
                     {MACHINE_STATUSES.map((st) => (
-                      <option key={st} value={st}>
+                      <option key={st} value={st} className="bg-surface text-ink">
                         {st}
                       </option>
                     ))}
@@ -216,31 +241,31 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                 </div>
 
                 {/* Telemetry & Speed / Setup Tuning */}
-                <div className="grid grid-cols-3 gap-2 pt-3 border-t border-neutral-100 dark:border-neutral-800 text-xs">
+                <div className="grid grid-cols-3 gap-2 pt-3 border-t border-line text-xs">
                   <div>
-                    <div className="text-neutral-400">Completed</div>
-                    <div className="font-mono-data font-semibold text-neutral-900 dark:text-white mt-0.5">
+                    <div className="text-muted">Completed</div>
+                    <div className="font-mono-data font-semibold text-ink mt-0.5">
                       {machine.totalCompletedPlates} plates
                     </div>
                   </div>
                   <div>
-                    <div className="text-neutral-400">Runtime</div>
-                    <div className="font-mono-data font-semibold text-neutral-900 dark:text-white mt-0.5">
+                    <div className="text-muted">Runtime</div>
+                    <div className="font-mono-data font-semibold text-ink mt-0.5">
                       {formatDurationHoursMinutes(machine.totalPrintMinutes)}
                     </div>
                   </div>
                   <div>
-                    <div className="text-neutral-400">Fleet Share</div>
-                    <div className="font-mono-data font-semibold text-neutral-900 dark:text-white mt-0.5">
+                    <div className="text-muted">Fleet Share</div>
+                    <div className="font-mono-data font-semibold text-ink mt-0.5">
                       {utilShare}% ({machine.totalFailedPlates} fail)
                     </div>
                   </div>
                 </div>
 
                 {/* Printer-Specific Speed Factor & Setup Time */}
-                <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-neutral-100 dark:border-neutral-800 text-xs">
+                <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-line text-xs">
                   <div>
-                    <label className="block text-[11px] text-neutral-400 mb-1">
+                    <label className="block text-[11px] text-muted mb-1">
                       Speed Multiplier
                     </label>
                     <input
@@ -254,11 +279,11 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                           speedFactor: Math.max(0.5, Math.min(2.5, Number(e.target.value) || 1)),
                         })
                       }
-                      className="w-full px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] font-mono-data"
+                      className="w-full px-2 py-1 rounded-lg border border-line bg-input text-ink font-mono-data focus:border-brand"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-neutral-400 mb-1">
+                    <label className="block text-[11px] text-muted mb-1">
                       Extra Prep / Setup (m)
                     </label>
                     <input
@@ -271,23 +296,23 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                           setupBufferMinutes: Math.max(0, Math.round(Number(e.target.value) || 0)),
                         })
                       }
-                      className="w-full px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] font-mono-data"
+                      className="w-full px-2 py-1 rounded-lg border border-line bg-input text-ink font-mono-data focus:border-brand"
                     />
                   </div>
                 </div>
 
                 {/* Maintenance Downtime Window */}
                 {machine.status === 'Maintenance' && (
-                  <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2 text-xs">
-                    <div className="font-semibold text-amber-900 dark:text-amber-200">
+                  <div className="p-3 rounded-lg bg-warning-soft border border-warning-border space-y-2 text-xs">
+                    <div className="font-semibold text-warning-text">
                       Maintenance Downtime Window
                     </div>
                     {machine.maintenanceUntilMs && machine.maintenanceUntilMs > schedule.nowMs ? (
-                      <div className="font-mono-data text-amber-800 dark:text-amber-300">
+                      <div className="font-mono-data text-warning-text">
                         Available at: {formatDateTimeDDMMYYYY(machine.maintenanceUntilMs, timezone)}
                       </div>
                     ) : (
-                      <div className="text-amber-700 dark:text-amber-400">
+                      <div className="text-warning-text">
                         Indefinite until return window set
                       </div>
                     )}
@@ -304,7 +329,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             [machine.id]: Math.max(1, Number(e.target.value) || 2),
                           })
                         }
-                        className="w-16 px-2 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#111018] font-mono-data"
+                        className="w-16 px-2 py-1 rounded-lg border border-warning-border bg-input text-ink font-mono-data"
                       />
                       <button
                         type="button"
@@ -314,7 +339,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             maintenanceUntilMs: Date.now() + hrs * 3600_000,
                           });
                         }}
-                        className="px-2.5 py-1 rounded bg-amber-600 text-white font-semibold whitespace-nowrap"
+                        className="px-2.5 py-1 rounded-lg bg-status-warning hover:opacity-90 text-white font-semibold whitespace-nowrap transition-opacity"
                       >
                         Set +{maintHoursDraft[machine.id] ?? 2}h Downtime
                       </button>
@@ -324,9 +349,21 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
 
                 {/* Active Print Slot (Overlap Protected + Live Countdown) */}
                 {activeSlot && activeJob ? (
-                  <div className="min-w-0 p-3.5 rounded-xl bg-[#f6f3ff] dark:bg-[#231d3a] border border-[#dcd2ff] dark:border-[#3e3366] space-y-2.5">
+                  <div
+                    className={`min-w-0 p-3.5 rounded-xl border space-y-2.5 ${
+                      activeSlot.needsEtaRecalibration || activeSlot.isPaused
+                        ? 'bg-warning-soft border-warning-border'
+                        : 'bg-brand-soft border-brand-border'
+                    }`}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs min-w-0">
-                      <span className="font-semibold text-[#5b3cc4] dark:text-[#c7b8ff] break-words">
+                      <span
+                        className={`font-semibold break-words ${
+                          activeSlot.needsEtaRecalibration || activeSlot.isPaused
+                            ? 'text-warning-text'
+                            : 'text-brand-text'
+                        }`}
+                      >
                         Plate {activeJob.plateNumber} (
                         {activeSlot.needsEtaRecalibration
                           ? ETA_NEEDS_RECALIBRATION_LABEL
@@ -338,12 +375,12 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                         )
                       </span>
                       {!activeSlot.needsEtaRecalibration && (
-                        <span className="font-mono-data font-bold text-neutral-900 dark:text-white">
+                        <span className="font-mono-data font-bold text-ink">
                           {formatCountdownHMS(activeSlot.remainingSecondsLive)}
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-neutral-700 dark:text-neutral-200 break-words">
+                    <div className="text-xs text-ink-secondary break-words">
                       {activeSlot.project?.name} · {activeSlot.colorName} ({countPlateKeycaps(activeJob)}/
                       {activeJob.plateCapacity} pcs)
                     </div>
@@ -365,7 +402,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                       />
                     ) : (
                       activeSlot.endMs && (
-                        <div className="text-[11px] font-mono-data text-neutral-500 break-words">
+                        <div className="text-[11px] font-mono-data text-muted break-words">
                           Est Finish: {formatDateTimeDDMMYYYY(activeSlot.endMs, timezone)}
                         </div>
                       )
@@ -380,7 +417,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               activeSlot.isPaused ? 'resume' : 'pause'
                             )
                           }
-                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 text-center leading-tight break-words"
+                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-line bg-surface hover:bg-elevated text-ink text-center leading-tight break-words transition-colors"
                         >
                           {activeSlot.isPaused ? 'Resume' : 'Pause'}
                         </button>
@@ -392,7 +429,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             machineId: machine.id,
                           })
                         }
-                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-center leading-tight break-words"
+                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white text-center leading-tight break-words transition-colors"
                       >
                         {countLetters(activeJob.letters) > 0 ? 'Complete (+Stock)' : 'Complete Print'}
                       </button>
@@ -404,7 +441,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                             failureReason: 'Failed on ' + machine.name,
                           })
                         }
-                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 bg-white dark:bg-[#171522] text-center leading-tight break-words"
+                        className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-error-border text-error-text bg-surface hover:bg-error-soft text-center leading-tight break-words transition-colors"
                       >
                         Fail
                       </button>
@@ -413,7 +450,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                           type="button"
                           disabled={!isAdmin || Boolean(busyJobIds?.has(activeJob.id))}
                           onClick={() => onRequestCancelPrinting(activeJob)}
-                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/35 bg-white dark:bg-[#171522] disabled:opacity-45 text-center leading-tight break-words"
+                          className="w-full sm:w-auto grow min-w-0 inline-flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded-lg border border-error-border text-error-text hover:bg-error-soft bg-surface disabled:opacity-45 text-center leading-tight break-words transition-colors"
                         >
                           Cancel
                         </button>
@@ -421,8 +458,8 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="min-w-0 p-3.5 rounded-xl bg-neutral-50 dark:bg-[#12101b] border border-neutral-200/70 dark:border-neutral-800 space-y-2">
-                    <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                  <div className="min-w-0 p-3.5 rounded-xl bg-recessed border border-line space-y-2">
+                    <div className="text-xs font-medium text-ink-secondary">
                       {machine.status === 'Maintenance' || machine.status === 'Offline'
                         ? `Unavailable (${machine.status})`
                         : 'Ready for Print Assignment'}
@@ -438,7 +475,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               [machine.id]: e.target.value,
                             })
                           }
-                          className="w-full sm:w-auto flex-1 min-w-0 max-w-full px-2 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#171522] text-xs"
+                          className="w-full sm:w-auto flex-1 min-w-0 max-w-full px-2 py-1.5 rounded-lg border border-line bg-input text-xs text-ink"
                         >
                           <option value="">Select queued plate...</option>
                           {readyOrPlannedJobs.map((j) => {
@@ -468,7 +505,7 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                               });
                             }
                           }}
-                          className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] disabled:opacity-40 text-white text-center leading-tight"
+                          className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-40 text-white text-center leading-tight transition-colors"
                         >
                           Start Print
                         </button>
@@ -480,19 +517,19 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                 {/* Scheduled Upcoming Queue for this Machine */}
                 {queuedSlots.length > 0 && (
                   <div className="space-y-1.5">
-                    <div className="text-[11px] font-semibold text-neutral-500">
+                    <div className="text-[11px] font-semibold text-muted">
                       Scheduled Queue ({queuedSlots.length})
                     </div>
                     {queuedSlots.slice(0, 3).map((qs) => (
                       <div
                         key={qs.job.id}
-                        className="text-xs text-neutral-600 dark:text-neutral-300 flex items-center justify-between gap-2"
+                        className="text-xs text-ink-secondary flex items-center justify-between gap-2"
                       >
                         <span className="truncate">
                           P{qs.job.plateNumber} · {qs.project?.name} ({countPlateKeycaps(qs.job)} pcs)
                           {qs.isVirtualAssignment ? ' (Auto)' : ''}
                         </span>
-                        <span className="font-mono-data text-[11px] text-neutral-400 shrink-0">
+                        <span className="font-mono-data text-[11px] text-muted shrink-0">
                           {qs.endMs ? formatDateTimeDDMMYYYY(qs.endMs, timezone) : ''}
                         </span>
                       </div>
@@ -501,17 +538,17 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                 )}
               </div>
 
-              <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between gap-2">
+              <div className="pt-3 border-t border-line flex items-center justify-between gap-2">
                 <input
                   value={machine.notes}
                   placeholder="Nozzle / maintenance note..."
                   onChange={(e) => onUpdateMachine(machine.id, { notes: e.target.value })}
-                  className="flex-1 min-w-0 px-2.5 py-1 text-xs rounded-lg border border-neutral-200 dark:border-neutral-700 bg-transparent text-neutral-700 dark:text-neutral-300"
+                  className="flex-1 min-w-0 px-2.5 py-1 text-xs rounded-lg border border-line bg-input text-ink placeholder:text-muted focus:border-brand"
                 />
                 <button
                   type="button"
                   onClick={() => onRemoveMachine(machine.id)}
-                  className="text-xs text-neutral-400 hover:text-red-600 dark:hover:text-red-400 shrink-0"
+                  className="text-xs text-muted hover:text-error-text shrink-0 transition-colors"
                 >
                   Remove
                 </button>
@@ -547,7 +584,7 @@ const EditableMachineTitle: React.FC<{ name: string; onRename: (n: string) => vo
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
-      className="text-sm font-semibold text-neutral-900 dark:text-white bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#6c4ce6] focus:outline-none w-full"
+      className="text-sm font-semibold text-ink bg-transparent border-b border-transparent hover:border-line focus:border-brand focus:outline-none w-full"
     />
   );
 };

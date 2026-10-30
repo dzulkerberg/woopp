@@ -214,8 +214,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
   if (!currentProject || !colorPlanningState) {
     return (
-      <div className="bg-white dark:bg-[#171522] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8 text-center">
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
+      <div className="bg-surface border border-line rounded-xl p-8 text-center">
+        <p className="text-sm text-ink-secondary">
           Create or unarchive a project first to plan alphabet and charm keycap plates.
         </p>
       </div>
@@ -671,16 +671,16 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Context Selector: Project, Color, Plate Capacity, Presets & Production Mode */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-5">
+      <section className="bg-surface border border-line rounded-xl p-6 space-y-5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Target Project
             </label>
             <select
               value={currentProject.id}
               onChange={(e) => onSelectProject(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none"
             >
               {activeProjects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -691,7 +691,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Color Variant
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -702,12 +702,12 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   onClick={() => setSelectedColorId(c.id)}
                   className={`px-3 py-2 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                     selectedColorId === c.id
-                      ? 'border-[#6c4ce6] bg-[#f1edfd] text-[#5b3cc4] dark:bg-[#2a2344] dark:text-[#c7b8ff]'
-                      : 'border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300'
+                      ? 'border-brand bg-brand-soft text-brand-text font-semibold'
+                      : 'border-line bg-elevated text-ink-secondary hover:text-ink'
                   }`}
                 >
                   <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-line"
                     style={{ backgroundColor: c.hex }}
                   />
                   <span>{c.name}</span>
@@ -717,7 +717,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Capacity &amp; Bambu Est. Time
             </label>
             <div className="flex items-center gap-2">
@@ -731,7 +731,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   setPlateCapacity(Math.max(1, Math.floor(Number(e.target.value) || 138)));
                   setStagedPlates(null);
                 }}
-                className="w-20 px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-xs text-neutral-900 dark:text-white font-mono-data"
+                className="w-20 px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink font-mono-data focus:border-brand focus:outline-none"
               />
               <DurationHMInput
                 compact
@@ -746,14 +746,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Load Alphabet Preset
             </label>
             <div className="flex gap-2">
               <select
                 value={selectedPresetId}
                 onChange={(e) => setSelectedPresetId(e.target.value)}
-                className="flex-1 min-w-0 px-2.5 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-xs text-neutral-900 dark:text-white"
+                className="flex-1 min-w-0 px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
               >
                 <option value="">Select preset...</option>
                 {workspace.presets.map((pr) => (
@@ -766,7 +766,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 type="button"
                 disabled={!selectedPresetId}
                 onClick={handleApplyPreset}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 disabled:opacity-40 whitespace-nowrap"
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-40 whitespace-nowrap transition-colors"
               >
                 Apply
               </button>
@@ -775,12 +775,12 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         </div>
 
         {/* Auto Plate Generator Mode Selector */}
-        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="pt-4 border-t border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">
+            <div className="text-xs font-semibold text-ink">
               Auto Plate Generator Mode
             </div>
-            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-[11px] text-muted mt-0.5">
               {MODE_OPTIONS.find((m) => m.id === generationMode)?.hint}
             </div>
           </div>
@@ -788,7 +788,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           <div
             role="group"
             aria-label="Plate generation mode"
-            className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-neutral-100 dark:bg-[#111018] border border-neutral-200/80 dark:border-neutral-800"
+            className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-recessed border border-line"
           >
             {MODE_OPTIONS.map((opt) => {
               const active = generationMode === opt.id;
@@ -802,8 +802,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
                     active
-                      ? 'bg-[#6c4ce6] text-white shadow-xs'
-                      : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white'
+                      ? 'bg-brand text-white shadow-xs'
+                      : 'text-ink-secondary hover:text-ink'
                   }`}
                 >
                   {opt.label}
@@ -814,58 +814,56 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         </div>
 
         {/* 4-Metric Color Plate & Carry-Forward Breakdown */}
-        <div className="rounded-xl border border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/70 dark:bg-[#12101b] grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200/70 dark:divide-neutral-800">
+        <div className="rounded-xl border border-line bg-recessed grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-line">
           <div className="p-3">
-            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            <div className="text-[11px] font-medium text-muted">
               Current Planner Input
             </div>
-            <div className="text-sm font-bold font-mono-data text-neutral-900 dark:text-white mt-0.5">
+            <div className="text-sm font-bold font-mono-data text-ink mt-0.5">
               {(totalAlphabetRequested + totalCharmsRequested).toLocaleString()} pcs
             </div>
-            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-[11px] font-mono-data text-muted mt-0.5">
               {totalAlphabetRequested} A–Z · {totalCharmsRequested} Charm
             </div>
           </div>
 
           <div className="p-3">
-            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            <div className="text-[11px] font-medium text-muted">
               Completed Production
             </div>
-            <div className="text-sm font-bold font-mono-data text-emerald-700 dark:text-emerald-400 mt-0.5">
+            <div className="text-sm font-bold font-mono-data text-brand-text mt-0.5">
               {colorPlanningState.completedTotal.toLocaleString()} pcs
             </div>
-            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-[11px] font-mono-data text-muted mt-0.5">
               {colorPlanningState.completedPlatesCount} completed plate(s)
             </div>
           </div>
 
           <div className="p-3">
-            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            <div className="text-[11px] font-medium text-muted">
               Generated Active Plates
             </div>
-            <div className="text-sm font-bold font-mono-data text-neutral-900 dark:text-white mt-0.5">
+            <div className="text-sm font-bold font-mono-data text-ink mt-0.5">
               {colorPlanningState.activePlatesTotal.toLocaleString()} pcs
             </div>
-            <div className="text-[11px] font-mono-data text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-[11px] font-mono-data text-muted mt-0.5">
               {colorPlanningState.queuedPlatesCount} queued ·{' '}
               {colorPlanningState.printingPlatesCount} printing
             </div>
           </div>
 
           <div className="p-3">
-            <div className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            <div className="text-[11px] font-medium text-muted">
               Session Carry-Forward
             </div>
             <div
               className={`text-sm font-bold font-mono-data mt-0.5 ${
-                carryForwardTotal > 0
-                  ? 'text-[#5b3cc4] dark:text-[#c7b8ff]'
-                  : 'text-neutral-900 dark:text-white'
+                carryForwardTotal > 0 ? 'text-warning-text' : 'text-ink'
               }`}
             >
               {carryForwardTotal.toLocaleString()} pcs
             </div>
-            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-[11px] text-muted mt-0.5">
               {carryForwardTotal > 0
                 ? 'Active incomplete-plate remainder'
                 : 'No unplated remainder'}
@@ -875,18 +873,18 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
         {/* Carry-Forward Controls */}
         {carryForwardTotal > 0 && (
-          <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="p-3.5 rounded-xl bg-warning-soft border border-warning-border text-xs text-warning-text flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
               {missingCarryTotal > 0 ? (
                 <button
                   type="button"
                   onClick={handleIncludeCarryForward}
-                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold whitespace-nowrap"
+                  className="px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white font-semibold whitespace-nowrap transition-colors"
                 >
                   + Merge Carry-Forward ({missingCarryTotal} pcs)
                 </button>
               ) : (
-                <span className="px-2.5 py-1 rounded-lg bg-white/80 dark:bg-[#191726] border border-amber-300/80 dark:border-amber-800/70 text-[11px] font-medium text-amber-900 dark:text-amber-200 whitespace-nowrap">
+                <span className="px-2.5 py-1 rounded-lg bg-surface border border-warning-border text-[11px] font-medium text-warning-text whitespace-nowrap">
                   Carry-forward ({carryForwardTotal} pcs) included in target grid
                 </span>
               )}
@@ -901,7 +899,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                       trimTargetRemainder: true,
                     })
                   }
-                  className="px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-950/40 font-medium whitespace-nowrap"
+                  className="px-2.5 py-1.5 rounded-lg border border-warning-border bg-surface text-warning-text hover:bg-elevated font-medium whitespace-nowrap transition-colors"
                 >
                   Dismiss Carry-Forward
                 </button>
@@ -913,26 +911,26 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
       {/* Category 1: Alphabet A–Z */}
       <section
-        className={`bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-5 transition-opacity ${
+        className={`bg-surface border border-line rounded-xl p-6 space-y-5 transition-opacity ${
           generationMode === 'charm_only' ? 'opacity-65' : ''
         }`}
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+              <h2 className="text-base font-semibold text-ink">
                 Alphabet A–Z
               </h2>
-              <span className="text-xs font-mono-data px-2 py-0.5 rounded-md bg-[#f4f0ff] dark:bg-[#26203d] text-[#5b3cc4] dark:text-[#d5c8ff] font-semibold">
-                {totalAlphabetRequested} pcs
+              <span className="text-xs font-mono-data text-brand-text font-semibold">
+                · {totalAlphabetRequested} pcs
               </span>
               {generationMode === 'charm_only' && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-medium">
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-recessed border border-line text-muted font-medium">
                   Excluded in Charm Only mode · Existing A–Z plates preserved
                 </span>
               )}
             </div>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-muted mt-0.5">
               Enter custom quantity per letter for this filament color. Unrequested letters are never added automatically.
             </p>
           </div>
@@ -944,7 +942,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   setHasUnsavedGridEdits(false);
                   setStagedPlates(null);
                 }}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#dfd7fb] dark:border-[#3e3366] bg-[#faf8ff] dark:bg-[#221c38] text-[#5b3cc4] dark:text-[#d5c8ff] whitespace-nowrap"
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-brand-border bg-brand-soft text-brand-text whitespace-nowrap transition-colors"
               >
                 Reset to Active Queue
               </button>
@@ -952,7 +950,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             <button
               type="button"
               onClick={handleLoadAlphabetFromQueue}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Load Queue A–Z
             </button>
@@ -965,7 +963,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   setStagedPlates(null);
                 }
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Reset A–Z to Locked Minimum
             </button>
@@ -982,15 +980,17 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 key={letter}
                 className={`p-2 rounded-xl border ${
                   isInvalid
-                    ? 'border-red-400 bg-red-50/40 dark:bg-red-950/30'
-                    : 'border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#13111c]'
+                    ? 'border-status-error bg-error-soft'
+                    : currentVal > 0
+                    ? 'border-brand-border bg-brand-soft'
+                    : 'border-line bg-elevated'
                 }`}
               >
                 <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-bold text-neutral-900 dark:text-white">{letter}</span>
+                  <span className="font-bold text-ink">{letter}</span>
                   {lockedVal > 0 && (
                     <span
-                      className="text-[10px] font-mono-data text-neutral-500 dark:text-neutral-400"
+                      className="text-[10px] font-mono-data text-muted"
                       title="Locked in Printing/Completed plates"
                     >
                       L:{lockedVal}
@@ -1004,7 +1004,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   aria-label={`Quantity for letter ${letter}`}
                   value={currentVal}
                   onChange={(e) => handleSetLetterQty(letter, e.target.value)}
-                  className="w-full px-1.5 py-1.5 text-center rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#191726] text-xs font-mono-data text-neutral-900 dark:text-white"
+                  className="w-full px-1.5 py-1.5 text-center rounded-lg border border-line bg-input text-xs font-mono-data text-ink focus:border-brand focus:outline-none"
                 />
               </div>
             );
@@ -1012,19 +1012,19 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         </div>
 
         {/* Save Reusable Alphabet Preset Bar */}
-        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-4">
+        <div className="pt-4 border-t border-line flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2 flex-1 max-w-md">
             <input
               placeholder="Save current A–Z grid as reusable preset..."
               value={presetName}
               onChange={(e) => setPresetName(e.target.value)}
               maxLength={80}
-              className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-xs text-neutral-900 dark:text-white"
+              className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             />
             <button
               type="button"
               onClick={handleSaveNewPreset}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Save Preset
             </button>
@@ -1035,40 +1035,40 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   onDeletePreset(selectedPresetId);
                   setSelectedPresetId('');
                 }}
-                className="px-2.5 py-1.5 text-xs text-red-600 dark:text-red-400 hover:underline whitespace-nowrap"
+                className="px-2.5 py-1.5 text-xs text-error-text hover:underline whitespace-nowrap"
               >
                 Delete Preset
               </button>
             )}
           </div>
-          <div className="text-xs font-mono-data text-neutral-500 dark:text-neutral-400">
-            Alphabet Subtotal: <b className="text-neutral-900 dark:text-white">{totalAlphabetRequested}</b> pcs · Locked: <b>{lockedAlphabetCount}</b> pcs
+          <div className="text-xs font-mono-data text-muted">
+            Alphabet Subtotal: <b className="text-ink">{totalAlphabetRequested}</b> pcs · Locked: <b className="text-ink">{lockedAlphabetCount}</b> pcs
           </div>
         </div>
       </section>
 
       {/* Category 2: Charm Keycaps */}
       <section
-        className={`bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-5 transition-opacity ${
+        className={`bg-surface border border-line rounded-xl p-6 space-y-5 transition-opacity ${
           generationMode === 'alphabet_only' ? 'opacity-65' : ''
         }`}
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+              <h2 className="text-base font-semibold text-ink">
                 Charm Keycaps
               </h2>
-              <span className="text-xs font-mono-data px-2 py-0.5 rounded-md bg-[#f4f0ff] dark:bg-[#26203d] text-[#5b3cc4] dark:text-[#d5c8ff] font-semibold">
-                {totalCharmsRequested} pcs
+              <span className="text-xs font-mono-data text-brand-text font-semibold">
+                · {totalCharmsRequested} pcs
               </span>
               {generationMode === 'alphabet_only' && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-medium">
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-recessed border border-line text-muted font-medium">
                   Excluded in Alphabet Only mode · Existing Charm plates preserved
                 </span>
               )}
             </div>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-xs text-muted mt-0.5">
               Each charm counts as 1 physical keycap and supports independent quantities per filament color (defaults to 0).
             </p>
           </div>
@@ -1077,7 +1077,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             <button
               type="button"
               onClick={handleLoadCharmsFromQueue}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Load Queue Charms
             </button>
@@ -1090,7 +1090,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   setStagedPlates(null);
                 }
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
             >
               Reset Charms to Locked Minimum
             </button>
@@ -1107,27 +1107,27 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             return (
               <div
                 key={charm.id}
-                className={`rounded-2xl border p-4 flex flex-col justify-between gap-3 transition-colors ${
+                className={`rounded-xl border p-4 flex flex-col justify-between gap-3 transition-colors ${
                   isInvalid
-                    ? 'border-red-400 bg-red-50/40 dark:bg-red-950/30'
+                    ? 'border-status-error bg-error-soft'
                     : currentVal > 0
-                    ? 'border-[#cfc2ff] dark:border-[#433575] bg-[#faf8ff] dark:bg-[#1b172b]'
-                    : 'border-neutral-200/80 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#13111c]'
+                    ? 'border-brand-border bg-brand-soft'
+                    : 'border-line bg-elevated'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div
-                      className="w-10 h-10 rounded-xl bg-[#f1edfd] dark:bg-[#2a2344] border border-[#dfd7fb] dark:border-[#3e3366] flex items-center justify-center text-lg font-bold text-[#5b3cc4] dark:text-[#d5c8ff] shrink-0"
+                      className="w-10 h-10 rounded-xl bg-brand-soft border border-brand-border flex items-center justify-center text-lg font-bold text-brand-text shrink-0"
                       aria-hidden="true"
                     >
                       {charm.symbol}
                     </div>
                     <div className="min-w-0">
-                      <div className="text-xs font-bold tracking-wide text-neutral-900 dark:text-white truncate">
+                      <div className="text-xs font-bold tracking-wide text-ink truncate">
                         {charm.label}
                       </div>
-                      <div className="text-[10px] font-mono-data text-neutral-400 dark:text-neutral-500 truncate">
+                      <div className="text-[10px] font-mono-data text-muted truncate">
                         {charm.id}
                       </div>
                     </div>
@@ -1135,7 +1135,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
                   {lockedVal > 0 && (
                     <span
-                      className="text-[10px] font-mono-data px-1.5 py-0.5 rounded bg-neutral-200/70 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 shrink-0"
+                      className="text-[10px] font-mono-data px-1.5 py-0.5 rounded bg-recessed border border-line text-ink-secondary shrink-0"
                       title="Locked in Printing/Completed plates"
                     >
                       L:{lockedVal}
@@ -1148,7 +1148,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     type="button"
                     aria-label={`Decrease ${charm.label} quantity`}
                     onClick={() => handleSetCharmQty(charm.id, currentVal - 1)}
-                    className="w-8 h-9 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#191726] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-sm font-semibold text-neutral-700 dark:text-neutral-200 shrink-0"
+                    className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
                   >
                     −
                   </button>
@@ -1161,13 +1161,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     onChange={(e) =>
                       handleSetCharmQty(charm.id, Math.floor(Number(e.target.value) || 0))
                     }
-                    className="w-full h-9 px-2 text-center rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#191726] text-xs font-mono-data font-semibold text-neutral-900 dark:text-white"
+                    className="w-full h-9 px-2 text-center rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none"
                   />
                   <button
                     type="button"
                     aria-label={`Increase ${charm.label} quantity`}
                     onClick={() => handleSetCharmQty(charm.id, currentVal + 1)}
-                    className="w-8 h-9 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#191726] hover:bg-neutral-100 dark:hover:bg-neutral-800 text-sm font-semibold text-neutral-700 dark:text-neutral-200 shrink-0"
+                    className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
                   >
                     +
                   </button>
@@ -1180,13 +1180,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
       {/* Auto Plate Generator Summary & Remainder Controls */}
       {distribution && (
-        <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+        <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+              <h2 className="text-base font-semibold text-ink">
                 Auto Plate Generator ({MODE_OPTIONS.find((m) => m.id === generationMode)?.label})
               </h2>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+              <p className="text-xs text-muted mt-0.5">
                 Completed, Failed, and Printing plate history is strictly preserved. Deleted plates and missing letters or charms are never recreated automatically.
               </p>
             </div>
@@ -1196,7 +1196,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 <div
                   role="group"
                   aria-label="Queue preservation mode"
-                  className="inline-flex items-center gap-1 p-1 rounded-xl bg-neutral-100 dark:bg-[#111018] border border-neutral-200/80 dark:border-neutral-800"
+                  className="inline-flex items-center gap-1 p-1 rounded-xl bg-recessed border border-line"
                 >
                   <button
                     type="button"
@@ -1206,8 +1206,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     }}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
                       !effectivePreserveQueued
-                        ? 'bg-[#6c4ce6] text-white'
-                        : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white'
+                        ? 'bg-brand text-white'
+                        : 'text-ink-secondary hover:text-ink'
                     }`}
                   >
                     Regenerate Queue
@@ -1220,8 +1220,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     }}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
                       effectivePreserveQueued
-                        ? 'bg-[#6c4ce6] text-white'
-                        : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white'
+                        ? 'bg-brand text-white'
+                        : 'text-ink-secondary hover:text-ink'
                     }`}
                   >
                     Queue Remaining Demand Only ({colorPlanningState.queuedPlatesCount} kept)
@@ -1229,44 +1229,44 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 </div>
               )}
 
-              <div className="text-xs font-mono-data text-neutral-700 dark:text-neutral-300">
-                Mode Target: <b>{activeModeTargetTotal}</b> pcs
+              <div className="text-xs font-mono-data text-ink-secondary">
+                Mode Target: <b className="text-ink">{activeModeTargetTotal}</b> pcs
                 {generationMode === 'mixed' && (
-                  <span className="text-neutral-500">
+                  <span className="text-muted">
                     {' '}
                     ({totalAlphabetRequested} A–Z + {totalCharmsRequested} Charm)
                   </span>
                 )}{' '}
                 · {effectivePreserveQueued ? 'Allocated' : 'Locked'}:{' '}
-                <b>{activeModeLockedCount}</b> pcs · Net to Plate:{' '}
-                <b>{distribution.totalNetCount}</b> pcs · Full Plates:{' '}
-                <b>{distribution.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
-                <b>{distribution.remainderCount}</b> pcs
+                <b className="text-ink">{activeModeLockedCount}</b> pcs · Net to Plate:{' '}
+                <b className="text-ink">{distribution.totalNetCount}</b> pcs · Full Plates:{' '}
+                <b className="text-ink">{distribution.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
+                <b className="text-ink">{distribution.remainderCount}</b> pcs
               </div>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-neutral-50 dark:bg-[#13111c] border border-neutral-200/80 dark:border-neutral-800 space-y-3">
+          <div className="p-4 rounded-xl bg-recessed border border-line space-y-3">
             {distribution.underLockedLabels.length > 0 ? (
-              <p className="text-xs font-semibold text-red-600 dark:text-red-400">
+              <p className="text-xs font-semibold text-error-text">
                 Increase target quantities for locked items ({distribution.underLockedLabels.join(', ')}) so they are at least equal to already Completed/Printing plates.
               </p>
             ) : distribution.remainderCount > 0 ? (
               <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-800 dark:text-neutral-200">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink">
                   <div>
                     <span className="font-semibold">
                       Incomplete Plate Remainder ({distribution.remainderCount} / {plateCapacity} pcs):
                     </span>{' '}
                     <span className="font-mono-data">{remainderSummaryParts.join(', ')}</span>
                   </div>
-                  <span className="px-2.5 py-1 rounded-lg bg-[#f1edfd] dark:bg-[#2a2344] text-[#5b3cc4] dark:text-[#d5c8ff] font-mono-data font-semibold whitespace-nowrap">
+                  <span className="px-2.5 py-1 rounded-lg bg-brand-soft border border-brand-border text-brand-text font-mono-data font-semibold whitespace-nowrap">
                     Remaining Capacity: {distribution.neededForNextFullPlate} pcs available
                   </span>
                 </div>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                <p className="text-xs text-muted">
                   Unrequested letters or charms are never added automatically. You can generate an incomplete plate with{' '}
-                  <span className="font-mono-data font-semibold">
+                  <span className="font-mono-data font-semibold text-ink">
                     {distribution.neededForNextFullPlate} pcs
                   </span>{' '}
                   remaining capacity, carry the remainder forward, or adjust quantities above:
@@ -1275,7 +1275,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   <button
                     type="button"
                     onClick={() => handlePreparePlatesPreview('partial_plate')}
-                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
                   >
                     {distribution.fullPlates.length > 0
                       ? `Preview ${distribution.fullPlates.length} Full + 1 Incomplete Plate (${distribution.remainderCount}/${plateCapacity} pcs · ${distribution.neededForNextFullPlate} free)`
@@ -1284,7 +1284,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   <button
                     type="button"
                     onClick={() => handlePreparePlatesPreview('carry_forward')}
-                    className="px-4 py-2 text-xs font-medium rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#171522] text-neutral-800 dark:text-neutral-200 whitespace-nowrap"
+                    className="px-4 py-2 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink whitespace-nowrap transition-colors"
                   >
                     {distribution.fullPlates.length > 0
                       ? `Generate ${distribution.fullPlates.length} Exact Plate(s) & Carry Remainder (${distribution.remainderCount} pcs) Forward`
@@ -1294,7 +1294,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               </div>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                <div className="text-xs text-brand-text font-medium">
                   {distribution.totalNetCount > 0
                     ? `Exact multiple of ${plateCapacity} pcs — distributes cleanly into ${distribution.fullPlates.length} full plate(s) with 0 remainder.`
                     : 'Enter net Alphabet or Charm quantities above to generate print plates.'}
@@ -1303,7 +1303,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   type="button"
                   disabled={distribution.totalNetCount === 0}
                   onClick={() => handlePreparePlatesPreview('carry_forward')}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] disabled:opacity-40 text-white whitespace-nowrap"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-40 text-white whitespace-nowrap transition-colors"
                 >
                   Preview &amp; Adjust {distribution.fullPlates.length} Plate(s)
                 </button>
@@ -1315,13 +1315,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
       {/* Interactive Pre-Confirmation Plate Adjustment Area */}
       {stagedPlates !== null && (
-        <section className="bg-white dark:bg-[#171522] border-2 border-[#6c4ce6] rounded-2xl p-6 space-y-5">
+        <section className="bg-surface border-2 border-brand rounded-xl p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+              <h3 className="text-base font-semibold text-ink">
                 Review &amp; Manually Adjust Generated Plates Before Saving
               </h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+              <p className="text-xs text-muted mt-0.5">
                 Completed, Failed, and Printing plates remain untouched. Adjust letter or charm counts below (never exceeding {plateCapacity} pcs/plate), and verify physical fit in Bambu Studio.
               </p>
             </div>
@@ -1329,14 +1329,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               <button
                 type="button"
                 onClick={() => setStagedPlates(null)}
-                className="px-3.5 py-2 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300"
+                className="px-3.5 py-2 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed transition-colors"
               >
                 Discard Preview
               </button>
               <button
                 type="button"
                 onClick={handleConfirmAndSavePlates}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
               >
                 Confirm &amp; Save to Print Queue
               </button>
@@ -1344,9 +1344,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
 
           {stagedPlates.length === 0 ? (
-            <div className="p-4 rounded-xl bg-neutral-50 dark:bg-[#111018] text-xs text-neutral-700 dark:text-neutral-300">
+            <div className="p-4 rounded-xl bg-recessed border border-line text-xs text-ink-secondary">
               0 full plates to create right now. Confirming will save the{' '}
-              <b>{distribution?.remainderCount || 0} pcs</b> remainder to this project&apos;s Carry-Forward pool.
+              <b className="text-ink">{distribution?.remainderCount || 0} pcs</b> remainder to this project&apos;s Carry-Forward pool.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1422,26 +1422,26 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
     <div
       className={`rounded-xl border p-4 space-y-3 ${
         overCap
-          ? 'border-red-500 bg-red-50/30 dark:bg-red-950/20'
-          : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-[#13111c]'
+          ? 'border-status-error bg-error-soft'
+          : 'border-line bg-elevated'
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-neutral-900 dark:text-white">
+          <span className="text-sm font-semibold text-ink">
             Plate {plate.plateNumber}
           </span>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#f1edfd] dark:bg-[#2a2344] text-[#5b3cc4] dark:text-[#d5c8ff]">
-            {modeBadgeLabel}
+          <span className="text-[10px] font-semibold text-brand-text">
+            · {modeBadgeLabel}
           </span>
         </div>
         <span
           className={`text-xs font-mono-data font-semibold ${
             overCap
-              ? 'text-red-600 dark:text-red-400'
+              ? 'text-error-text'
               : count === plate.capacity
-              ? 'text-emerald-600 dark:text-emerald-400'
-              : 'text-amber-600 dark:text-amber-400'
+              ? 'text-brand-text'
+              : 'text-warning-text'
           }`}
         >
           {count} / {plate.capacity} pcs
@@ -1450,21 +1450,21 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
 
       {/* Remaining capacity indicator for incomplete plates */}
       {overCap ? (
-        <div className="text-[11px] font-mono-data font-semibold text-red-600 dark:text-red-400">
+        <div className="text-[11px] font-mono-data font-semibold text-error-text">
           Exceeds plate capacity by {count - plate.capacity} pcs (max {plate.capacity} pcs)
         </div>
       ) : remainingCapacity > 0 ? (
-        <div className="text-[11px] font-mono-data text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-800/60 rounded-lg px-2.5 py-1">
+        <div className="text-[11px] font-mono-data text-warning-text bg-warning-soft border border-warning-border rounded-lg px-2.5 py-1">
           Incomplete plate · Remaining capacity: <b>{remainingCapacity} pcs</b> available
         </div>
       ) : (
-        <div className="text-[11px] font-mono-data text-emerald-700 dark:text-emerald-400">
+        <div className="text-[11px] font-mono-data text-brand-text">
           Full capacity ({plate.capacity} pcs) · Remaining capacity: 0 pcs
         </div>
       )}
 
       <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="text-neutral-500">Bambu Studio Time:</span>
+        <span className="text-muted">Bambu Studio Time:</span>
         <DurationHMInput
           compact
           minutes={plate.estimatedMinutes}
@@ -1476,16 +1476,16 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
       {/* Alphabet Quantities on Plate */}
       {letterEntries.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
+          <div className="text-[11px] font-semibold text-muted">
             Alphabet A–Z ({countLetters(plate.letters)} pcs)
           </div>
           <div className="grid grid-cols-3 gap-2">
             {letterEntries.map(([k, v]) => (
               <div
                 key={k}
-                className="flex items-center gap-1 bg-white dark:bg-[#1a1828] border border-neutral-200 dark:border-neutral-700 rounded-lg px-2 py-1"
+                className="flex items-center gap-1 bg-input border border-line rounded-lg px-2 py-1"
               >
-                <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 w-4">
+                <span className="text-xs font-bold text-ink w-4">
                   {k}
                 </span>
                 <input
@@ -1494,7 +1494,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
                   aria-label={`Plate ${plate.plateNumber} letter ${k} quantity`}
                   value={v}
                   onChange={(e) => onAdjustLetter(plate.tempId, k, e.target.value)}
-                  className="w-full text-right text-xs font-mono-data bg-transparent text-neutral-900 dark:text-white focus:outline-none"
+                  className="w-full text-right text-xs font-mono-data bg-transparent text-ink focus:outline-none"
                 />
               </div>
             ))}
@@ -1505,16 +1505,16 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
       {/* Charm Quantities on Plate */}
       {charmEntries.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[11px] font-semibold text-[#5b3cc4] dark:text-[#c7b8ff]">
+          <div className="text-[11px] font-semibold text-brand-text">
             Charm Keycaps ({countCharms(plate.charms)} pcs)
           </div>
           <div className="grid grid-cols-2 gap-2">
             {charmEntries.map(({ def, qty }) => (
               <div
                 key={def.id}
-                className="flex items-center justify-between gap-1.5 bg-[#faf8ff] dark:bg-[#221c38] border border-[#dfd7fb] dark:border-[#3e3366] rounded-lg px-2.5 py-1"
+                className="flex items-center justify-between gap-1.5 bg-brand-soft border border-brand-border rounded-lg px-2.5 py-1"
               >
-                <span className="text-xs font-semibold text-[#4c32a8] dark:text-[#d5c8ff] whitespace-nowrap">
+                <span className="text-xs font-semibold text-brand-text whitespace-nowrap">
                   {def.symbol} {def.label}
                 </span>
                 <input
@@ -1523,7 +1523,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
                   aria-label={`Plate ${plate.plateNumber} charm ${def.label} quantity`}
                   value={qty}
                   onChange={(e) => onAdjustCharm(plate.tempId, def.id, e.target.value)}
-                  className="w-12 text-right text-xs font-mono-data font-bold bg-transparent text-neutral-900 dark:text-white focus:outline-none"
+                  className="w-12 text-right text-xs font-mono-data font-bold bg-transparent text-ink focus:outline-none"
                 />
               </div>
             ))}
@@ -1532,13 +1532,13 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
       )}
 
       {/* Manual Add Letter / Add Charm Controls + Bambu Studio Fit Checkbox */}
-      <div className="space-y-2 pt-2 border-t border-neutral-200/70 dark:border-neutral-800">
+      <div className="space-y-2 pt-2 border-t border-line">
         <div className="flex flex-wrap items-center gap-1.5">
           <select
             aria-label="Select letter to add to plate"
             value={letterToAdd}
             onChange={(e) => setLetterToAdd(e.target.value)}
-            className="px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#1a1828] text-xs"
+            className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
           >
             {ABC.map((l) => (
               <option key={l} value={l}>
@@ -1550,7 +1550,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
             type="button"
             disabled={count >= plate.capacity}
             onClick={() => onAddLetter(plate.tempId, letterToAdd)}
-            className="px-2 py-1 text-xs rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#1a1828] hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-40 whitespace-nowrap"
+            className="px-2 py-1 text-xs rounded border border-line bg-surface hover:bg-recessed text-ink disabled:opacity-40 whitespace-nowrap transition-colors"
           >
             + Letter
           </button>
@@ -1559,7 +1559,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
             aria-label="Select charm to add to plate"
             value={charmToAdd}
             onChange={(e) => setCharmToAdd(e.target.value as CharmId)}
-            className="px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-[#1a1828] text-xs"
+            className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
           >
             {CHARM_DEFINITIONS.map((c) => (
               <option key={c.id} value={c.id}>
@@ -1571,13 +1571,13 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
             type="button"
             disabled={count >= plate.capacity}
             onClick={() => onAddCharm(plate.tempId, charmToAdd)}
-            className="px-2 py-1 text-xs rounded border border-[#dfd7fb] dark:border-[#3e3366] bg-[#faf8ff] dark:bg-[#221c38] text-[#4c32a8] dark:text-[#d5c8ff] disabled:opacity-40 whitespace-nowrap"
+            className="px-2 py-1 text-xs rounded border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text disabled:opacity-40 whitespace-nowrap transition-colors"
           >
             + Charm
           </button>
         </div>
 
-        <label className="flex items-center gap-1.5 text-[11px] text-neutral-600 dark:text-neutral-400 cursor-pointer">
+        <label className="flex items-center gap-1.5 text-[11px] text-ink-secondary cursor-pointer">
           <input
             type="checkbox"
             checked={plate.slicerVerified}

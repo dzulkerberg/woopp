@@ -36,7 +36,7 @@ export const DurationHMInput: React.FC<DurationHMInputProps> = ({
 
   return (
     <div className="inline-flex items-center gap-1.5">
-      <div className="flex items-center rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] px-2 py-1">
+      <div className="flex items-center rounded-lg border border-line bg-input px-2 py-1 focus-within:border-brand transition-colors">
         <input
           type="number"
           min={0}
@@ -47,11 +47,11 @@ export const DurationHMInput: React.FC<DurationHMInputProps> = ({
           onChange={(e) => handleHours(e.target.value)}
           className={`${
             compact ? 'w-8 text-xs' : 'w-10 text-xs sm:text-sm'
-          } text-right font-mono-data bg-transparent text-neutral-900 dark:text-white focus:outline-none`}
+          } text-right font-mono-data bg-transparent text-ink focus:outline-none`}
         />
-        <span className="text-[11px] text-neutral-400 ml-1 select-none">h</span>
+        <span className="text-[11px] text-muted ml-1 select-none">h</span>
       </div>
-      <div className="flex items-center rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] px-2 py-1">
+      <div className="flex items-center rounded-lg border border-line bg-input px-2 py-1 focus-within:border-brand transition-colors">
         <input
           type="number"
           min={0}
@@ -62,9 +62,9 @@ export const DurationHMInput: React.FC<DurationHMInputProps> = ({
           onChange={(e) => handleMins(e.target.value)}
           className={`${
             compact ? 'w-8 text-xs' : 'w-10 text-xs sm:text-sm'
-          } text-right font-mono-data bg-transparent text-neutral-900 dark:text-white focus:outline-none`}
+          } text-right font-mono-data bg-transparent text-ink focus:outline-none`}
         />
-        <span className="text-[11px] text-neutral-400 ml-1 select-none">m</span>
+        <span className="text-[11px] text-muted ml-1 select-none">m</span>
       </div>
     </div>
   );

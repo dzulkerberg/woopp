@@ -49,19 +49,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Global Defaults & Smart Scheduling Settings */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+          <h2 className="text-base font-semibold text-ink">
             Production &amp; Scheduling Defaults
           </h2>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+          <p className="text-xs text-muted mt-0.5">
             Configure plate turnaround buffer (removal, bed cleaning &amp; restart), display timezone, and default product parameters.
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Default Plate Capacity (pcs)
             </label>
             <input
@@ -70,24 +70,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               max={1000}
               value={defaultCap}
               onChange={(e) => setDefaultCap(Math.max(1, Number(e.target.value) || 138))}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm font-mono-data"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink font-mono-data focus:border-brand"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Default Product Type
             </label>
             <input
               maxLength={80}
               value={defaultProduct}
               onChange={(e) => setDefaultProduct(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Turnaround Buffer Between Plates (minutes)
             </label>
             <input
@@ -96,21 +96,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               max={240}
               value={bufferMins}
               onChange={(e) => setBufferMins(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm font-mono-data"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink font-mono-data focus:border-brand"
             />
-            <span className="text-[11px] text-neutral-400">
+            <span className="text-[11px] text-muted">
               Time allowed for plate removal, PEI cleaning, and starting next job.
             </span>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Schedule Display Timezone
             </label>
             <select
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand"
             >
               {SUPPORTED_TIMEZONES.map((tz) => (
                 <option key={tz.value} value={tz.value}>
@@ -132,7 +132,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 timezone,
               })
             }
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+            className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
           >
             Save Scheduling &amp; Production Defaults
           </button>
@@ -140,12 +140,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </section>
 
       {/* Color Catalog */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+          <h2 className="text-base font-semibold text-ink">
             Filament Color Catalog
           </h2>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+          <p className="text-xs text-muted mt-0.5">
             Rename existing v1 colors or add new filament colors for upcoming projects.
           </p>
         </div>
@@ -156,9 +156,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           ))}
         </div>
 
-        <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-end gap-3">
+        <div className="pt-4 border-t border-line flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               New Filament Color Name
             </label>
             <input
@@ -166,18 +166,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               maxLength={50}
               value={newColorName}
               onChange={(e) => setNewColorName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm"
+              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:border-brand"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+            <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Swatch
             </label>
             <input
               type="color"
               value={newColorHex}
               onChange={(e) => setNewColorHex(e.target.value)}
-              className="h-[38px] w-14 p-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] cursor-pointer"
+              className="h-[38px] w-14 p-1 rounded-lg border border-line bg-input cursor-pointer"
             />
           </div>
           <button
@@ -187,7 +187,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onAddColor(newColorName.trim(), newColorHex);
               setNewColorName('');
             }}
-            className="px-4 py-2 text-xs font-semibold rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 h-[38px] whitespace-nowrap"
+            className="px-4 py-2 text-xs font-semibold rounded-lg border border-line bg-surface hover:bg-elevated text-ink h-[38px] whitespace-nowrap transition-colors"
           >
             + Add Color
           </button>
@@ -195,13 +195,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </section>
 
       {/* Data Backup, Restore & Legacy Safety */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+          <h2 className="text-base font-semibold text-ink">
             Cloud Backup, Import &amp; Migration Integrity
           </h2>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-            WOOPP 5.0 stores workspace state at <span className="font-mono-data">users/&#123;uid&#125;/tracker/v5_workspace</span> while leaving your original <span className="font-mono-data">users/&#123;uid&#125;/tracker/main</span> untouched.
+          <p className="text-xs text-muted mt-0.5">
+            WOOPP 5.0 stores workspace state at <span className="font-mono-data text-ink">users/&#123;uid&#125;/tracker/v5_workspace</span> while leaving your original <span className="font-mono-data text-ink">users/&#123;uid&#125;/tracker/main</span> untouched.
           </p>
         </div>
 
@@ -209,7 +209,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             onClick={onExportBackup}
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+            className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
           >
             Download JSON Backup (v5)
           </button>
@@ -217,7 +217,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="px-4 py-2 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+            className="px-4 py-2 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink whitespace-nowrap transition-colors"
           >
             Import Backup (Supports v1 &amp; v5 JSON)
           </button>
@@ -236,7 +236,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             onClick={() => window.print()}
-            className="px-4 py-2 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 whitespace-nowrap"
+            className="px-4 py-2 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink whitespace-nowrap transition-colors"
           >
             Print Production Report
           </button>
@@ -244,20 +244,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             onClick={onClearActivityLog}
-            className="px-4 py-2 text-xs font-medium rounded-lg border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 whitespace-nowrap"
+            className="px-4 py-2 text-xs font-medium rounded-lg border border-error-border bg-surface hover:bg-error-soft text-error-text whitespace-nowrap transition-colors"
           >
             Clear Activity Log
           </button>
         </div>
 
         {legacyLocalData && (
-          <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800">
-            <div className="p-4 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs text-amber-900 dark:text-amber-200 max-w-xl">
+          <div className="pt-4 border-t border-line">
+            <div className="p-4 rounded-xl bg-warning-soft border border-warning-border flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-warning-text max-w-xl">
                 <div className="font-semibold">
                   One-Time Migration for Unsynced Browser Data ({legacyLocalData.format.toUpperCase()})
                 </div>
-                <p className="mt-0.5 text-amber-800 dark:text-amber-300">
+                <p className="mt-0.5">
                   Found {legacyLocalData.projectCount} project(s) and {legacyLocalData.jobCount} plate(s) from a retired Local Workspace session in this browser. Existing browser records remain untouched.
                 </p>
               </div>
@@ -266,7 +266,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <button
                     type="button"
                     onClick={onExportLegacyLocalBackup}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-amber-900 dark:text-amber-200 whitespace-nowrap"
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-warning-border bg-surface hover:bg-elevated text-warning-text whitespace-nowrap transition-colors"
                   >
                     Export Local JSON
                   </button>
@@ -275,7 +275,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <button
                     type="button"
                     onClick={onMigrateLegacyLocalToCloud}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
                   >
                     Migrate to Cloud Firestore
                   </button>
@@ -297,7 +297,7 @@ const EditableColorRow: React.FC<{
   const [hex, setHex] = useState(color.hex);
 
   return (
-    <div className="flex items-center gap-2 p-2.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#12101b]">
+    <div className="flex items-center gap-2 p-2.5 rounded-lg border border-line bg-elevated">
       <input
         type="color"
         aria-label={`Color swatch for ${color.name}`}
@@ -324,7 +324,7 @@ const EditableColorRow: React.FC<{
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
-        className="flex-1 min-w-0 px-2 py-1 text-xs font-medium bg-transparent text-neutral-900 dark:text-white focus:outline-none border-b border-transparent focus:border-[#6c4ce6]"
+        className="flex-1 min-w-0 px-2 py-1 text-xs font-medium bg-transparent text-ink focus:outline-none border-b border-transparent focus:border-brand"
       />
     </div>
   );

@@ -1649,7 +1649,7 @@ export const App: React.FC = () => {
 
   if (!authInitialized) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#faf9fd] dark:bg-[#111018] text-sm text-neutral-500">
+      <div className="min-h-screen flex items-center justify-center bg-canvas text-sm text-muted">
         Connecting to WOOPP Cloud Authentication...
       </div>
     );
@@ -1668,21 +1668,21 @@ export const App: React.FC = () => {
   // Show an explicit Cloud Firestore connection error instead of falling back to local mode
   if (cloudError) {
     return (
-      <div className="min-h-screen flex flex-col justify-center items-center px-4 py-12 bg-[#faf9fd] dark:bg-[#111018]">
-        <div className="w-full max-w-lg bg-white dark:bg-[#171522] border border-red-200 dark:border-red-900/60 rounded-2xl p-8 space-y-5">
+      <div className="min-h-screen flex flex-col justify-center items-center px-4 py-12 bg-canvas">
+        <div className="w-full max-w-lg bg-surface border border-error-border rounded-xl p-8 space-y-5 shadow-xs">
           <div>
-            <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">
+            <div className="text-xs font-semibold tracking-wider uppercase text-error-text mb-1">
               CLOUD FIRESTORE CONNECTION ERROR
             </div>
-            <h1 className="text-xl font-bold text-neutral-900 dark:text-white">
+            <h1 className="text-xl font-bold text-ink">
               Unable to Load Production Workspace
             </h1>
-            <p className="text-sm text-neutral-600 dark:text-neutral-300 mt-1.5">
+            <p className="text-sm text-ink-secondary mt-1.5">
               WOOPP Production System 5.0 runs exclusively in Cloud-Only Mode (<span className="font-mono-data">woopp-tracker</span>) to protect inventory and scheduling integrity. Offline/local fallback is disabled.
             </p>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200/80 dark:border-red-900/60 text-xs font-mono-data text-red-800 dark:text-red-200 break-words">
+          <div className="p-3.5 rounded-lg bg-error-soft border border-error-border text-xs font-mono-data text-error-text break-words">
             {cloudError}
           </div>
 
@@ -1690,14 +1690,14 @@ export const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setConnectionAttempt((n) => n + 1)}
-              className="px-4 py-2.5 rounded-xl bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white text-xs font-semibold transition-colors"
+              className="px-4 py-2.5 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-semibold transition-colors"
             >
               Retry Cloud Connection
             </button>
             <button
               type="button"
               onClick={handleSignOut}
-              className="px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-xs font-medium transition-colors"
+              className="px-4 py-2.5 rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink text-xs font-medium transition-colors"
             >
               Sign out ({user.email})
             </button>
@@ -1710,11 +1710,12 @@ export const App: React.FC = () => {
 
   if (!ready) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[#faf9fd] dark:bg-[#111018] px-4 text-center">
-        <div className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-canvas px-4 text-center">
+        <div className="w-2.5 h-2.5 rounded-sm bg-brand animate-pulse" aria-hidden="true" />
+        <div className="text-sm font-semibold text-ink">
           {syncStatus}
         </div>
-        <div className="text-xs text-neutral-500 dark:text-neutral-400">
+        <div className="text-xs text-muted">
           Authenticated as {user.email} · Project: woopp-tracker
         </div>
       </div>
@@ -1724,7 +1725,7 @@ export const App: React.FC = () => {
   const meta = SECTION_META[activeNav];
 
   return (
-    <div className="min-h-screen flex bg-[#faf9fd] dark:bg-[#111018] text-neutral-900 dark:text-neutral-100">
+    <div className="min-h-screen flex bg-canvas text-ink">
       <Sidebar
         activeNav={activeNav}
         onSelectNav={handleNavigate}
@@ -1744,10 +1745,10 @@ export const App: React.FC = () => {
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
         />
 
-        <main className="flex-1 max-w-[1320px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 max-w-[1360px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           {legacyLocalData && !legacyBannerDismissed && (
-            <div className="mb-6 p-4 rounded-xl bg-amber-50/90 dark:bg-amber-950/35 border border-amber-200 dark:border-amber-800/70 flex flex-wrap items-center justify-between gap-3 no-print">
-              <div className="text-xs text-amber-900 dark:text-amber-200">
+            <div className="mb-6 p-4 rounded-xl bg-warning-soft border border-warning-border flex flex-wrap items-center justify-between gap-3 no-print">
+              <div className="text-xs text-warning-text">
                 <span className="font-semibold">Unsynced browser data found:</span>{' '}
                 {legacyLocalData.projectCount} project(s) and {legacyLocalData.jobCount} plate(s) from the retired Local Workspace exist in this browser. Export a JSON backup or migrate them into Cloud Firestore.
               </div>
@@ -1755,21 +1756,21 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => downloadUnsyncedLocalBackupJson(legacyLocalData)}
-                  className="px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] text-xs font-semibold text-amber-900 dark:text-amber-200 whitespace-nowrap"
+                  className="px-3 py-1.5 rounded-lg border border-warning-border bg-surface hover:bg-elevated text-xs font-semibold text-warning-text whitespace-nowrap transition-colors"
                 >
                   Export Backup (.json)
                 </button>
                 <button
                   type="button"
                   onClick={handleMigrateLegacyLocalToCloud}
-                  className="px-3 py-1.5 rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-xs font-semibold text-white whitespace-nowrap"
+                  className="px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-xs font-semibold text-white whitespace-nowrap transition-colors"
                 >
                   Migrate to Cloud
                 </button>
                 <button
                   type="button"
                   onClick={() => setLegacyBannerDismissed(true)}
-                  className="px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300 hover:underline"
+                  className="px-2 py-1.5 text-xs text-warning-text hover:underline"
                 >
                   Dismiss
                 </button>

@@ -41,17 +41,20 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-center items-center px-4 py-12 bg-[#faf9fd] dark:bg-[#111018]">
-      <div className="w-full max-w-md bg-white dark:bg-[#171522] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-8">
+    <div className="min-h-screen flex flex-col justify-center items-center px-4 py-12 bg-canvas">
+      <div className="w-full max-w-md bg-surface border border-line rounded-xl p-8 shadow-xs">
         <div className="mb-6">
-          <div className="text-xs font-semibold text-[#6c4ce6] dark:text-[#b49eff] mb-1">
-            WOOPP ART &amp; CRAFT
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-2 h-2 rounded-xs bg-brand shrink-0" aria-hidden="true" />
+            <span className="text-xs font-bold tracking-wider uppercase text-brand-text">
+              WOOPP ART &amp; CRAFT
+            </span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-ink">
             Print Production System 5.0
           </h1>
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5">
-            Sign in with your <span className="font-medium">woopp-tracker</span> Firebase Email/Password account to access Cloud Firestore production records.
+          <p className="text-sm text-ink-secondary mt-1.5">
+            Sign in with your <span className="font-mono-data font-medium text-ink">woopp-tracker</span> Firebase Email/Password account to access Cloud Firestore production records.
           </p>
         </div>
 
@@ -59,7 +62,7 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
           <div>
             <label
               htmlFor="loginEmail"
-              className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5"
+              className="block text-xs font-semibold text-ink-secondary mb-1.5"
             >
               Email Address
             </label>
@@ -71,14 +74,14 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#6c4ce6]"
+              className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/25 transition-colors"
             />
           </div>
 
           <div>
             <label
               htmlFor="loginPassword"
-              className="block text-xs font-semibold text-neutral-700 dark:text-neutral-300 mb-1.5"
+              className="block text-xs font-semibold text-ink-secondary mb-1.5"
             >
               Password
             </label>
@@ -90,14 +93,14 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#111018] text-sm text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#6c4ce6]"
+              className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-input text-sm text-ink placeholder:text-muted focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/25 transition-colors"
             />
           </div>
 
           {error && (
             <div
               role="alert"
-              className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-xs font-medium text-red-700 dark:text-red-300"
+              className="p-3 rounded-lg bg-error-soft border border-error-border text-xs font-medium text-error-text"
             >
               {error}
             </div>
@@ -107,7 +110,7 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
             <button
               type="submit"
               disabled={loading}
-              className="w-full px-4 py-2.5 rounded-xl bg-[#6c4ce6] hover:bg-[#5b3cc4] disabled:opacity-50 text-white text-sm font-semibold transition-colors whitespace-nowrap"
+              className="w-full px-4 py-2.5 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-sm font-semibold transition-colors whitespace-nowrap"
             >
               {loading ? 'Signing in...' : 'Sign in to Cloud'}
             </button>
@@ -115,22 +118,22 @@ export const AuthSection: React.FC<AuthSectionProps> = ({ legacyLocalData }) => 
         </form>
 
         {legacyLocalData && (
-          <div className="mt-5 p-3.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 space-y-2.5">
-            <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+          <div className="mt-5 p-3.5 rounded-lg bg-warning-soft border border-warning-border space-y-2.5">
+            <div className="text-xs text-warning-text leading-relaxed">
               <span className="font-semibold">Previous local browser data detected:</span>{' '}
               {legacyLocalData.projectCount} project(s) and {legacyLocalData.jobCount} plate(s) stored in this browser. Sign in above to migrate into Cloud Firestore, or export a JSON backup copy now.
             </div>
             <button
               type="button"
               onClick={() => downloadUnsyncedLocalBackupJson(legacyLocalData)}
-              className="w-full px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-semibold text-amber-900 dark:text-amber-200 transition-colors"
+              className="w-full px-3 py-1.5 rounded-lg border border-warning-border bg-surface hover:bg-elevated text-xs font-semibold text-warning-text transition-colors"
             >
               Download Unsynced Local Backup (.json)
             </button>
           </div>
         )}
 
-        <div className="mt-6 pt-5 border-t border-neutral-100 dark:border-neutral-800 text-xs text-neutral-400 dark:text-neutral-500 flex items-center justify-between">
+        <div className="mt-6 pt-5 border-t border-line text-xs font-mono-data text-muted flex items-center justify-between">
           <span>Cloud Firestore · woopp-tracker</span>
           <span>Firebase Auth Required</span>
         </div>

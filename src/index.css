@@ -1,10 +1,133 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Explicit Bambu Lab-Inspired Industrial Theme Palette */
+  --color-primary-green: #00AE42;
+  --color-primary-hover: #00953A;
+  --color-dark-bg: #181B1B;
+  --color-dark-surface: #242828;
+  --color-dark-elevated: #303535;
+  --color-light-bg: #F3F5F4;
+  --color-light-surface: #FFFFFF;
+  --color-text-light: #181B1B;
+  --color-text-dark: #FFFFFF;
+  --color-text-secondary: #7B8580;
+  --color-border-light: #E0E5E1;
+  --color-border-dark: #404946;
+
+  /* Semantic Status Tokens */
+  --status-success: #00AE42;
+  --status-warning: #D99A24;
+  --status-error: #D94A4A;
+  --status-info: #3488D1;
+  --status-neutral: #7B8580;
+
+  /* Active Mode Semantic Tokens (Light Mode Default) */
+  --woopp-canvas: #F3F5F4;
+  --woopp-surface: #FFFFFF;
+  --woopp-elevated: #F8FAF9;
+  --woopp-recessed: #EAEEEC;
+  --woopp-input: #FFFFFF;
+  --woopp-ink: #181B1B;
+  --woopp-ink-secondary: #5B645F;
+  --woopp-muted: #7B8580;
+  --woopp-border: #E0E5E1;
+  --woopp-brand: #00AE42;
+  --woopp-brand-hover: #00953A;
+  --woopp-brand-text: #007A2E;
+  --woopp-brand-soft: rgba(0, 174, 66, 0.10);
+  --woopp-brand-border: rgba(0, 174, 66, 0.30);
+
+  --woopp-warning-text: #9A6708;
+  --woopp-warning-soft: rgba(217, 154, 36, 0.11);
+  --woopp-warning-border: rgba(217, 154, 36, 0.36);
+
+  --woopp-error-text: #B83232;
+  --woopp-error-soft: rgba(217, 74, 74, 0.10);
+  --woopp-error-border: rgba(217, 74, 74, 0.34);
+
+  --woopp-info-text: #1F6EB0;
+  --woopp-info-soft: rgba(52, 136, 209, 0.10);
+  --woopp-info-border: rgba(52, 136, 209, 0.32);
+}
+
+.dark {
+  --woopp-canvas: #181B1B;
+  --woopp-surface: #242828;
+  --woopp-elevated: #303535;
+  --woopp-recessed: #1D2121;
+  --woopp-input: #303535;
+  --woopp-ink: #FFFFFF;
+  --woopp-ink-secondary: #B8C1BC;
+  --woopp-muted: #8E9893;
+  --woopp-border: #404946;
+  --woopp-brand: #00AE42;
+  --woopp-brand-hover: #00953A;
+  --woopp-brand-text: #2CE06E;
+  --woopp-brand-soft: rgba(0, 174, 66, 0.15);
+  --woopp-brand-border: rgba(0, 174, 66, 0.42);
+
+  --woopp-warning-text: #F0B849;
+  --woopp-warning-soft: rgba(217, 154, 36, 0.14);
+  --woopp-warning-border: rgba(217, 154, 36, 0.42);
+
+  --woopp-error-text: #F27474;
+  --woopp-error-soft: rgba(217, 74, 74, 0.15);
+  --woopp-error-border: rgba(217, 74, 74, 0.42);
+
+  --woopp-info-text: #6EB5F0;
+  --woopp-info-soft: rgba(52, 136, 209, 0.15);
+  --woopp-info-border: rgba(52, 136, 209, 0.42);
+}
+
+@theme inline {
+  --color-brand: var(--woopp-brand);
+  --color-brand-hover: var(--woopp-brand-hover);
+  --color-brand-text: var(--woopp-brand-text);
+  --color-brand-soft: var(--woopp-brand-soft);
+  --color-brand-border: var(--woopp-brand-border);
+
+  --color-canvas: var(--woopp-canvas);
+  --color-surface: var(--woopp-surface);
+  --color-elevated: var(--woopp-elevated);
+  --color-recessed: var(--woopp-recessed);
+  --color-input: var(--woopp-input);
+
+  --color-ink: var(--woopp-ink);
+  --color-ink-secondary: var(--woopp-ink-secondary);
+  --color-muted: var(--woopp-muted);
+  --color-line: var(--woopp-border);
+
+  --color-status-success: #00AE42;
+  --color-status-warning: #D99A24;
+  --color-status-error: #D94A4A;
+  --color-status-info: #3488D1;
+  --color-status-neutral: #7B8580;
+
+  --color-warning-text: var(--woopp-warning-text);
+  --color-warning-soft: var(--woopp-warning-soft);
+  --color-warning-border: var(--woopp-warning-border);
+
+  --color-error-text: var(--woopp-error-text);
+  --color-error-soft: var(--woopp-error-soft);
+  --color-error-border: var(--woopp-error-border);
+
+  --color-info-text: var(--woopp-info-text);
+  --color-info-soft: var(--woopp-info-soft);
+  --color-info-border: var(--woopp-info-border);
+}
+
 @layer base {
-  :root {
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
   }
 
   body {
@@ -13,15 +136,33 @@
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    background-color: #faf9fd;
-    color: #1e1b2e;
+    background-color: var(--woopp-canvas);
+    color: var(--woopp-ink);
   }
 
   .dark body,
   html.dark body {
-    background-color: #111018;
-    color: #f3f1f9;
+    background-color: var(--woopp-canvas);
+    color: var(--woopp-ink);
     letter-spacing: 0.01em;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--woopp-brand);
+    outline-offset: 1px;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--woopp-brand);
   }
 }
 

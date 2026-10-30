@@ -66,15 +66,15 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
 
   return (
     <div
-      className={`min-w-0 max-w-full rounded-lg border border-amber-300 dark:border-amber-700/80 bg-amber-50/80 dark:bg-amber-950/35 ${
+      className={`min-w-0 max-w-full rounded-lg border border-warning-border bg-warning-soft ${
         compact ? 'p-2.5 space-y-2' : 'p-3.5 space-y-2.5'
       } text-xs`}
     >
       <div className="flex flex-wrap items-center justify-between gap-1.5 min-w-0">
-        <span className="font-semibold text-amber-900 dark:text-amber-200 break-words">
+        <span className="font-semibold text-warning-text break-words">
           {ETA_NEEDS_RECALIBRATION_LABEL}
         </span>
-        <div className="flex flex-wrap gap-0.5 rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] p-0.5 text-[11px] min-w-0 max-w-full">
+        <div className="flex flex-wrap gap-0.5 rounded-md border border-warning-border bg-surface p-0.5 text-[11px] min-w-0 max-w-full">
           <button
             type="button"
             disabled={disabled}
@@ -82,10 +82,10 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
               setMode('remaining_duration');
               setInputError(null);
             }}
-            className={`grow px-2 py-0.5 rounded font-medium text-center leading-tight break-words ${
+            className={`grow px-2 py-0.5 rounded font-medium text-center leading-tight break-words transition-colors ${
               mode === 'remaining_duration'
-                ? 'bg-amber-600 text-white'
-                : 'text-neutral-600 dark:text-neutral-300'
+                ? 'bg-status-warning text-white font-semibold'
+                : 'text-ink-secondary hover:text-ink'
             }`}
           >
             Remaining Time
@@ -97,10 +97,10 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
               setMode('actual_start_time');
               setInputError(null);
             }}
-            className={`grow px-2 py-0.5 rounded font-medium text-center leading-tight break-words ${
+            className={`grow px-2 py-0.5 rounded font-medium text-center leading-tight break-words transition-colors ${
               mode === 'actual_start_time'
-                ? 'bg-amber-600 text-white'
-                : 'text-neutral-600 dark:text-neutral-300'
+                ? 'bg-status-warning text-white font-semibold'
+                : 'text-ink-secondary hover:text-ink'
             }`}
           >
             Actual Start
@@ -108,7 +108,7 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
         </div>
       </div>
 
-      <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 break-words">
+      <p className="text-[11px] text-warning-text break-words">
         This active print lacks a calibrated start/finish timestamp. Enter either the remaining print time on Bambu Studio or the actual start time ({timezone}).
       </p>
 
@@ -124,7 +124,7 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
             type="button"
             disabled={disabled}
             onClick={handleApply}
-            className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-700 hover:bg-amber-800 text-white disabled:opacity-50 text-center leading-tight"
+            className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white disabled:opacity-50 text-center leading-tight transition-colors"
           >
             Save ETA
           </button>
@@ -139,13 +139,13 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
               setStartDateTimeInput(e.target.value);
               setInputError(null);
             }}
-            className="w-full sm:w-auto flex-1 min-w-0 max-w-full px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-[#171522] font-mono-data text-xs text-neutral-900 dark:text-white"
+            className="w-full sm:w-auto flex-1 min-w-0 max-w-full px-2 py-1 rounded-lg border border-warning-border bg-input font-mono-data text-xs text-ink"
           />
           <button
             type="button"
             disabled={disabled}
             onClick={handleApply}
-            className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-700 hover:bg-amber-800 text-white disabled:opacity-50 text-center leading-tight"
+            className="w-full sm:w-auto grow sm:grow-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white disabled:opacity-50 text-center leading-tight transition-colors"
           >
             Save Start
           </button>
@@ -153,7 +153,7 @@ export const EtaRecalibrationBox: React.FC<EtaRecalibrationBoxProps> = ({
       )}
 
       {inputError && (
-        <div className="text-[11px] font-medium text-red-600 dark:text-red-400">
+        <div className="text-[11px] font-medium text-error-text">
           {inputError}
         </div>
       )}

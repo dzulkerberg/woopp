@@ -156,9 +156,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
   return (
     <div className="space-y-6">
       {/* Multi-Dimensional Filter Bar */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-5 space-y-4">
+      <section className="bg-surface border border-line rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
+          <h2 className="text-base font-semibold text-ink">
             Analytics &amp; Production Filters
           </h2>
           <div className="flex items-center gap-2">
@@ -172,14 +172,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
                 setMachineFilter('ALL');
                 setColorFilter('ALL');
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink-secondary hover:text-ink transition-colors"
             >
               Reset Filters
             </button>
             <button
               type="button"
               onClick={exportAnalyticsCSV}
-              className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-[#6c4ce6] hover:bg-[#5b3cc4] text-white whitespace-nowrap"
+              className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
             >
               Export CSV Report
             </button>
@@ -188,7 +188,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">
+            <label className="block text-[11px] font-medium text-muted mb-1">
               From Date (DD/MM/YYYY)
             </label>
             <DateInputDDMMYYYY
@@ -198,7 +198,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             />
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">
+            <label className="block text-[11px] font-medium text-muted mb-1">
               To Date (DD/MM/YYYY)
             </label>
             <DateInputDDMMYYYY
@@ -208,11 +208,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             />
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">Project</label>
+            <label className="block text-[11px] font-medium text-muted mb-1">Project</label>
             <select
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
-              className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs"
+              className="w-full px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand"
             >
               <option value="ALL">All Projects</option>
               {workspace.projects.map((p) => (
@@ -223,11 +223,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">Channel</label>
+            <label className="block text-[11px] font-medium text-muted mb-1">Channel</label>
             <select
               value={channelFilter}
               onChange={(e) => setChannelFilter(e.target.value)}
-              className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs"
+              className="w-full px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand"
             >
               <option value="ALL">All Channels</option>
               {SALES_CHANNELS.map((ch) => (
@@ -238,11 +238,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">Machine</label>
+            <label className="block text-[11px] font-medium text-muted mb-1">Machine</label>
             <select
               value={machineFilter}
               onChange={(e) => setMachineFilter(e.target.value)}
-              className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs"
+              className="w-full px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand"
             >
               <option value="ALL">All Machines</option>
               {workspace.machines.map((m) => (
@@ -253,11 +253,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-neutral-500 mb-1">Color</label>
+            <label className="block text-[11px] font-medium text-muted mb-1">Color</label>
             <select
               value={colorFilter}
               onChange={(e) => setColorFilter(e.target.value)}
-              className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-[#111018] text-xs"
+              className="w-full px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand"
             >
               <option value="ALL">All Colors</option>
               {workspace.colors.map((c) => (
@@ -272,77 +272,77 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
 
       {/* Filtered Summary Metrics */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500">Completion Rate</div>
-          <div className="text-2xl font-bold text-neutral-900 dark:text-white font-mono-data mt-1">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">Completion Rate</div>
+          <div className="text-2xl font-bold text-ink font-mono-data mt-1">
             {filteredJobs.length > 0
               ? Math.round((completedJobs.length / filteredJobs.length) * 100)
               : 0}
             %
           </div>
-          <div className="text-xs text-neutral-400 mt-1 font-mono-data">
+          <div className="text-xs text-muted mt-1 font-mono-data">
             {completedJobs.length} / {filteredJobs.length} plates
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500">Keycap Yield</div>
-          <div className="text-2xl font-bold text-[#6c4ce6] dark:text-[#b49eff] font-mono-data mt-1">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">Keycap Yield</div>
+          <div className="text-2xl font-bold text-brand-text font-mono-data mt-1">
             {producedKeycaps.toLocaleString()} pcs
           </div>
-          <div className="text-xs text-neutral-400 mt-1 font-mono-data">
+          <div className="text-xs text-muted mt-1 font-mono-data">
             Target: {plannedKeycaps.toLocaleString()} pcs
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500">Logged Print Hours</div>
-          <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 font-mono-data mt-1">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">Logged Print Hours</div>
+          <div className="text-2xl font-bold text-info-text font-mono-data mt-1">
             {(actualPrintMins / 60).toFixed(1)} hrs
           </div>
-          <div className="text-xs text-neutral-400 mt-1 font-mono-data">
+          <div className="text-xs text-muted mt-1 font-mono-data">
             Planned: {(estPrintMins / 60).toFixed(1)} hrs
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-xl p-5">
-          <div className="text-xs text-neutral-500">Plates w/ Failures</div>
-          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 font-mono-data mt-1">
+        <div className="bg-surface border border-line rounded-xl p-5">
+          <div className="text-xs font-medium text-muted">Plates w/ Failures</div>
+          <div className="text-2xl font-bold text-warning-text font-mono-data mt-1">
             {failedJobs.length}
           </div>
-          <div className="text-xs text-neutral-400 mt-1">Tracked reprints</div>
+          <div className="text-xs text-muted mt-1">Tracked reprints</div>
         </div>
       </div>
 
       {/* Machine Utilization & Top Letter Demand */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
-          <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+        <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
+          <h3 className="text-base font-semibold text-ink">
             Machine Utilization Breakdown
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="border-b border-neutral-200 dark:border-neutral-800 text-neutral-500">
-                  <th className="py-2 pr-3 font-medium">Printer</th>
-                  <th className="py-2 px-3 font-medium text-right">Done Plates</th>
-                  <th className="py-2 px-3 font-medium text-right">Failed</th>
-                  <th className="py-2 pl-3 font-medium text-right">Runtime</th>
+                <tr className="border-b border-line text-muted">
+                  <th className="py-2 pr-3 font-semibold">Printer</th>
+                  <th className="py-2 px-3 font-semibold text-right">Done Plates</th>
+                  <th className="py-2 px-3 font-semibold text-right">Failed</th>
+                  <th className="py-2 pl-3 font-semibold text-right">Runtime</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70 font-mono-data">
+              <tbody className="divide-y divide-line font-mono-data">
                 {workspace.machines.map((m) => (
-                  <tr key={m.id}>
-                    <td className="py-2.5 pr-3 font-sans font-medium text-neutral-900 dark:text-white">
+                  <tr key={m.id} className="hover:bg-elevated transition-colors">
+                    <td className="py-2.5 pr-3 font-sans font-medium text-ink">
                       {m.name}
                     </td>
-                    <td className="py-2.5 px-3 text-right text-neutral-700 dark:text-neutral-300">
+                    <td className="py-2.5 px-3 text-right text-ink-secondary">
                       {m.totalCompletedPlates}
                     </td>
-                    <td className="py-2.5 px-3 text-right text-red-600 dark:text-red-400">
+                    <td className="py-2.5 px-3 text-right text-error-text">
                       {m.totalFailedPlates}
                     </td>
-                    <td className="py-2.5 pl-3 text-right text-neutral-800 dark:text-neutral-200">
+                    <td className="py-2.5 pl-3 text-right text-ink">
                       {Math.floor(m.totalPrintMinutes / 60)}h {m.totalPrintMinutes % 60}m
                     </td>
                   </tr>
@@ -352,8 +352,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
           </div>
         </section>
 
-        <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
-          <h3 className="text-base font-semibold text-neutral-900 dark:text-white">
+        <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
+          <h3 className="text-base font-semibold text-ink">
             Top Requested Alphabet Volume
           </h3>
           <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
@@ -363,16 +363,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
               return (
                 <div key={item.letter} className="space-y-1">
                   <div className="flex items-center justify-between text-xs font-mono-data">
-                    <span className="font-bold text-neutral-900 dark:text-white">
+                    <span className="font-bold text-ink">
                       Letter {item.letter}
                     </span>
-                    <span className="text-neutral-600 dark:text-neutral-300">
+                    <span className="text-ink-secondary">
                       {item.produced} / {item.planned} pcs produced
                     </span>
                   </div>
-                  <div className="h-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-recessed overflow-hidden">
                     <div
-                      className="h-full bg-[#6c4ce6]"
+                      className="h-full bg-brand"
                       style={{ width: `${widthPct}%` }}
                     />
                   </div>
@@ -381,20 +381,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
             })}
           </div>
 
-          <div className="pt-4 border-t border-neutral-100 dark:border-neutral-800 space-y-2.5">
-            <h4 className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+          <div className="pt-4 border-t border-line space-y-2.5">
+            <h4 className="text-xs font-semibold text-ink-secondary">
               Charm Keycap Production Volume
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {charmDemandRanking.map((ch) => (
                 <div
                   key={ch.id}
-                  className="flex items-center justify-between px-3 py-2 rounded-xl bg-neutral-50 dark:bg-[#12101b] border border-neutral-200/70 dark:border-neutral-800 text-xs font-mono-data"
+                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-elevated border border-line text-xs font-mono-data"
                 >
-                  <span className="font-sans font-semibold text-neutral-800 dark:text-neutral-200">
+                  <span className="font-sans font-semibold text-ink">
                     {ch.symbol} {ch.label}
                   </span>
-                  <span className="text-[#5b3cc4] dark:text-[#c7b8ff] font-semibold">
+                  <span className="text-brand-text font-semibold">
                     {ch.produced} / {ch.planned} pcs
                   </span>
                 </div>
