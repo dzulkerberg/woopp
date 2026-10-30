@@ -2,8 +2,6 @@ import React from 'react';
 import {
   BarChart3,
   Boxes,
-  CalendarRange,
-  Clock,
   FolderKanban,
   Grid,
   LayoutDashboard,
@@ -29,10 +27,12 @@ interface SidebarProps {
   onSetMobileOpen: (open: boolean) => void;
 }
 
-const NAV_ITEMS: { id: NavSection; label: string; icon: React.FC<{ className?: string }> }[] = [
+export const NAV_ITEMS: {
+  id: NavSection;
+  label: string;
+  icon: React.FC<{ className?: string }>;
+}[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'eta', label: 'ETA Dashboard', icon: Clock },
-  { id: 'timeline', label: 'Production Timeline', icon: CalendarRange },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'planner', label: 'Auto Plate Planner', icon: Grid },
   { id: 'queue', label: 'Print Queue', icon: ListTodo },

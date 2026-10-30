@@ -253,8 +253,6 @@ export interface LegacyTrackerState {
 
 export type NavSection =
   | 'dashboard'
-  | 'eta'
-  | 'timeline'
   | 'projects'
   | 'planner'
   | 'queue'

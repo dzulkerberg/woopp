@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { countLetters, countPlateKeycaps } from '../constants';
 import { KanbanStage, NavSection, ProductionJob, ProductionWorkspaceV5 } from '../types';
 import {
@@ -55,6 +55,10 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
 
   const [bufferDraft, setBufferDraft] = useState<number>(turnaroundBufferMinutes);
 
+  useEffect(() => {
+    setBufferDraft(turnaroundBufferMinutes);
+  }, [turnaroundBufferMinutes]);
+
   return (
     <div className="space-y-6">
       {/* Deadline Warning Banner */}
@@ -69,10 +73,10 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => onNavigate('timeline')}
+            onClick={() => onNavigate('queue')}
             className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold whitespace-nowrap"
           >
-            Inspect Timeline
+            Manage Print Queue
           </button>
         </div>
       )}
@@ -167,7 +171,7 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
       </div>
 
       {/* Live Printing Countdown Cards (with Pause / Update Remaining / Resume / Complete) */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
@@ -222,7 +226,7 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
       </section>
 
       {/* Project Completion ETA Table (Parallel-Aware: Final Outstanding Job) */}
-      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-4">
+      <section className="bg-white dark:bg-[#171522] border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-neutral-900 dark:text-white">
@@ -234,10 +238,10 @@ export const EtaDashboardView: React.FC<EtaDashboardViewProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => onNavigate('timeline')}
+            onClick={() => onNavigate('queue')}
             className="text-xs font-semibold text-[#6c4ce6] dark:text-[#b49eff] hover:underline whitespace-nowrap"
           >
-            View Machine Timeline →
+            View Print Queue →
           </button>
         </div>
 

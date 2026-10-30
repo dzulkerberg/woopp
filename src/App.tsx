@@ -79,9 +79,7 @@ import {
 } from './utils/dateFormat';
 import { Sidebar, TopHeader } from './components/Sidebar';
 import { AuthSection } from './components/AuthSection';
-import { DashboardView } from './components/DashboardView';
 import { EtaDashboardView } from './components/EtaDashboardView';
-import { ProductionTimelineView } from './components/ProductionTimelineView';
 import { ProjectsView } from './components/ProjectsView';
 import { AutoPlannerView } from './components/AutoPlannerView';
 import { KanbanQueueView } from './components/KanbanQueueView';
@@ -97,48 +95,11 @@ import {
   DeletePlateConfirmModal,
 } from './components/QueueLifecycleModals';
 
-const SECTION_META: Record<NavSection, { title: string; subtitle: string }> = {
-  dashboard: {
-    title: 'Dashboard',
-    subtitle: 'Active projects, fleet utilization, and production progress',
-  },
-  eta: {
-    title: 'Smart ETA Dashboard',
-    subtitle: 'Live countdowns, next free Bambu printer, and parallel project completion ETAs',
-  },
-  timeline: {
-    title: 'Production Timeline',
-    subtitle: 'Multi-project Gantt schedule, turnaround buffers, and deadline tracking',
-  },
-  projects: {
-    title: 'Projects',
-    subtitle: 'Multi-channel production plans, priorities, and deadlines',
-  },
-  planner: {
-    title: 'Auto Plate Planner',
-    subtitle: 'Custom A–Z alphabet & charm keycap grid with exact-capacity plate distribution',
-  },
-  queue: {
-    title: 'Print Queue',
-    subtitle: 'Visual Kanban workflow, Bambu Studio durations, and live print timers',
-  },
-  machines: {
-    title: 'Machines',
-    subtitle: 'Bambu fleet status, overlap guard, maintenance windows, and speed profiles',
-  },
-  inventory: {
-    title: 'Inventory',
-    subtitle: 'Produced, reserved, and available keycap stock with audit ledger',
-  },
-  analytics: {
-    title: 'Analytics',
-    subtitle: 'Filtered yield reports, machine runtime, and CSV export',
-  },
-  settings: {
-    title: 'Settings',
-    subtitle: 'Timezone, turnaround buffers, filament colors, and cloud/JSON backups',
-  },
-};
+import {
+  buildNavHash,
+  resolveNavSection,
+  SECTION_META,
+} from './utils/navigation';
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -154,7 +115,10 @@ export const App: React.FC = () => {
 
   const initialWorkspace = useMemo(() => createFreshWorkspaceV5('pending-cloud-auth'), []);
   const [workspace, setWorkspace] = useState<ProductionWorkspaceV5>(initialWorkspace);
-  const [activeNav, setActiveNav] = useState<NavSection>('dashboard');
+  const [activeNav, setActiveNav] = useState<NavSection>(() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    return resolveNavSection(window.location.hash || window.location.pathname);
+  });
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [modal, setModal] = useState<ModalConfig | null>(null);
@@ -258,6 +222,60 @@ export const App: React.FC = () => {
       setSelectedProjectId(active[0].id);
     }
   }, [workspace.projects, selectedProjectId]);
+
+  const handleNavigate = useCallback((target: NavSection | string) => {
+    const resolved = resolveNavSection(target);
+    setActiveNav(resolved);
+    if (typeof window !== 'undefined') {
+      const cleanPath = window.location.pathname.replace(
+        /^\/(eta|eta-dashboard|smart-eta|timeline|production-timeline)\/?$/i,
+        '/'
+      );
+      const nextHash = buildNavHash(resolved);
+      const nextUrl = `${cleanPath}${window.location.search}${nextHash}`;
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (nextUrl !== currentUrl) {
+        window.history.replaceState(null, '', nextUrl);
+      }
+    }
+  }, []);
+
+  // Preserve Dashboard bookmarks and redirect legacy #eta / /eta / #timeline links to Dashboard
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const syncFromLocation = () => {
+      const raw = window.location.hash || window.location.pathname;
+      const resolved = resolveNavSection(raw);
+      setActiveNav(resolved);
+
+      const lowerHash = window.location.hash.toLowerCase();
+      const lowerPath = window.location.pathname.toLowerCase();
+      const isLegacyRoute =
+        lowerHash.includes('eta') ||
+        lowerHash.includes('timeline') ||
+        lowerHash === '#dashboard' ||
+        lowerHash === '#/dashboard' ||
+        /^\/(eta|eta-dashboard|smart-eta|timeline|production-timeline)\/?$/.test(lowerPath);
+
+      if (isLegacyRoute) {
+        const cleanPath = window.location.pathname.replace(
+          /^\/(eta|eta-dashboard|smart-eta|timeline|production-timeline)\/?$/i,
+          '/'
+        );
+        const nextHash = buildNavHash(resolved);
+        window.history.replaceState(null, '', `${cleanPath}${window.location.search}${nextHash}`);
+      }
+    };
+
+    syncFromLocation();
+    window.addEventListener('hashchange', syncFromLocation);
+    window.addEventListener('popstate', syncFromLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncFromLocation);
+      window.removeEventListener('popstate', syncFromLocation);
+    };
+  }, []);
 
   const showAlert = useCallback((message: string, title?: string) => {
     setModal({
@@ -1685,17 +1703,13 @@ export const App: React.FC = () => {
   const getHeaderPrimaryAction = () => {
     switch (activeNav) {
       case 'dashboard':
-        return { label: 'Open ETA Dashboard', onClick: () => setActiveNav('eta') };
-      case 'eta':
-        return { label: 'Production Timeline', onClick: () => setActiveNav('timeline') };
-      case 'timeline':
-        return { label: 'Print Queue', onClick: () => setActiveNav('queue') };
+        return { label: 'View Print Queue', onClick: () => handleNavigate('queue') };
       case 'projects':
-        return { label: 'Open Plate Planner', onClick: () => setActiveNav('planner') };
+        return { label: 'Open Plate Planner', onClick: () => handleNavigate('planner') };
       case 'planner':
-        return { label: 'View Print Queue', onClick: () => setActiveNav('queue') };
+        return { label: 'View Print Queue', onClick: () => handleNavigate('queue') };
       case 'queue':
-        return { label: 'Production Timeline', onClick: () => setActiveNav('timeline') };
+        return { label: 'Manage Machines', onClick: () => handleNavigate('machines') };
       default:
         return { label: 'Backup JSON', onClick: handleExportBackup };
     }
@@ -1705,7 +1719,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen flex bg-[#faf9fd] dark:bg-[#111018] text-neutral-900 dark:text-neutral-100">
       <Sidebar
         activeNav={activeNav}
-        onSelectNav={setActiveNav}
+        onSelectNav={handleNavigate}
         theme={workspace.settings.theme}
         onToggleTheme={handleToggleTheme}
         syncStatus={syncStatus}
@@ -1756,36 +1770,17 @@ export const App: React.FC = () => {
             </div>
           )}
           {activeNav === 'dashboard' && (
-            <DashboardView
-              workspace={workspace}
-              schedule={schedule}
-              onNavigate={setActiveNav}
-              onSelectProject={setSelectedProjectId}
-            />
-          )}
-
-          {activeNav === 'eta' && (
             <EtaDashboardView
               workspace={workspace}
               schedule={schedule}
               isAdmin={isAdmin}
               busyJobIds={busyJobIds}
-              onNavigate={setActiveNav}
+              onNavigate={handleNavigate}
               onSelectProject={setSelectedProjectId}
               onPauseOrResume={handlePauseOrResume}
               onTransitionStage={handleTransitionStage}
               onRequestCancelPrinting={handleRequestCancelPrinting}
               onUpdateBufferMinutes={handleUpdateBufferMinutes}
-            />
-          )}
-
-          {activeNav === 'timeline' && (
-            <ProductionTimelineView
-              workspace={workspace}
-              schedule={schedule}
-              onAssignMachineToQueuedJob={(jobId, machineId) =>
-                handleUpdateJobMetadata(jobId, { machineId })
-              }
             />
           )}
 
@@ -1796,7 +1791,7 @@ export const App: React.FC = () => {
               onSelectProject={setSelectedProjectId}
               onSaveProject={handleSaveProject}
               onUpdateProjectStatus={handleUpdateProjectStatus}
-              onNavigate={setActiveNav}
+              onNavigate={handleNavigate}
             />
           )}
 
