@@ -2,29 +2,110 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Pillar 1: Global Default-Deny Safety Net
+    // Pillar 1: Global Default-Deny Safety Net (no broad wildcard overrides anywhere below)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Reusable Hardened Helpers
+    // -------------------------------------------------------------------------
+    // Core Identity, Tenancy Model & Primitive Guards
+    // -------------------------------------------------------------------------
     function isSignedIn() {
       return request.auth != null;
     }
 
+    function isNonAnonToken(tok) {
+      return !('firebase' in tok) ||
+        !('sign_in_provider' in tok.firebase) ||
+        tok.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isNonAnonymousUser() {
+      return isSignedIn() && isNonAnonToken(request.auth.token);
+    }
+
+    function isPatternString(val, pattern) {
+      return val is string && val.matches(pattern);
+    }
+
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string &&
+        id.matches('^[a-zA-Z0-9_\\-]{1,128}$');
+    }
+
+    function isValidIsoTimestampString(ts) {
+      return ts is string &&
+        ts.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$');
+    }
+
+    function isValidWooppSku(sku) {
+      return sku is string &&
+        sku.matches('^WOOPP-[A-Z0-9]{8}$');
+    }
+
+    // Strict HTTPS external image URL validation (Google RE2 linear-time bounded regex):
+    // - Rejects data: base64 URIs, http://, blob:, relative paths, whitespace, hostless URLs, and >2048 chars.
+    // - Bounded domain labels ({1,63}, max 7 labels) + optional port + bounded path/query ({0,980}{0,980})
+    //   strictly caps total URL length <= 2,048 characters while staying under RE2's 1,000 single-quantifier cap.
+    function isHttpsUrlPattern(url, httpsPattern) {
+      return url is string && url.matches(httpsPattern);
+    }
+
+    function isHttpsImageUrl(url) {
+      return url is string &&
+        url.size() <= 2048 &&
+        url.matches('^https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]{0,980}[^\\s]{0,980})?$');
+    }
+
+    function isOptionalHttpsImageUrl(url) {
+      return url == null || isHttpsImageUrl(url);
+    }
+
+    function isOptionalPriceMyr(price) {
+      return price == null || math.abs(price - 5000000) <= 5000000;
+    }
+
+    function isValidSortOrder(n) {
+      return n is int && math.abs(n - 5000) <= 5000;
+    }
+
+    // -------------------------------------------------------------------------
+    // Workspace Authorization Model (Intentionally Single-Owner Per-UID)
+    // -------------------------------------------------------------------------
+    // ARCHITECTURE NOTE:
+    // WOOPP Production System 5.0 / 6.0 is intentionally architected as a
+    // single-owner per-UID workspace application:
+    //   1. Every Firestore document path in the client (`App.tsx` and
+    //      `productStudioService.ts`) is strictly scoped under
+    //      `/users/{request.auth.uid}/...` (tracker/main, tracker/v5_workspace,
+    //      catalogCategories, catalogProducts, catalogSkus, catalogPlateSettings).
+    //   2. There is no cross-UID workspace switcher, shared multi-tenant collection,
+    //      or `/users/{uid}` role-assignment collection in the application.
+    //   3. Note that `workspace.settings.adminEmails` (and `PRIMARY_ADMIN_EMAIL`
+    //      `hellodzul@gmail.com`) in `productionEngine.ts` is an in-session UI/engine
+    //      safeguard for destructive queue mutations within the signed-in owner's
+    //      workspace—not a cross-UID Firestore sharing mechanism.
+    //   4. `email_verified` and hardcoded email restrictions are intentionally NOT
+    //      enforced here so existing Firebase Email/Password accounts (including
+    //      `hellodzul@gmail.com`) retain uninterrupted read/write access without
+    //      silent permission changes.
+    //   5. If multi-user shared-workspace RBAC is ever introduced in a future version,
+    //      it must use dedicated server-managed custom claims or an immutable
+    //      admin-managed membership subcollection rather than trusting client-writable
+    //      fields inside `v5_workspace`.
+    function isAuthOwner(a, userId) {
+      return a != null &&
+        a.uid == userId &&
+        isNonAnonToken(a.token) &&
+        userId.matches('^[a-zA-Z0-9_\\-]{1,128}$');
     }
 
     function isOwner(userId) {
-      return isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      return isAuthOwner(request.auth, userId);
     }
 
-    // Restrict workspace & destructive queue mutations to non-anonymous authenticated workspace admins
     function isAuthorizedWorkspaceAdmin(userId) {
-      return isOwner(userId) &&
-        (!('firebase' in request.auth.token) ||
-          request.auth.token.firebase.sign_in_provider != 'anonymous');
+      return isAuthOwner(request.auth, userId);
     }
 
     function incoming() {
@@ -35,18 +116,352 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Legacy v1 Tracker Document Validation (backward-compatible with woopp-tracker v1)
+    // -------------------------------------------------------------------------
+    // Bounded List Validation Helpers (Product Images, Options, Variants)
+    // Full validation across ALL allowed indices (images[0..11], options[0..3],
+    // option.values[0..11], variants[0..11], and variant.optionValues[0..3]).
+    // Engineered with eager parameter memoization (zero multi-referenced `let`
+    // thunks), <= 6 arguments per helper (limit: 7), call depth <= 7 (limit: 20),
+    // strict `joined.split() == list` type & delimiter bijection (blocking CEL
+    // List.join() ToString coercion on non-strings and trailing-empty split
+    // tricks), and worst-case real CEL evaluation well below 1,000 expressions.
+    // -------------------------------------------------------------------------
+    function isExactSplitMatch(items, joined, pattern) {
+      return joined.split('\n') == items && joined.matches(pattern);
+    }
+
+    function isOptionHdrValid(hdr, pattern) {
+      return isExactSplitMatch(hdr, hdr.join('\n'), pattern);
+    }
+
+    function isValidImagesJoined(images, joined) {
+      return joined.split(' ') == images &&
+        !joined.matches('.*[^\\s]{1000}[^\\s]{1000}[^\\s]{49}.*') &&
+        joined.matches('^https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?( https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?){0,11}$');
+    }
+
+    function isValidProductImagesList(images) {
+      return images is list &&
+        (images.size() == 0 || isValidImagesJoined(images, images.join(' ')));
+    }
+
+    // Validates EVERY allowed option value string (trimmed 1..80 chars, single-line) across indices 0..11:
+    // - `joined.split('\n') == vals` enforces that `vals` is a list of genuine strings (blocks int/float/bool/null/path
+    //   ToString coercion in List.join) AND blocks embedded `\n` or trailing-empty delimiter tricks.
+    function areAllOptionValuesValid(vals) {
+      return isExactSplitMatch(
+        vals,
+        vals.join('\n'),
+        '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){0,11}$'
+      );
+    }
+
+    // Full ProductOptionDefinition validation:
+    // Validates map structure & exact 4 required/allowed keys (size == 4 + all 4 keys accessed),
+    // id (string 1..128 alphanumeric/hyphen/underscore), name (trimmed single-line string 1..60 chars),
+    // sortOrder (int 0..10000), and ALL allowed option values (1..12 strings, each trimmed 1..80 chars).
+    function isValidSingleOptionItem(o) {
+      return o.size() == 4 &&
+        isOptionHdrValid(
+          [string(o.sortOrder + 10000), o.id, o.name],
+          '^(1[0-9]{4}|20000)\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,58}[^\\s])?$'
+        ) &&
+        areAllOptionValuesValid(o.values);
+    }
+
+    function isValid4OptionItems(o0, o1, o2, o3) {
+      return [o0.size(), o1.size(), o2.size(), o3.size()].hasOnly([4]) &&
+        isOptionHdrValid(
+          [
+            string(o0.sortOrder + 10000), string(o0.values.size()), o0.id, o0.name,
+            string(o1.sortOrder + 10000), string(o1.values.size()), o1.id, o1.name,
+            string(o2.sortOrder + 10000), string(o2.values.size()), o2.id, o2.name,
+            string(o3.sortOrder + 10000), string(o3.values.size()), o3.id, o3.name
+          ],
+          '^(1[0-9]{4}|20000)\n([1-9]|1[0-2])\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,58}[^\\s])?(\n(1[0-9]{4}|20000)\n([1-9]|1[0-2])\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,58}[^\\s])?){3}$'
+        ) &&
+        isOptionHdrValid(
+          o0.values.concat(o1.values).concat(o2.values).concat(o3.values),
+          '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){3,47}$'
+        );
+    }
+
+    function isValidOptionsBySize(options, sz) {
+      return sz == 4
+        ? isValid4OptionItems(options[0], options[1], options[2], options[3])
+        : (
+            sz <= 3 &&
+            (sz < 1 || isValidSingleOptionItem(options[0])) &&
+            (sz < 2 || isValidSingleOptionItem(options[1])) &&
+            (sz < 3 || isValidSingleOptionItem(options[2]))
+          );
+    }
+
+    function isValidProductOptionsList(options) {
+      return options is list && isValidOptionsBySize(options, options.size());
+    }
+
+    // Nested variant.optionValues map validation (0..4 entries, every key trimmed 1..60 chars,
+    // every value genuine trimmed string 1..80 chars with zero newlines/CRs or non-string coercion):
+    function areOptionKeyValListsValid(keys, vals, keyPattern, valPattern) {
+      return keys.size() == 0 || (
+        isExactSplitMatch(keys, keys.join('\n'), keyPattern) &&
+        isExactSplitMatch(vals, vals.join('\n'), valPattern)
+      );
+    }
+
+    function isValidOptionMap(m) {
+      return m.size() <= 4 &&
+        areOptionKeyValListsValid(
+          m.keys(),
+          m.values(),
+          '^[^\\s]([^\\n\\r]{0,58}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,58}[^\\s])?){0,3}$',
+          '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){0,3}$'
+        );
+    }
+
+    // Validates space-joined numeric/URL triples [sortOrder+10000, priceMyr, imageUrl, ...]:
+    // - `!('null' in nu)` blocks literal string 'null' in imageUrl/priceMyr without extra field lookups.
+    // - Single-space delimiter bijection holds because each valid triple has 3 non-empty non-whitespace tokens.
+    // - Bounding guard blocks any URL token >= 2,049 characters.
+    function isValidJoinedNumsAndUrls(nu, j, pattern) {
+      return !('null' in nu) &&
+        j.matches(pattern) &&
+        !j.matches('.*[^\\s]{1000}[^\\s]{1000}[^\\s]{49}.*');
+    }
+
+    function isValidNumsAndUrls(nu, pattern) {
+      return isValidJoinedNumsAndUrls(nu, nu.join(' '), pattern);
+    }
+
+    // Full ProductVariant validation applied identically to EVERY variant at indices 0..11:
+    // Validates map structure & exact 6 required/allowed keys (size == 6 + all 6 keys accessed),
+    // string id (1..128), trimmed single-line string label (1..200), optionValues map (0..4 valid entries),
+    // optional finite priceMyr (0..10,000,000), optional HTTPS imageUrl (<=2048 chars), and int sortOrder (0..10000).
+    function isValidSingleVariantItem(v) {
+      return v.size() == 6 &&
+        isValidOptionMap(v.optionValues) &&
+        !(v.priceMyr is string) &&
+        isOptionHdrValid(
+          [v.id, v.label],
+          '^[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?$'
+        ) &&
+        isValidNumsAndUrls(
+          [v.sortOrder + 10000, v.priceMyr, v.imageUrl],
+          '^(1[0-9]{4}|20000) (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)$'
+        );
+    }
+
+    function are4OptionMapsValid(m0, m1, m2, m3) {
+      return [m0.size(), m1.size(), m2.size(), m3.size()].hasOnly([0, 1, 2, 3, 4]) &&
+        areOptionKeyValListsValid(
+          m0.keys().concat(m1.keys()).concat(m2.keys()).concat(m3.keys()),
+          m0.values().concat(m1.values()).concat(m2.values()).concat(m3.values()),
+          '^[^\\s]([^\\n\\r]{0,58}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,58}[^\\s])?){0,15}$',
+          '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){0,15}$'
+        );
+    }
+
+    function isValid4VariantItems(v0, v1, v2, v3) {
+      return [v0.size(), v1.size(), v2.size(), v3.size()].hasOnly([6]) &&
+        are4OptionMapsValid(v0.optionValues, v1.optionValues, v2.optionValues, v3.optionValues) &&
+        !(true in [v0.priceMyr is string, v1.priceMyr is string, v2.priceMyr is string, v3.priceMyr is string]) &&
+        isOptionHdrValid(
+          [v0.id, v0.label, v1.id, v1.label, v2.id, v2.label, v3.id, v3.label],
+          '^[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?(\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?){3}$'
+        ) &&
+        isValidNumsAndUrls(
+          [
+            v0.sortOrder + 10000, v0.priceMyr, v0.imageUrl,
+            v1.sortOrder + 10000, v1.priceMyr, v1.imageUrl,
+            v2.sortOrder + 10000, v2.priceMyr, v2.imageUrl,
+            v3.sortOrder + 10000, v3.priceMyr, v3.imageUrl
+          ],
+          '^(1[0-9]{4}|20000) (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)( (1[0-9]{4}|20000) (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)){3}$'
+        );
+    }
+
+    function pack6VariantItems(v0, v1, v2, v3, v4, v5) {
+      return [
+        !(true in [
+          v0.priceMyr is string,
+          v1.priceMyr is string,
+          v2.priceMyr is string,
+          v3.priceMyr is string,
+          v4.priceMyr is string,
+          v5.priceMyr is string
+        ]),
+        v0.optionValues.keys().concat(v1.optionValues.keys()).concat(v2.optionValues.keys()).concat(v3.optionValues.keys()).concat(v4.optionValues.keys()).concat(v5.optionValues.keys()),
+        v0.optionValues.values().concat(v1.optionValues.values()).concat(v2.optionValues.values()).concat(v3.optionValues.values()).concat(v4.optionValues.values()).concat(v5.optionValues.values()),
+        [
+          v0.id, v0.label,
+          v1.id, v1.label,
+          v2.id, v2.label,
+          v3.id, v3.label,
+          v4.id, v4.label,
+          v5.id, v5.label
+        ],
+        [
+          v0.size(), v0.sortOrder + 10000, v0.optionValues.size(), v0.priceMyr, v0.imageUrl,
+          v1.size(), v1.sortOrder + 10000, v1.optionValues.size(), v1.priceMyr, v1.imageUrl,
+          v2.size(), v2.sortOrder + 10000, v2.optionValues.size(), v2.priceMyr, v2.imageUrl,
+          v3.size(), v3.sortOrder + 10000, v3.optionValues.size(), v3.priceMyr, v3.imageUrl,
+          v4.size(), v4.sortOrder + 10000, v4.optionValues.size(), v4.priceMyr, v4.imageUrl,
+          v5.size(), v5.sortOrder + 10000, v5.optionValues.size(), v5.priceMyr, v5.imageUrl
+        ]
+      ];
+    }
+
+    function check1VariantPack(p) {
+      return p[0] &&
+        areOptionKeyValListsValid(
+          p[1],
+          p[2],
+          '^[^\\s]([^\\n\\r]{0,58}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,58}[^\\s])?){0,23}$',
+          '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){0,23}$'
+        ) &&
+        isOptionHdrValid(
+          p[3],
+          '^[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?(\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?){5}$'
+        ) &&
+        isValidNumsAndUrls(
+          p[4],
+          '^6 (1[0-9]{4}|20000) [0-4] (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)( 6 (1[0-9]{4}|20000) [0-4] (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)){5}$'
+        );
+    }
+
+    function are48OptionKeyValsValid(keys, vals) {
+      return keys.size() == 0 || (
+        isExactSplitMatch(
+          keys,
+          keys.join('\n'),
+          '^[^\\s]([^\\n\\r]{0,58}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,58}[^\\s])?){0,47}$'
+        ) &&
+        isExactSplitMatch(
+          vals,
+          vals.join('\n'),
+          '^[^\\s]([^\\n\\r]{0,78}[^\\s])?(\\n[^\\s]([^\\n\\r]{0,78}[^\\s])?){0,47}$'
+        )
+      );
+    }
+
+    function check2VariantPacks(p0, p1) {
+      return p0[0] &&
+        p1[0] &&
+        are48OptionKeyValsValid(p0[1].concat(p1[1]), p0[2].concat(p1[2])) &&
+        isOptionHdrValid(
+          p0[3].concat(p1[3]),
+          '^[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?(\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,198}[^\\s])?){11}$'
+        ) &&
+        isValidNumsAndUrls(
+          p0[4].concat(p1[4]),
+          '^6 (1[0-9]{4}|20000) [0-4] (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)( 6 (1[0-9]{4}|20000) [0-4] (null|[0-9]{1,7}(\\.[0-9]+)?|10000000(\\.0+)?|1\\.0E7) (null|https://[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63}){1,6}(:[0-9]{1,5})?([/?#][^\\s]*)?)){11}$'
+        );
+    }
+
+    function pack6VariantsAt(vars, i) {
+      return pack6VariantItems(vars[i], vars[i + 1], vars[i + 2], vars[i + 3], vars[i + 4], vars[i + 5]);
+    }
+
+    function isValidVariantsBySize(variants, sz) {
+      return sz >= 7
+        ? (
+            sz <= 12 &&
+            check2VariantPacks(
+              pack6VariantItems(variants[0], variants[1], variants[2], variants[3], variants[4], variants[5]),
+              sz == 12
+                ? pack6VariantItems(variants[6], variants[7], variants[8], variants[9], variants[10], variants[11])
+                : (
+                    sz == 11
+                      ? pack6VariantItems(variants[5], variants[6], variants[7], variants[8], variants[9], variants[10])
+                      : pack6VariantsAt(variants, sz - 6)
+                  )
+            )
+          )
+        : (
+            sz == 6
+              ? check1VariantPack(
+                  pack6VariantItems(variants[0], variants[1], variants[2], variants[3], variants[4], variants[5])
+                )
+              : (
+                  sz >= 4
+                    ? (
+                        isValid4VariantItems(variants[0], variants[1], variants[2], variants[3]) &&
+                        (sz == 4 || isValidSingleVariantItem(variants[4]))
+                      )
+                    : (
+                        (sz < 1 || isValidSingleVariantItem(variants[0])) &&
+                        (sz < 2 || isValidSingleVariantItem(variants[1])) &&
+                        (sz < 3 || isValidSingleVariantItem(variants[2]))
+                      )
+                )
+          );
+    }
+
+    function isValidProductVariantsList(variants) {
+      return variants is list && isValidVariantsBySize(variants, variants.size());
+    }
+
+    // -------------------------------------------------------------------------
+    // Relational & Two-Way Atomic Integrity Helpers (Category + SKU)
+    // -------------------------------------------------------------------------
+    function categoryExistsForOwner(userId, categoryId) {
+      return get(/databases/$(database)/documents/users/$(userId)/catalogCategories/$(categoryId)).data.ownerId == userId;
+    }
+
+    function isActiveCategoryData(cd, userId) {
+      return cd.ownerId == userId && cd.status == 'active';
+    }
+
+    function activeCategoryExistsForOwner(userId, categoryId) {
+      return isActiveCategoryData(
+        get(/databases/$(database)/documents/users/$(userId)/catalogCategories/$(categoryId)).data,
+        userId
+      );
+    }
+
+    function isSkuDataMatching(sd, userId, productId, sku) {
+      return [sd.sku, sd.productId, sd.ownerId] == [sku, productId, userId];
+    }
+
+    function isMatchingPostSkuReservation(userId, productId, sku) {
+      return isSkuDataMatching(
+        getAfter(/databases/$(database)/documents/users/$(userId)/catalogSkus/$(sku)).data,
+        userId,
+        productId,
+        sku
+      );
+    }
+
+    function isProductDataMatching(pd, userId, productId, sku) {
+      return [pd.id, pd.sku, pd.ownerId] == [productId, sku, userId];
+    }
+
+    function isMatchingPostCatalogProduct(userId, productId, sku) {
+      return isProductDataMatching(
+        getAfter(/databases/$(database)/documents/users/$(userId)/catalogProducts/$(productId)).data,
+        userId,
+        productId,
+        sku
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Schema Blueprints
+    // -------------------------------------------------------------------------
+
+    // Legacy v1 Tracker Document Validation (backward-compatible with woopp-tracker v1 LegacyTrackerState)
     function isValidLegacyTracker(data) {
       return data.keys().hasAll(['colors', 'machines', 'jobs', 'log']) &&
         data.keys().hasOnly(['colors', 'machines', 'jobs', 'log']) &&
-        data.colors is list && data.colors.size() <= 20 &&
+        data.colors is list && data.colors.size() <= 50 &&
         data.machines is list && data.machines.size() <= 100 &&
-        data.jobs is list && data.jobs.size() <= 2000 &&
+        data.jobs is list && data.jobs.size() <= 3000 &&
         data.log is list && data.log.size() <= 500;
     }
 
-    // WOOPP 5.0 Workspace Validation Blueprint (supports Smart ETA & Machine Scheduling + serverUpdatedAt)
-    function isValidWorkspaceV5(data, userId) {
+    // WOOPP 5.0/6.0 Workspace Validation Blueprint (Projects, Machines, Queue, ETA, Inventory + catalogItems snapshots)
+    function isValidWorkspaceV5Envelope(data, userId) {
       return data.keys().hasAll([
           'schemaVersion',
           'ownerId',
@@ -77,7 +492,7 @@ service cloud.firestore {
           'serverUpdatedAt'
         ]) &&
         data.schemaVersion == 5 &&
-        data.ownerId is string && data.ownerId.size() <= 128 && data.ownerId == userId &&
+        data.ownerId is string && data.ownerId.size() >= 1 && data.ownerId.size() <= 128 && data.ownerId == userId &&
         data.migratedFromV1 is bool &&
         data.colors is list && data.colors.size() <= 50 &&
         data.machines is list && data.machines.size() <= 100 &&
@@ -89,39 +504,253 @@ service cloud.firestore {
         data.settings is map &&
         (!('adminEmails' in data.settings) ||
           (data.settings.adminEmails is list && data.settings.adminEmails.size() <= 20)) &&
-        data.updatedIso is string && data.updatedIso.size() <= 64 &&
+        data.updatedIso is string && data.updatedIso.size() >= 1 && data.updatedIso.size() <= 64;
+    }
+
+    function isValidWorkspaceV5Create(data, userId) {
+      return isValidWorkspaceV5Envelope(data, userId) &&
         (!('serverUpdatedAt' in data) || data.serverUpdatedAt == request.time);
     }
 
+    function isValidWorkspaceV5Update(nextData, prevData, userId) {
+      return isValidWorkspaceV5Envelope(nextData, userId) &&
+        nextData.ownerId == prevData.ownerId &&
+        (!('serverUpdatedAt' in nextData) ||
+          nextData.serverUpdatedAt == request.time ||
+          ('serverUpdatedAt' in prevData && nextData.serverUpdatedAt == prevData.serverUpdatedAt));
+    }
+
+    // Product Studio: Category Validation Blueprint
+    function isValidCatalogCategory(data, userId, categoryId) {
+      return data.keys().hasAll([
+          'id',
+          'ownerId',
+          'name',
+          'description',
+          'imageUrl',
+          'iconName',
+          'sortOrder',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'ownerId',
+          'name',
+          'description',
+          'imageUrl',
+          'iconName',
+          'sortOrder',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) && data.id == categoryId &&
+        isValidId(data.ownerId) && data.ownerId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.name.matches('^[^\\s]([^\\n\\r]{0,118}[^\\s])?$') &&
+        data.description is string && data.description.size() <= 1000 &&
+        isOptionalHttpsImageUrl(data.imageUrl) &&
+        data.iconName in ['tag', 'sparkles', 'key', 'box', 'gift', 'layers', 'star', 'palette', 'grid', 'heart'] &&
+        isValidSortOrder(data.sortOrder) &&
+        data.status in ['active', 'archived'] &&
+        isValidIsoTimestampString(data.createdAt) &&
+        isValidIsoTimestampString(data.updatedAt);
+    }
+
+    // Product Studio: Product Validation Blueprint
+    // (bounded HTTPS-only gallery & variant images, full option & variant validation, immutable auto SKU, zero base64;
+    //  data.size() == 13 + unconditional evaluation of all 13 distinct required keys enforces exact schema with zero shadow keys)
+    function isValidCatalogProduct(data, userId, productId) {
+      return data.size() == 13 &&
+        data.id == productId &&
+        data.ownerId == userId &&
+        data.description is string && data.description.size() <= 4000 &&
+        (data.priceMyr == null ||
+          (!(data.priceMyr is string) && math.abs(data.priceMyr - 5000000) <= 5000000)) &&
+        isOptionHdrValid(
+          [
+            data.sku,
+            data.status,
+            data.createdAt,
+            data.updatedAt,
+            data.categoryId,
+            data.id,
+            data.name
+          ],
+          '^WOOPP-[A-Z0-9]{8}\n(active|archived)\n[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z\n[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z\n[a-zA-Z0-9_\\-]{1,128}\n[a-zA-Z0-9_\\-]{1,128}\n[^\\s]([^\\n\\r]{0,158}[^\\s])?$'
+        ) &&
+        isValidProductImagesList(data.images) &&
+        isValidProductOptionsList(data.options) &&
+        isValidProductVariantsList(data.variants);
+    }
+
+    function isValidCatalogProductCreate(d, userId, productId) {
+      return isValidCatalogProduct(d, userId, productId) &&
+        activeCategoryExistsForOwner(userId, d.categoryId) &&
+        !exists(/databases/$(database)/documents/users/$(userId)/catalogSkus/$(d.sku)) &&
+        isMatchingPostSkuReservation(userId, productId, d.sku);
+    }
+
+    function isValidCatalogProductUpdate(d, e, userId, productId) {
+      return isValidCatalogProduct(d, userId, productId) &&
+        [d.id, d.ownerId, d.sku, d.createdAt] == [e.id, e.ownerId, e.sku, e.createdAt] &&
+        (d.categoryId == e.categoryId
+          ? categoryExistsForOwner(userId, d.categoryId)
+          : activeCategoryExistsForOwner(userId, d.categoryId));
+    }
+
+    // Product Studio: Atomic SKU Reservation Validation Blueprint
+    function isValidCatalogSku(d, userId, sku) {
+      return d.size() == 4 &&
+        d.sku == sku &&
+        d.ownerId == userId &&
+        isOptionHdrValid(
+          [d.sku, d.productId, d.createdAt],
+          '^WOOPP-[A-Z0-9]{8}\n[a-zA-Z0-9_\\-]{1,128}\n[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$'
+        );
+    }
+
+    // Product Studio: Category Plate Setting Validation Blueprint
+    function isValidCategoryPlateSetting(data, userId, categoryId) {
+      return data.keys().hasAll([
+          'categoryId',
+          'ownerId',
+          'allocationMode',
+          'plateCapacity',
+          'defaultEstimatedMinutes',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'categoryId',
+          'ownerId',
+          'allocationMode',
+          'plateCapacity',
+          'defaultEstimatedMinutes',
+          'updatedAt'
+        ]) &&
+        isValidId(data.categoryId) && data.categoryId == categoryId &&
+        isValidId(data.ownerId) && data.ownerId == userId &&
+        data.allocationMode in ['automatic_capacity', 'manual_plate'] &&
+        (data.plateCapacity == null ||
+          (data.plateCapacity is int && data.plateCapacity >= 1 && data.plateCapacity <= 5000)) &&
+        data.defaultEstimatedMinutes is int &&
+        data.defaultEstimatedMinutes >= 1 &&
+        data.defaultEstimatedMinutes <= 4320 &&
+        isValidIsoTimestampString(data.updatedAt);
+    }
+
+    // -------------------------------------------------------------------------
+    // Preserved Production Document Paths
+    // -------------------------------------------------------------------------
+
     // Preserved v1 document path: users/{userId}/tracker/main
     match /users/{userId}/tracker/main {
-      allow get: if isOwner(userId);
-      allow create: if isAuthorizedWorkspaceAdmin(userId) && isValidLegacyTracker(incoming());
-      allow update: if isAuthorizedWorkspaceAdmin(userId) && isValidLegacyTracker(incoming()) &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['colors', 'machines', 'jobs', 'log']);
+      allow get: if isAuthorizedWorkspaceAdmin(userId);
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidLegacyTracker(incoming());
+      allow update: if resource != null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidLegacyTracker(incoming());
       allow delete: if false;
     }
 
-    // WOOPP 5.0 Workspace document path: users/{userId}/tracker/v5_workspace
+    // WOOPP 5.0/6.0 Workspace document path: users/{userId}/tracker/v5_workspace
     match /users/{userId}/tracker/v5_workspace {
-      allow get: if isOwner(userId);
-      allow create: if isAuthorizedWorkspaceAdmin(userId) && isValidWorkspaceV5(incoming(), userId);
-      allow update: if isAuthorizedWorkspaceAdmin(userId) &&
-        isValidWorkspaceV5(incoming(), userId) &&
+      allow get: if isAuthorizedWorkspaceAdmin(userId);
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidWorkspaceV5Create(incoming(), userId);
+      allow update: if resource != null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidWorkspaceV5Update(incoming(), existing(), userId);
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // WOOPP 6.0 Product Studio Isolated Subcollections
+    // -------------------------------------------------------------------------
+
+    // Product Studio Categories: users/{userId}/catalogCategories/{categoryId}
+    match /users/{userId}/catalogCategories/{categoryId} {
+      allow get: if isAuthorizedWorkspaceAdmin(userId) && isValidId(categoryId);
+      allow list: if isAuthorizedWorkspaceAdmin(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidId(categoryId) &&
+        isValidCatalogCategory(incoming(), userId, categoryId);
+      allow update: if resource != null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidId(categoryId) &&
+        isValidCatalogCategory(incoming(), userId, categoryId) &&
+        incoming().id == existing().id &&
         incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'schemaVersion',
-          'migratedFromV1',
-          'colors',
-          'machines',
-          'projects',
-          'jobs',
-          'presets',
-          'inventory',
-          'log',
-          'settings',
-          'updatedIso',
-          'serverUpdatedAt'
+          'name',
+          'description',
+          'imageUrl',
+          'iconName',
+          'sortOrder',
+          'status',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // Product Studio Products: users/{userId}/catalogProducts/{productId}
+    match /users/{userId}/catalogProducts/{productId} {
+      allow get: if isAuthorizedWorkspaceAdmin(userId) && isValidId(productId);
+      allow list: if isAuthorizedWorkspaceAdmin(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidCatalogProductCreate(request.resource.data, userId, productId);
+      allow update: if resource != null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidCatalogProductUpdate(request.resource.data, resource.data, userId, productId);
+      allow delete: if false;
+    }
+
+    // Product Studio Atomic SKU Registry: users/{userId}/catalogSkus/{sku}
+    match /users/{userId}/catalogSkus/{sku} {
+      allow get: if isAuthorizedWorkspaceAdmin(userId) && isValidWooppSku(sku);
+      allow list: if isAuthorizedWorkspaceAdmin(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidWooppSku(sku) &&
+        isValidCatalogSku(incoming(), userId, sku) &&
+        !exists(/databases/$(database)/documents/users/$(userId)/catalogProducts/$(incoming().productId)) &&
+        isMatchingPostCatalogProduct(
+          userId,
+          incoming().productId,
+          sku
+        );
+      allow update, delete: if false;
+    }
+
+    // Product Studio Category Plate Settings: users/{userId}/catalogPlateSettings/{categoryId}
+    match /users/{userId}/catalogPlateSettings/{categoryId} {
+      allow get: if isAuthorizedWorkspaceAdmin(userId) && isValidId(categoryId);
+      allow list: if isAuthorizedWorkspaceAdmin(userId) && resource.data.ownerId == request.auth.uid;
+      allow create: if resource == null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidId(categoryId) &&
+        isValidCategoryPlateSetting(incoming(), userId, categoryId) &&
+        activeCategoryExistsForOwner(userId, categoryId);
+      allow update: if resource != null &&
+        isAuthorizedWorkspaceAdmin(userId) &&
+        isValidId(categoryId) &&
+        isValidCategoryPlateSetting(incoming(), userId, categoryId) &&
+        incoming().categoryId == existing().categoryId &&
+        incoming().ownerId == existing().ownerId &&
+        categoryExistsForOwner(userId, categoryId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'allocationMode',
+          'plateCapacity',
+          'defaultEstimatedMinutes',
+          'updatedAt'
         ]);
       allow delete: if false;
     }

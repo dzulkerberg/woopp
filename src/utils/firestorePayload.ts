@@ -21,6 +21,7 @@ import {
   ColorOption,
   InventoryMovement,
   InventoryState,
+  JobCatalogItemSnapshot,
   KanbanStage,
   LedgerMovementType,
   LettersMap,
@@ -940,6 +941,8 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
     'cancellationReason',
     'cancelledBy',
     'cancelledFromMachineId',
+    'categoryId',
+    'categoryNameSnapshot',
   ] as const;
 
   for (const key of nullableLifecycleStringKeys) {
@@ -949,7 +952,59 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
     }
   }
 
+  if (job.catalogItems !== undefined) {
+    if (!Array.isArray(job.catalogItems)) {
+      throw new FirestorePayloadValidationError(
+        joinPath(path, 'catalogItems'),
+        'Expected optional array of catalog item snapshots.'
+      );
+    }
+    const cleanedCatalog = job.catalogItems
+      .slice(0, 200)
+      .map((item, idx) =>
+        validateJobCatalogItemSnapshot(
+          item,
+          `${joinPath(path, 'catalogItems')}[${idx}]`
+        )
+      );
+    if (cleanedCatalog.length > 0) {
+      normalized.catalogItems = cleanedCatalog;
+    }
+  }
+
   return normalized;
+}
+
+function validateJobCatalogItemSnapshot(
+  item: JobCatalogItemSnapshot,
+  path: string
+): JobCatalogItemSnapshot {
+  if (!isPlainObject(item)) {
+    throw new FirestorePayloadValidationError(
+      path,
+      'Expected catalog item snapshot object.'
+    );
+  }
+  return {
+    productId: requireNonEmptyString(item.productId, joinPath(path, 'productId')),
+    productName: requireNonEmptyString(item.productName, joinPath(path, 'productName')),
+    sku: requireNonEmptyString(item.sku, joinPath(path, 'sku')),
+    categoryId: requireNonEmptyString(item.categoryId, joinPath(path, 'categoryId')),
+    categoryName: requireNonEmptyString(
+      item.categoryName,
+      joinPath(path, 'categoryName')
+    ),
+    variantId: normalizeNullableString(item.variantId, joinPath(path, 'variantId')),
+    variantLabel: normalizeNullableString(
+      item.variantLabel,
+      joinPath(path, 'variantLabel')
+    ),
+    colorId: requireNonEmptyString(item.colorId, joinPath(path, 'colorId')),
+    colorName: requireNonEmptyString(item.colorName, joinPath(path, 'colorName')),
+    quantity: Math.floor(
+      requireFiniteNumber(item.quantity, joinPath(path, 'quantity'), { min: 1 })
+    ),
+  };
 }
 
 function validateAlphabetPreset(

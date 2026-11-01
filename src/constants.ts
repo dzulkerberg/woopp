@@ -5,6 +5,7 @@ import {
   CharmId,
   CharmsMap,
   ColorOption,
+  JobCatalogItemSnapshot,
   KanbanStage,
   LegacyJobStatus,
   LegacyTrackerState,
@@ -50,6 +51,7 @@ export const PLATE_GENERATION_MODES: readonly PlateGenerationMode[] = [
   'alphabet_only',
   'charm_only',
   'mixed',
+  'catalog_category',
 ] as const;
 
 export const SALES_CHANNELS: SalesChannel[] = [
@@ -224,15 +226,30 @@ export function sumCharmsMaps(
   return res;
 }
 
+export function countCatalogItems(
+  items?: readonly JobCatalogItemSnapshot[] | null
+): number {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return items.reduce(
+    (sum, item) => sum + Math.max(0, Math.floor(Number(item?.quantity || 0))),
+    0
+  );
+}
+
 /**
- * Counts total physical keycaps on a plate (1 letter = 1 pc, 1 charm = 1 pc).
- * Treats missing charm quantities on legacy records as 0.
+ * Counts total physical items on a plate (1 letter = 1 pc, 1 charm = 1 pc, 1 catalog product unit = 1 pc).
+ * Treats missing charm or catalog item quantities on legacy records as 0.
  */
 export function countPlateKeycaps(item: {
   letters?: LettersMap | null;
   charms?: Partial<Record<string, number>> | null;
+  catalogItems?: readonly JobCatalogItemSnapshot[] | null;
 }): number {
-  return countLetters(item.letters) + countCharms(item.charms);
+  return (
+    countLetters(item.letters) +
+    countCharms(item.charms) +
+    countCatalogItems(item.catalogItems)
+  );
 }
 
 export interface ProjectPlateProgress {
@@ -276,7 +293,11 @@ export function computeProjectPlateProgress(
     (sum, j) => sum + countCharms(j.charms),
     0
   );
-  const producedKeycaps = producedLetters + producedCharms;
+  const producedCatalog = completedJobs.reduce(
+    (sum, j) => sum + countCatalogItems(j.catalogItems),
+    0
+  );
+  const producedKeycaps = producedLetters + producedCharms + producedCatalog;
 
   const plannedLetters = validJobs.reduce(
     (sum, j) => sum + countLetters(j.letters),
@@ -286,7 +307,11 @@ export function computeProjectPlateProgress(
     (sum, j) => sum + countCharms(j.charms),
     0
   );
-  const plannedKeycaps = plannedLetters + plannedCharms;
+  const plannedCatalog = validJobs.reduce(
+    (sum, j) => sum + countCatalogItems(j.catalogItems),
+    0
+  );
+  const plannedKeycaps = plannedLetters + plannedCharms + plannedCatalog;
 
   const progressPct =
     plannedKeycaps > 0
@@ -309,13 +334,14 @@ export function computeProjectPlateProgress(
 }
 
 /**
- * Formats a plate's Alphabet & Charm quantities into a clean plain-text summary
+ * Formats a plate's Alphabet, Charm & Product Studio Catalog quantities into a clean plain-text summary
  * for queue clipboard exports, tooltips, and select dropdowns.
  */
 export function formatPlateItemsText(
   item: {
     letters?: LettersMap | null;
     charms?: Partial<Record<string, number>> | null;
+    catalogItems?: readonly JobCatalogItemSnapshot[] | null;
   },
   compact = false
 ): string {
@@ -339,15 +365,33 @@ export function formatPlateItemsText(
     }
   }
 
-  if (letterParts.length > 0 && charmParts.length > 0) {
-    return `${letterParts.join(compact ? ' ' : ' · ')} | ${charmParts.join(
-      compact ? ' ' : ' · '
-    )}`;
+  const catalogParts: string[] = [];
+  if (Array.isArray(item.catalogItems)) {
+    for (const ci of item.catalogItems) {
+      const v = Math.floor(Number(ci?.quantity || 0));
+      if (v > 0 && ci?.productName) {
+        const variantSuffix = ci.variantLabel ? ` (${ci.variantLabel})` : '';
+        catalogParts.push(
+          compact
+            ? `${ci.productName}${variantSuffix}×${v}`
+            : `${ci.productName}${variantSuffix} [${ci.sku}]×${v}`
+        );
+      }
+    }
+  }
+
+  const groups: string[] = [];
+  if (letterParts.length > 0) {
+    groups.push(letterParts.join(compact ? ' ' : ' · '));
   }
   if (charmParts.length > 0) {
-    return charmParts.join(compact ? ' ' : ' · ');
+    groups.push(charmParts.join(compact ? ' ' : ' · '));
   }
-  return letterParts.join(compact ? ' ' : ' · ');
+  if (catalogParts.length > 0) {
+    groups.push(catalogParts.join(compact ? ', ' : ' · '));
+  }
+
+  return groups.join(' | ');
 }
 
 export function createStandard414Preset(): AlphabetPreset {
@@ -906,6 +950,8 @@ export function normalizeWorkspaceV5(
             'cancellationReason',
             'cancelledBy',
             'cancelledFromMachineId',
+            'categoryId',
+            'categoryNameSnapshot',
           ] as const;
           for (const key of lifecycleStringKeys) {
             const val = j[key];
@@ -916,6 +962,60 @@ export function normalizeWorkspaceV5(
             } else {
               delete normalizedJob[key];
             }
+          }
+          if (Array.isArray(j.catalogItems) && j.catalogItems.length > 0) {
+            const cleanedCatalog: JobCatalogItemSnapshot[] = [];
+            for (const ci of j.catalogItems) {
+              const qty = Math.floor(Number(ci?.quantity || 0));
+              if (
+                ci &&
+                typeof ci === 'object' &&
+                typeof ci.productId === 'string' &&
+                ci.productId.trim().length > 0 &&
+                typeof ci.productName === 'string' &&
+                ci.productName.trim().length > 0 &&
+                typeof ci.sku === 'string' &&
+                ci.sku.trim().length > 0 &&
+                typeof ci.categoryId === 'string' &&
+                ci.categoryId.trim().length > 0 &&
+                qty > 0
+              ) {
+                cleanedCatalog.push({
+                  productId: ci.productId.trim(),
+                  productName: ci.productName.trim(),
+                  sku: ci.sku.trim(),
+                  categoryId: ci.categoryId.trim(),
+                  categoryName:
+                    typeof ci.categoryName === 'string' && ci.categoryName.trim().length > 0
+                      ? ci.categoryName.trim()
+                      : ci.categoryId.trim(),
+                  variantId:
+                    typeof ci.variantId === 'string' && ci.variantId.trim().length > 0
+                      ? ci.variantId.trim()
+                      : null,
+                  variantLabel:
+                    typeof ci.variantLabel === 'string' && ci.variantLabel.trim().length > 0
+                      ? ci.variantLabel.trim()
+                      : null,
+                  colorId:
+                    typeof ci.colorId === 'string' && ci.colorId.trim().length > 0
+                      ? ci.colorId.trim()
+                      : j.colorId,
+                  colorName:
+                    typeof ci.colorName === 'string' && ci.colorName.trim().length > 0
+                      ? ci.colorName.trim()
+                      : j.colorId,
+                  quantity: qty,
+                });
+              }
+            }
+            if (cleanedCatalog.length > 0) {
+              normalizedJob.catalogItems = cleanedCatalog;
+            } else {
+              delete normalizedJob.catalogItems;
+            }
+          } else {
+            delete normalizedJob.catalogItems;
           }
           return hydrateJobCountdownFields(normalizedJob);
         })

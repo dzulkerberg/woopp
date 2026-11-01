@@ -15,6 +15,7 @@ describe('Navigation & Dashboard Refactor Regression Suite', () => {
     expect(navIds).toEqual([
       'dashboard',
       'projects',
+      'product-studio',
       'planner',
       'queue',
       'machines',
@@ -59,8 +60,10 @@ describe('Navigation & Dashboard Refactor Regression Suite', () => {
     expect(resolveNavSection('/timeline')).toBe('dashboard');
   });
 
-  it('preserves direct navigation and clean hashes for all remaining sections', () => {
+  it('preserves direct navigation and clean hashes for all remaining sections including Product Studio', () => {
     expect(resolveNavSection('#projects')).toBe('projects');
+    expect(resolveNavSection('#product-studio')).toBe('product-studio');
+    expect(resolveNavSection('#/product-studio')).toBe('product-studio');
     expect(resolveNavSection('#/planner')).toBe('planner');
     expect(resolveNavSection('queue')).toBe('queue');
     expect(resolveNavSection('/machines')).toBe('machines');
@@ -69,6 +72,7 @@ describe('Navigation & Dashboard Refactor Regression Suite', () => {
     expect(resolveNavSection('#settings')).toBe('settings');
 
     expect(buildNavHash('dashboard')).toBe('');
+    expect(buildNavHash('product-studio')).toBe('#product-studio');
     expect(buildNavHash('queue')).toBe('#queue');
     expect(buildNavHash('projects')).toBe('#projects');
   });

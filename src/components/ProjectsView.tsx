@@ -166,7 +166,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           onClick={openNewProjectForm}
           className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors whitespace-nowrap"
         >
-          + New Production Project
+          New Project
         </button>
       </div>
 

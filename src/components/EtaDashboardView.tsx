@@ -429,7 +429,13 @@ const ActivePrintCountdownCard: React.FC<ActivePrintCountdownCardProps> = ({
         </span>
       </div>
 
-      <PlateCompositionSummary letters={job.letters} charms={job.charms} compact />
+      <PlateCompositionSummary
+        letters={job.letters}
+        charms={job.charms}
+        catalogItems={job.catalogItems}
+        categoryNameSnapshot={job.categoryNameSnapshot}
+        compact
+      />
 
       {needsEtaRecalibration ? (
         <EtaRecalibrationBox

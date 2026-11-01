@@ -3,6 +3,7 @@ import { NavSection } from '../types';
 export const VALID_NAV_SECTIONS: readonly NavSection[] = [
   'dashboard',
   'projects',
+  'product-studio',
   'planner',
   'queue',
   'machines',
@@ -22,9 +23,13 @@ export const SECTION_META: Record<NavSection, { title: string; subtitle: string 
     title: 'Projects',
     subtitle: 'Multi-channel production plans, priorities, and deadlines',
   },
+  'product-studio': {
+    title: 'Product Studio',
+    subtitle: 'E-commerce product catalog, custom categories, auto-generated SKUs, and planner integration',
+  },
   planner: {
     title: 'Auto Plate Planner',
-    subtitle: 'Custom A–Z alphabet & charm keycap grid with exact-capacity plate distribution',
+    subtitle: 'Dynamic Product Studio categories plus A–Z alphabet & charm keycap plate distribution',
   },
   queue: {
     title: 'Print Queue',

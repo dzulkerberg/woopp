@@ -15,7 +15,11 @@ export interface CharmDefinition {
   symbol: string;
 }
 
-export type PlateGenerationMode = 'alphabet_only' | 'charm_only' | 'mixed';
+export type PlateGenerationMode =
+  | 'alphabet_only'
+  | 'charm_only'
+  | 'mixed'
+  | 'catalog_category';
 
 export type SalesChannel =
   | 'Klebang Walk'
@@ -183,6 +187,11 @@ export interface ProductionJob {
   cancellationReason?: string | null; // Optional operator reason recorded at cancellation
   cancelledBy?: string | null; // Email or UID of admin who cancelled the print
   cancelledFromMachineId?: string | null; // Machine ID released when active print was cancelled
+
+  // WOOPP 6.0 Dynamic Product-to-Print Immutable Snapshot Fields (additive, backward-compatible)
+  categoryId?: string | null; // Immutable Product Studio category ID when generated from Product Studio
+  categoryNameSnapshot?: string | null; // Snapshot of category display name at confirmation time
+  catalogItems?: JobCatalogItemSnapshot[]; // Immutable snapshots of Product Studio items on this plate
 }
 
 export interface AlphabetPreset {
@@ -279,9 +288,112 @@ export interface LegacyTrackerState {
 export type NavSection =
   | 'dashboard'
   | 'projects'
+  | 'product-studio'
   | 'planner'
   | 'queue'
   | 'machines'
   | 'inventory'
   | 'analytics'
   | 'settings';
+
+// ============================================================================
+// WOOPP 6.0 — Product Studio & Dynamic Product-to-Print Types
+// ============================================================================
+
+export type CatalogStatus = 'active' | 'archived';
+
+export type CategoryIconName =
+  | 'tag'
+  | 'sparkles'
+  | 'key'
+  | 'box'
+  | 'gift'
+  | 'layers'
+  | 'star'
+  | 'palette'
+  | 'grid'
+  | 'heart';
+
+export interface ProductCategory {
+  id: string;
+  ownerId: string;
+  name: string;
+  description: string;
+  imageUrl: string | null;
+  iconName: CategoryIconName;
+  sortOrder: number;
+  status: CatalogStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductOptionDefinition {
+  id: string;
+  name: string;
+  values: string[];
+  sortOrder: number;
+}
+
+export interface ProductVariant {
+  id: string;
+  label: string;
+  optionValues: Record<string, string>;
+  priceMyr: number | null;
+  imageUrl: string | null;
+  sortOrder: number;
+}
+
+export interface CatalogProduct {
+  id: string;
+  ownerId: string;
+  sku: string; // Read-only auto-generated SKU: WOOPP-XXXXXXXX
+  name: string;
+  description: string;
+  categoryId: string;
+  priceMyr: number | null;
+  images: string[]; // HTTPS URLs only; index 0 is main image
+  options: ProductOptionDefinition[];
+  variants: ProductVariant[];
+  status: CatalogStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CatalogSkuReservation {
+  sku: string;
+  ownerId: string;
+  productId: string;
+  createdAt: string;
+}
+
+export type CategoryAllocationMode = 'automatic_capacity' | 'manual_plate';
+
+export interface CategoryPlateSetting {
+  categoryId: string;
+  ownerId: string;
+  allocationMode: CategoryAllocationMode;
+  plateCapacity: number | null; // Never defaults to 138 for unknown categories
+  defaultEstimatedMinutes: number;
+  updatedAt: string;
+}
+
+export interface JobCatalogItemSnapshot {
+  productId: string;
+  productName: string;
+  sku: string;
+  categoryId: string;
+  categoryName: string;
+  variantId: string | null;
+  variantLabel: string | null;
+  colorId: string;
+  colorName: string;
+  quantity: number;
+}
+
+export interface PlannerPreselection {
+  categoryId: string;
+  productId: string;
+  variantId?: string | null;
+  requestedAtMs: number;
+}
+

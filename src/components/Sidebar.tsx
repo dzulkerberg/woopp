@@ -10,6 +10,7 @@ import {
   Moon,
   Printer,
   Settings,
+  Store,
   Sun,
   X,
 } from 'lucide-react';
@@ -34,6 +35,7 @@ export const NAV_ITEMS: {
 }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
+  { id: 'product-studio', label: 'Product Studio', icon: Store },
   { id: 'planner', label: 'Auto Plate Planner', icon: Grid },
   { id: 'queue', label: 'Print Queue', icon: ListTodo },
   { id: 'machines', label: 'Machines', icon: Printer },
@@ -63,7 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               WOOPP ART &amp; CRAFT
             </div>
             <div className="text-[11px] font-medium tracking-wide uppercase text-muted mt-0.5">
-              Production System 5.0
+              Production System 6.0
             </div>
           </div>
         </div>

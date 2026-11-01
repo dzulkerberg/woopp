@@ -57,7 +57,7 @@
         },
         "jobs": {
           "type": "array",
-          "description": "All production print plate jobs across projects with planningSessionId, Kanban stage (Planned, Ready to Print, Printing, Completed, Failed / Reprint, Cancelled), archive metadata (archived, archivedIso, archivedBy), cancellation audit fields (cancelledIso, cancellationReason, cancelledBy, cancelledFromMachineId), server start/pause/completion timestamps, and stockApplied ledger guard"
+          "description": "All production print plate jobs across projects including immutable Product Studio catalogItems snapshots, Kanban stage, archive/cancellation audit fields, and server timestamps"
         },
         "presets": {
           "type": "array",
@@ -100,6 +100,253 @@
         "settings",
         "updatedIso"
       ]
+    },
+    "ProductCategory": {
+      "title": "Product Studio Category",
+      "description": "Custom e-commerce product category stored at users/{userId}/catalogCategories/{categoryId}.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Immutable category document ID"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated owner"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Category display name"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional category description"
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://.*",
+          "description": "Optional external HTTPS cover image URL (or null)"
+        },
+        "iconName": {
+          "type": "string",
+          "enum": ["tag", "sparkles", "key", "box", "gift", "layers", "star", "palette", "grid", "heart"],
+          "description": "Category icon identifier"
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Zero-indexed category display order"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"],
+          "description": "Lifecycle status of the category"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO last updated timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "description",
+        "imageUrl",
+        "iconName",
+        "sortOrder",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CatalogProduct": {
+      "title": "Product Studio Catalog Product",
+      "description": "E-commerce product definition with read-only auto SKU, HTTPS image URLs, MYR price, and optional variations stored at users/{userId}/catalogProducts/{productId}.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Immutable product document ID"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated owner"
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 14,
+          "pattern": "^WOOPP-[A-Z0-9]{8}$",
+          "description": "Immutable collision-resistant auto-generated SKU"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Product display name"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Optional product description"
+        },
+        "categoryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Assigned ProductCategory ID"
+        },
+        "priceMyr": {
+          "type": "number",
+          "description": "Optional selling price in MYR (or null)"
+        },
+        "images": {
+          "type": "array",
+          "description": "Ordered external HTTPS image URLs (max 12, no base64)"
+        },
+        "options": {
+          "type": "array",
+          "description": "Optional variation option definitions (max 4; each option validates id, name, int sortOrder, and 1–12 string values of 1–80 chars)"
+        },
+        "variants": {
+          "type": "array",
+          "description": "Optional cartesian product variations (max 12; all 12 variants validate id, label, optionValues map, optional MYR price, optional HTTPS imageUrl, and int sortOrder)"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"],
+          "description": "Product catalog lifecycle status"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO last updated timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "sku",
+        "name",
+        "description",
+        "categoryId",
+        "priceMyr",
+        "images",
+        "options",
+        "variants",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CatalogSkuReservation": {
+      "title": "Product Studio SKU Reservation",
+      "description": "Atomic uniqueness lock for auto-generated WOOPP SKUs stored at users/{userId}/catalogSkus/{sku}.",
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 14,
+          "pattern": "^WOOPP-[A-Z0-9]{8}$",
+          "description": "Reserved SKU code"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated owner"
+        },
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "ID of the product owning this SKU"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO reservation timestamp"
+        }
+      },
+      "required": ["sku", "ownerId", "productId", "createdAt"]
+    },
+    "CategoryPlateSetting": {
+      "title": "Category Production Plate Rule",
+      "description": "Planner-owned plate capacity or manual plate composition rule per category stored at users/{userId}/catalogPlateSettings/{categoryId}.",
+      "type": "object",
+      "properties": {
+        "categoryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target ProductCategory ID"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the authenticated owner"
+        },
+        "allocationMode": {
+          "type": "string",
+          "enum": ["automatic_capacity", "manual_plate"],
+          "description": "Category plate allocation mode inside Auto Plate Planner"
+        },
+        "plateCapacity": {
+          "type": "number",
+          "description": "Configured category units per plate (1–5000) or null"
+        },
+        "defaultEstimatedMinutes": {
+          "type": "number",
+          "description": "Default Bambu Studio estimated duration per plate in minutes (1–4320)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO last updated timestamp"
+        }
+      },
+      "required": [
+        "categoryId",
+        "ownerId",
+        "allocationMode",
+        "plateCapacity",
+        "defaultEstimatedMinutes",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -109,7 +356,23 @@
     },
     "/users/{userId}/tracker/v5_workspace": {
       "schema": { "$ref": "#/entities/ProductionWorkspace" },
-      "description": "WOOPP 5.0 multi-project production management and Smart ETA Scheduling state isolated per authenticated user."
+      "description": "WOOPP 5.0/6.0 multi-project production management and Smart ETA Scheduling state isolated per authenticated user."
+    },
+    "/users/{userId}/catalogCategories/{categoryId}": {
+      "schema": { "$ref": "#/entities/ProductCategory" },
+      "description": "Product Studio custom product categories isolated per authenticated owner."
+    },
+    "/users/{userId}/catalogProducts/{productId}": {
+      "schema": { "$ref": "#/entities/CatalogProduct" },
+      "description": "Product Studio e-commerce catalog products isolated per authenticated owner."
+    },
+    "/users/{userId}/catalogSkus/{sku}": {
+      "schema": { "$ref": "#/entities/CatalogSkuReservation" },
+      "description": "Atomic uniqueness registry for auto-generated WOOPP-XXXXXXXX SKUs."
+    },
+    "/users/{userId}/catalogPlateSettings/{categoryId}": {
+      "schema": { "$ref": "#/entities/CategoryPlateSetting" },
+      "description": "Auto Plate Planner capacity and manual plate composition settings per Product Studio category."
     }
   }
 }

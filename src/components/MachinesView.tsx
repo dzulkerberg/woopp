@@ -387,6 +387,8 @@ export const MachinesView: React.FC<MachinesViewProps> = ({
                     <PlateCompositionSummary
                       letters={activeJob.letters}
                       charms={activeJob.charms}
+                      catalogItems={activeJob.catalogItems}
+                      categoryNameSnapshot={activeJob.categoryNameSnapshot}
                       compact
                     />
                     {activeSlot.needsEtaRecalibration ? (

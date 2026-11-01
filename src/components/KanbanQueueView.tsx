@@ -758,6 +758,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         <PlateCompositionSummary
                           letters={job.letters}
                           charms={job.charms}
+                          catalogItems={job.catalogItems}
+                          categoryNameSnapshot={job.categoryNameSnapshot}
                           compact
                         />
                       </div>
@@ -1221,7 +1223,12 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       ) : null}
 
       {/* Alphabet & Charm composition breakdown */}
-      <PlateCompositionSummary letters={job.letters} charms={job.charms} />
+      <PlateCompositionSummary
+        letters={job.letters}
+        charms={job.charms}
+        catalogItems={job.catalogItems}
+        categoryNameSnapshot={job.categoryNameSnapshot}
+      />
 
       {/* Printer Assignment */}
       {!isReadOnlyStage && (

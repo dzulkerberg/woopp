@@ -4,6 +4,7 @@ import {
   CHARM_IDS,
   compactCharmsMap,
   compactLettersMap,
+  countCatalogItems,
   countCharms,
   countLetters,
   countPlateKeycaps,
@@ -123,6 +124,10 @@ export function inferPlateMode(
  * - In `alphabet_only` mode, also preserves queued pure-charm plates.
  * - In `charm_only` mode, also preserves queued pure-alphabet plates.
  */
+export function isDedicatedComponentPlate(job: ProductionJob): boolean {
+  return countCatalogItems(job.catalogItems) > 0;
+}
+
 export function shouldPreserveExistingJobOnRegenerate(
   job: ProductionJob,
   mode: PlateGenerationMode
@@ -132,7 +137,8 @@ export function shouldPreserveExistingJobOnRegenerate(
     job.stage === 'Completed' ||
     job.stage === 'Printing' ||
     job.stage === 'Failed / Reprint' ||
-    job.stage === 'Cancelled'
+    job.stage === 'Cancelled' ||
+    isDedicatedComponentPlate(job)
   ) {
     return true;
   }
@@ -2449,7 +2455,12 @@ export function reconcileProjectsForAffectedJobs(
 
       for (const aj of jobsForColor) {
         const currentInNext = nextJobById.get(aj.id);
-        if (!currentInNext) {
+        if (
+          !currentInNext &&
+          (!isDedicatedComponentPlate(aj) ||
+            countLetters(aj.letters) > 0 ||
+            countCharms(aj.charms) > 0)
+        ) {
           wasDeletedForColor = true;
         }
         const isNowInvalidated =

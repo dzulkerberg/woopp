@@ -16,6 +16,7 @@ import {
 } from './firebase';
 import {
   ABC,
+  countCatalogItems,
   countCharms,
   countLetters,
   countPlateKeycaps,
@@ -29,14 +30,18 @@ import {
 import {
   AdminActorContext,
   AlphabetPreset,
+  CatalogProduct,
+  CategoryPlateSetting,
   CharmsMap,
   EtaRecalibrationInput,
   KanbanStage,
   LegacyTrackerState,
   LettersMap,
   NavSection,
+  PlannerPreselection,
   PlateGenerationMode,
   PrinterMachine,
+  ProductCategory,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -99,7 +104,16 @@ import {
   CancelPrintingConfirmModal,
   DeletePlateConfirmModal,
 } from './components/QueueLifecycleModals';
-
+import { ProductStudioView } from './components/product-studio/ProductStudioView';
+import {
+  ProductStudioRealtimeSnapshot,
+  saveCategoryPlateSettingToFirestore,
+  subscribeToProductStudioCatalog,
+} from './services/productStudioService';
+import {
+  commitCatalogPlatesToWorkspace,
+  DraftCatalogPlatePreview,
+} from './utils/catalogPlannerEngine';
 import {
   buildNavHash,
   resolveNavSection,
@@ -127,6 +141,17 @@ export const App: React.FC = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [modal, setModal] = useState<ModalConfig | null>(null);
+  const [plannerPreselection, setPlannerPreselection] =
+    useState<PlannerPreselection | null>(null);
+  const [catalogSnapshot, setCatalogSnapshot] =
+    useState<ProductStudioRealtimeSnapshot>({
+      categories: [],
+      products: [],
+      plateSettingsByCategoryId: {},
+      loading: true,
+      error: null,
+      rulesDeploymentNeeded: false,
+    });
 
   // Print Queue Lifecycle modal & concurrency state
   const [pendingDeleteJobId, setPendingDeleteJobId] = useState<string | null>(null);
@@ -463,12 +488,17 @@ export const App: React.FC = () => {
   // Firebase Auth & Cloud-Only Non-Destructive v1 -> v5 Lifecycle (no local fallback)
   useEffect(() => {
     let unsubV5Snapshot: (() => void) | null = null;
+    let unsubCatalog: (() => void) | null = null;
 
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setAuthInitialized(true);
       if (unsubV5Snapshot) {
         unsubV5Snapshot();
         unsubV5Snapshot = null;
+      }
+      if (unsubCatalog) {
+        unsubCatalog();
+        unsubCatalog = null;
       }
       v5Ref.current = null;
       setReady(false);
@@ -479,10 +509,22 @@ export const App: React.FC = () => {
 
       if (!firebaseUser) {
         setSyncStatus('Signed out');
+        setCatalogSnapshot({
+          categories: [],
+          products: [],
+          plateSettingsByCategoryId: {},
+          loading: false,
+          error: null,
+          rulesDeploymentNeeded: false,
+        });
         return;
       }
 
       setSyncStatus('Loading Cloud Firestore...');
+
+      unsubCatalog = subscribeToProductStudioCatalog(firebaseUser.uid, (snap) => {
+        setCatalogSnapshot(snap);
+      });
 
       const v5Path = `users/${firebaseUser.uid}/tracker/v5_workspace`;
       const userV5DocRef = doc(db, 'users', firebaseUser.uid, 'tracker', 'v5_workspace');
@@ -616,6 +658,7 @@ export const App: React.FC = () => {
     return () => {
       unsubAuth();
       if (unsubV5Snapshot) unsubV5Snapshot();
+      if (unsubCatalog) unsubCatalog();
     };
   }, [connectionAttempt]);
 
@@ -766,6 +809,90 @@ export const App: React.FC = () => {
       );
     }
   };
+
+  const handleSendProductToPlanner = useCallback(
+    (product: CatalogProduct, variantId?: string | null) => {
+      setPlannerPreselection({
+        categoryId: product.categoryId,
+        productId: product.id,
+        variantId: variantId ?? null,
+        requestedAtMs: Date.now(),
+      });
+      handleNavigate('planner');
+    },
+    [handleNavigate]
+  );
+
+  const handleConsumePlannerPreselection = useCallback(() => {
+    setPlannerPreselection(null);
+  }, []);
+
+  const handleSaveCategoryPlateSetting = useCallback(
+    async (setting: Omit<CategoryPlateSetting, 'ownerId' | 'updatedAt'>) => {
+      if (!user) {
+        showAlert('Sign in before saving category plate rules.', 'Sign-In Required');
+        return;
+      }
+      try {
+        await saveCategoryPlateSettingToFirestore(user.uid, {
+          ...setting,
+          ownerId: user.uid,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showAlert(msg, 'Plate Rule Save Failed');
+        throw err;
+      }
+    },
+    [showAlert, user]
+  );
+
+  const handleCommitCatalogPlates = useCallback(
+    async (params: {
+      projectId: string;
+      colorId: string;
+      category: ProductCategory;
+      confirmedPlates: DraftCatalogPlatePreview[];
+      onSuccess?: () => void;
+    }) => {
+      const latestWs = latestWorkspaceRef.current;
+      const project = latestWs.projects.find((p) => p.id === params.projectId);
+      const color = latestWs.colors.find((c) => c.id === params.colorId);
+      if (!project || !color) return;
+
+      const result = commitCatalogPlatesToWorkspace(latestWs, {
+        projectId: params.projectId,
+        colorId: params.colorId,
+        category: params.category,
+        confirmedPlates: params.confirmedPlates,
+        nowMs: getAuthoritativeNowMs(),
+      });
+
+      if (result.error || !result.nextWorkspace || !result.createdJobs) {
+        showAlert(
+          result.error || 'Could not confirm Product Studio plates into Print Queue.',
+          'Plate Generation Blocked'
+        );
+        return;
+      }
+
+      const totalUnits = result.createdJobs.reduce(
+        (sum, j) => sum + countCatalogItems(j.catalogItems),
+        0
+      );
+
+      const saved = await persistWorkspace(result.nextWorkspace);
+      if (saved) {
+        params.onSuccess?.();
+        showAlert(
+          `Saved ${result.createdJobs.length} plate(s) (${totalUnits} pcs) for ${project.name} (${color.name}) · ${params.category.name}.`,
+          'Plates Added to Queue'
+        );
+      }
+    },
+    [getAuthoritativeNowMs, persistWorkspace, showAlert]
+  );
 
   const handleClearCarryForward = useCallback(
     (params: {
@@ -1804,6 +1931,21 @@ export const App: React.FC = () => {
             />
           )}
 
+          {activeNav === 'product-studio' && (
+            <ProductStudioView
+              ownerId={user.uid}
+              timezone={workspace.settings.timezone}
+              categories={catalogSnapshot.categories}
+              products={catalogSnapshot.products}
+              catalogLoading={catalogSnapshot.loading}
+              catalogError={catalogSnapshot.error}
+              rulesDeploymentNeeded={catalogSnapshot.rulesDeploymentNeeded}
+              onAlert={showAlert}
+              onConfirm={showConfirm}
+              onSendProductToPlanner={handleSendProductToPlanner}
+            />
+          )}
+
           {activeNav === 'planner' && (
             <AutoPlannerView
               workspace={workspace}
@@ -1813,6 +1955,14 @@ export const App: React.FC = () => {
               onDeletePreset={handleDeletePreset}
               onCommitGeneratedPlates={handleCommitGeneratedPlates}
               onClearCarryForward={handleClearCarryForward}
+              categories={catalogSnapshot.categories}
+              products={catalogSnapshot.products}
+              plateSettingsByCategoryId={catalogSnapshot.plateSettingsByCategoryId}
+              plannerPreselection={plannerPreselection}
+              onConsumePreselection={handleConsumePlannerPreselection}
+              onSaveCategoryPlateSetting={handleSaveCategoryPlateSetting}
+              onCommitCatalogPlates={handleCommitCatalogPlates}
+              onOpenProductStudio={() => handleNavigate('product-studio')}
               onAlert={showAlert}
             />
           )}

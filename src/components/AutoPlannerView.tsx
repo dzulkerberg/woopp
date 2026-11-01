@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { RotateCcw, Store } from 'lucide-react';
 import {
   ABC,
   CHARM_BY_ID,
@@ -13,29 +14,39 @@ import {
   emptyAlphabetMap,
   emptyCharmsMap,
   normalizeAlphabetMap,
-  normalizeCharmsMap,
   sumAlphabetMaps,
   sumCharmsMaps,
 } from '../constants';
 import {
   AlphabetPreset,
+  CatalogProduct,
+  CategoryPlateSetting,
   CharmId,
   CharmsMap,
   LettersMap,
+  PlannerPreselection,
   PlateGenerationMode,
-  ProductionJob,
+  ProductCategory,
   ProductionWorkspaceV5,
 } from '../types';
 import {
+  createZeroedPlannerInputs,
+  DraftCatalogPlatePreview,
+  generateIndependentKeycapBatchPreviews,
+  validateBuiltInPlateCategoryIsolation,
+} from '../utils/catalogPlannerEngine';
+import {
   computeColorPlanningState,
-  computeIntelligentPlates,
   DraftPlatePreview,
   inferPlateMode,
-  isValidProductionAllocationJob,
 } from '../utils/productionEngine';
+import { CatalogCategoryPlannerSection } from './CatalogCategoryPlannerSection';
 import { DurationHMInput } from './DurationHMInput';
+import { CategoryIcon } from './product-studio/CategoryIcon';
 
-interface AutoPlannerViewProps {
+type PlannerWorkflowId = 'builtin:alphabet' | 'builtin:charm' | `catalog:${string}`;
+
+export interface AutoPlannerViewProps {
   workspace: ProductionWorkspaceV5;
   selectedProjectId: string;
   onSelectProject: (projectId: string) => void;
@@ -60,26 +71,24 @@ interface AutoPlannerViewProps {
     mode: PlateGenerationMode;
     trimTargetRemainder: boolean;
   }) => void;
+  categories?: readonly ProductCategory[];
+  products?: readonly CatalogProduct[];
+  plateSettingsByCategoryId?: Record<string, CategoryPlateSetting>;
+  plannerPreselection?: PlannerPreselection | null;
+  onConsumePreselection?: () => void;
+  onSaveCategoryPlateSetting?: (
+    setting: Omit<CategoryPlateSetting, 'ownerId' | 'updatedAt'>
+  ) => Promise<void>;
+  onCommitCatalogPlates?: (params: {
+    projectId: string;
+    colorId: string;
+    category: ProductCategory;
+    confirmedPlates: DraftCatalogPlatePreview[];
+    onSuccess?: () => void;
+  }) => void;
+  onOpenProductStudio?: () => void;
   onAlert: (msg: string, title?: string) => void;
 }
-
-const MODE_OPTIONS: { id: PlateGenerationMode; label: string; hint: string }[] = [
-  {
-    id: 'alphabet_only',
-    label: 'Alphabet Only',
-    hint: 'Distributes A–Z keycaps only; preserves Charm targets & queued Charm plates',
-  },
-  {
-    id: 'charm_only',
-    label: 'Charm Only',
-    hint: 'Distributes Charm keycaps (♥ ★ ✿ # @) only; preserves A–Z targets & queued A–Z plates',
-  },
-  {
-    id: 'mixed',
-    label: 'Alphabet + Charm (Mixed)',
-    hint: 'Combines A–Z and Charm keycaps together up to 138 pcs per plate',
-  },
-];
 
 export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   workspace,
@@ -89,6 +98,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   onDeletePreset,
   onCommitGeneratedPlates,
   onClearCarryForward,
+  categories = [],
+  products = [],
+  plateSettingsByCategoryId = {},
+  plannerPreselection = null,
+  onConsumePreselection,
+  onSaveCategoryPlateSetting,
+  onCommitCatalogPlates,
+  onOpenProductStudio,
   onAlert,
 }) => {
   const activeProjects = workspace.projects.filter((p) => p.status !== 'Archived');
@@ -110,17 +127,25 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     currentProject?.plateCapacity || DEFAULT_PLATE_CAPACITY
   );
   const [defaultPlateMinutes, setDefaultPlateMinutes] = useState<number>(195); // 3h 15m Bambu Studio default
-  const [generationMode, setGenerationMode] = useState<PlateGenerationMode>('mixed');
+  const [selectedWorkflow, setSelectedWorkflow] =
+    useState<PlannerWorkflowId>('builtin:alphabet');
+
+  // Independent editable batch inputs (default to 0; never force completed counts as locked minimums)
   const [draftLetters, setDraftLetters] = useState<LettersMap>(() => emptyAlphabetMap());
   const [draftCharms, setDraftCharms] = useState<Record<CharmId, number>>(() =>
     emptyCharmsMap()
   );
-  const [hasUnsavedGridEdits, setHasUnsavedGridEdits] = useState<boolean>(false);
-  const [preserveQueuedPlates, setPreserveQueuedPlates] = useState<boolean>(false);
+  const [draftCatalogQuantities, setDraftCatalogQuantities] = useState<
+    Record<string, number>
+  >({});
+  const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
+  const [resetSignal, setResetSignal] = useState<number>(0);
+  const [carryIncludedInBatch, setCarryIncludedInBatch] = useState<boolean>(false);
+
   const [presetName, setPresetName] = useState<string>('');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('');
 
-  // Staging area for manual adjustment before confirming plates
+  // Staging area for manual adjustment before confirming Built-in plates
   const [stagedPlates, setStagedPlates] = useState<DraftPlatePreview[] | null>(null);
   const [remainderMode, setRemainderMode] = useState<'carry_forward' | 'partial_plate'>(
     'carry_forward'
@@ -128,8 +153,24 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
   const prevContextKeyRef = useRef<string>('');
 
-  // Synchronize draft letters & charms when project/color changes OR when external queue
-  // mutations (delete, cancel, archive, restore, clear carry-forward) update valid planning state.
+  const activeCatalogCategories = useMemo(
+    () =>
+      [...categories]
+        .filter((c) => c.status === 'active')
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    [categories]
+  );
+
+  // Handle incoming `Send to Print Planner` preselection from Product Studio
+  useEffect(() => {
+    if (!plannerPreselection) return;
+    setSelectedWorkflow(`catalog:${plannerPreselection.categoryId}`);
+    setHighlightedProductId(plannerPreselection.productId || null);
+    setStagedPlates(null);
+    onConsumePreselection?.();
+  }, [plannerPreselection, onConsumePreselection]);
+
+  // Synchronize selected filament color & default plate capacity when project/color switches
   useEffect(() => {
     if (!currentProject) return;
     if (!projectColors.some((c) => c.id === selectedColorId) && projectColors[0]) {
@@ -138,179 +179,134 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     }
 
     const contextKey = `${currentProject.id}:${selectedColorId}`;
-    const isContextSwitch = prevContextKeyRef.current !== contextKey;
-    if (isContextSwitch) {
+    if (prevContextKeyRef.current !== contextKey) {
       prevContextKeyRef.current = contextKey;
-      setHasUnsavedGridEdits(false);
-      setPreserveQueuedPlates(false);
       setPlateCapacity(currentProject.plateCapacity || DEFAULT_PLATE_CAPACITY);
-      setStagedPlates(null);
-    } else if (hasUnsavedGridEdits) {
-      return;
-    }
-
-    const state = computeColorPlanningState(
-      workspace.jobs,
-      currentProject,
-      selectedColorId
-    );
-
-    setDraftLetters(
-      normalizeAlphabetMap(
-        sumAlphabetMaps([state.validAllocatedLetters, state.carryForwardLetters])
-      )
-    );
-    setDraftCharms(
-      normalizeCharmsMap(
-        sumCharmsMaps([state.validAllocatedCharms, state.carryForwardCharms])
-      )
-    );
-
-    if (!isContextSwitch) {
+      setCarryIncludedInBatch(false);
       setStagedPlates(null);
     }
-  }, [
-    currentProject,
-    selectedColorId,
-    projectColors,
-    workspace.jobs,
-    hasUnsavedGridEdits,
-  ]);
+  }, [currentProject, selectedColorId, projectColors]);
 
   const colorPlanningState = useMemo(() => {
     if (!currentProject) return null;
     return computeColorPlanningState(workspace.jobs, currentProject, selectedColorId);
   }, [workspace.jobs, currentProject, selectedColorId]);
 
-  const effectivePreserveQueued =
-    Boolean(preserveQueuedPlates) && (colorPlanningState?.queuedPlatesCount || 0) > 0;
+  const isCatalogWorkflow = selectedWorkflow.startsWith('catalog:');
+  const selectedCatalogCategoryId = isCatalogWorkflow
+    ? selectedWorkflow.slice('catalog:'.length)
+    : null;
+  const selectedCatalogCategory = useMemo(
+    () =>
+      selectedCatalogCategoryId
+        ? categories.find((c) => c.id === selectedCatalogCategoryId) || null
+        : null,
+    [categories, selectedCatalogCategoryId]
+  );
 
-  const distribution = useMemo(() => {
-    if (!currentProject) return null;
-    return computeIntelligentPlates(
-      workspace.jobs,
-      currentProject.id,
-      selectedColorId,
-      draftLetters,
-      plateCapacity,
-      defaultPlateMinutes,
-      {
-        requestedCharms: draftCharms,
-        mode: generationMode,
-        preserveQueuedPlates: effectivePreserveQueued,
-      }
-    );
+  const builtInMode: 'alphabet_only' | 'charm_only' =
+    selectedWorkflow === 'builtin:charm' ? 'charm_only' : 'alphabet_only';
+
+  const batchPreview = useMemo(() => {
+    if (!currentProject || isCatalogWorkflow) return null;
+    return generateIndependentKeycapBatchPreviews({
+      existingJobs: workspace.jobs,
+      projectId: currentProject.id,
+      colorId: selectedColorId,
+      mode: builtInMode,
+      batchLetters: draftLetters,
+      batchCharms: draftCharms,
+      capacity: plateCapacity,
+      defaultMinutesPerPlate: defaultPlateMinutes,
+    });
   }, [
-    workspace.jobs,
     currentProject,
+    isCatalogWorkflow,
+    workspace.jobs,
     selectedColorId,
+    builtInMode,
     draftLetters,
     draftCharms,
     plateCapacity,
     defaultPlateMinutes,
-    generationMode,
-    effectivePreserveQueued,
   ]);
 
   if (!currentProject || !colorPlanningState) {
     return (
       <div className="bg-surface border border-line rounded-xl p-8 text-center">
         <p className="text-sm text-ink-secondary">
-          Create or unarchive a project first to plan alphabet and charm keycap plates.
+          Create or unarchive a project first to plan production plates.
         </p>
       </div>
     );
   }
 
-  // Carry-forward is always derived from the current valid planning state (never a stale snapshot)
+  const selectedColorObj =
+    projectColors.find((c) => c.id === selectedColorId) ||
+    workspace.colors.find((c) => c.id === selectedColorId) ||
+    workspace.colors[0];
+
+  // Reset ONLY editable planner inputs to 0 without affecting completed production or Print Queue
+  const handleResetPlannerInputs = () => {
+    const zeroed = createZeroedPlannerInputs();
+    setDraftLetters(zeroed.draftLetters);
+    setDraftCharms(zeroed.draftCharms);
+    setDraftCatalogQuantities(zeroed.draftCatalogQuantities);
+    setCarryIncludedInBatch(false);
+    setHighlightedProductId(null);
+    setStagedPlates(null);
+    setResetSignal((n) => n + 1);
+  };
+
+  // Carry-forward derived strictly for the active single-category Built-in workflow
   const carryForwardLettersDerived = colorPlanningState.carryForwardLetters;
   const carryForwardCharmsDerived = colorPlanningState.carryForwardCharms;
 
   const carryForwardLettersCount =
-    generationMode === 'charm_only' ? 0 : colorPlanningState.carryForwardLettersCount;
+    !isCatalogWorkflow && builtInMode === 'alphabet_only'
+      ? colorPlanningState.carryForwardLettersCount
+      : 0;
   const carryForwardCharmsCount =
-    generationMode === 'alphabet_only' ? 0 : colorPlanningState.carryForwardCharmsCount;
+    !isCatalogWorkflow && builtInMode === 'charm_only'
+      ? colorPlanningState.carryForwardCharmsCount
+      : 0;
   const carryForwardTotal = carryForwardLettersCount + carryForwardCharmsCount;
-
-  // Determine how much of the active carry-forward is NOT yet included in the current grid
-  // so clicking Merge Carry-Forward never double-adds carry-forward on top of saved targets.
-  const missingCarryLetters = emptyAlphabetMap();
-  if (generationMode !== 'charm_only' && carryForwardLettersCount > 0) {
-    for (const letter of ABC) {
-      const carryVal = carryForwardLettersDerived[letter] || 0;
-      if (carryVal > 0) {
-        const expectedMin =
-          (colorPlanningState.validAllocatedLetters[letter] || 0) + carryVal;
-        missingCarryLetters[letter] = Math.max(
-          0,
-          expectedMin - (draftLetters[letter] || 0)
-        );
-      }
-    }
-  }
-  const missingCarryCharms: CharmsMap = {};
-  if (generationMode !== 'alphabet_only' && carryForwardCharmsCount > 0) {
-    for (const charmId of CHARM_IDS) {
-      const carryVal = carryForwardCharmsDerived[charmId] || 0;
-      if (carryVal > 0) {
-        const expectedMin =
-          (colorPlanningState.validAllocatedCharms[charmId] || 0) + carryVal;
-        const diff = Math.max(0, expectedMin - (draftCharms[charmId] || 0));
-        if (diff > 0) {
-          missingCarryCharms[charmId] = diff;
-        }
-      }
-    }
-  }
-  const missingCarryTotal =
-    countLetters(missingCarryLetters) + countCharms(missingCarryCharms);
 
   const handleSetLetterQty = (letter: string, rawVal: string) => {
     const val = Math.max(0, Math.floor(Number(rawVal) || 0));
-    setHasUnsavedGridEdits(true);
     setDraftLetters((prev) => ({ ...prev, [letter]: val }));
     setStagedPlates(null);
   };
 
   const handleSetCharmQty = (charmId: CharmId, nextVal: number) => {
     const safeVal = Math.max(0, Math.floor(Number.isFinite(nextVal) ? nextVal : 0));
-    setHasUnsavedGridEdits(true);
     setDraftCharms((prev) => ({ ...prev, [charmId]: safeVal }));
     setStagedPlates(null);
   };
 
-  const handleLoadAlphabetFromQueue = () => {
-    const jobsForPair: ProductionJob[] = workspace.jobs.filter(
-      (j) =>
-        j.projectId === currentProject.id &&
-        j.colorId === selectedColorId &&
-        isValidProductionAllocationJob(j)
-    );
-    setHasUnsavedGridEdits(true);
-    setDraftLetters(sumAlphabetMaps(jobsForPair.map((j) => j.letters)));
-    setStagedPlates(null);
-  };
-
-  const handleLoadCharmsFromQueue = () => {
-    const jobsForPair: ProductionJob[] = workspace.jobs.filter(
-      (j) =>
-        j.projectId === currentProject.id &&
-        j.colorId === selectedColorId &&
-        isValidProductionAllocationJob(j)
-    );
-    setHasUnsavedGridEdits(true);
-    setDraftCharms(sumCharmsMaps(jobsForPair.map((j) => j.charms)));
-    setStagedPlates(null);
+  const handleChangeCatalogQuantity = (selectionKey: string, nextQty: number) => {
+    const safeVal = Math.max(0, Math.floor(Number.isFinite(nextQty) ? nextQty : 0));
+    setDraftCatalogQuantities((prev) => {
+      const next = { ...prev };
+      if (safeVal <= 0) {
+        delete next[selectionKey];
+      } else {
+        next[selectionKey] = safeVal;
+      }
+      return next;
+    });
   };
 
   const handleIncludeCarryForward = () => {
-    if (missingCarryTotal === 0) return;
-    setHasUnsavedGridEdits(true);
-    if (generationMode !== 'charm_only' && countLetters(missingCarryLetters) > 0) {
-      setDraftLetters((prev) => sumAlphabetMaps([prev, missingCarryLetters]));
-    }
-    if (generationMode !== 'alphabet_only' && countCharms(missingCarryCharms) > 0) {
-      setDraftCharms((prev) => sumCharmsMaps([prev, missingCarryCharms]));
+    if (carryForwardTotal === 0 || carryIncludedInBatch) return;
+    if (builtInMode === 'alphabet_only' && carryForwardLettersCount > 0) {
+      setDraftLetters((prev) => sumAlphabetMaps([prev, carryForwardLettersDerived]));
+      setCarryIncludedInBatch(true);
+    } else if (builtInMode === 'charm_only' && carryForwardCharmsCount > 0) {
+      setDraftCharms((prev) =>
+        Object.assign(emptyCharmsMap(), sumCharmsMaps([prev, carryForwardCharmsDerived]))
+      );
+      setCarryIncludedInBatch(true);
     }
     setStagedPlates(null);
   };
@@ -318,7 +314,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   const handleApplyPreset = () => {
     const preset = workspace.presets.find((p) => p.id === selectedPresetId);
     if (!preset) return;
-    setHasUnsavedGridEdits(true);
+    setSelectedWorkflow('builtin:alphabet');
     setDraftLetters(normalizeAlphabetMap(preset.letters));
     if (preset.plateCapacity > 0) {
       setPlateCapacity(preset.plateCapacity);
@@ -350,50 +346,29 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   };
 
   const handlePreparePlatesPreview = (mode: 'carry_forward' | 'partial_plate') => {
-    if (!distribution) return;
-    if (distribution.underLockedLabels.length > 0) {
+    if (!batchPreview) return;
+    if (batchPreview.totalRequestedCount <= 0) {
       onAlert(
-        `Target cannot be lower than already Completed or Printing plates for: ${distribution.underLockedLabels.join(
-          ', '
-        )}.`,
-        'Locked Plate Protection'
-      );
-      return;
-    }
-    if (distribution.totalNetCount === 0) {
-      onAlert(
-        'Enter at least 1 net keycap to plate (above Completed/Printing plates) for the selected generation mode.'
+        `Enter at least 1 ${
+          builtInMode === 'alphabet_only' ? 'Alphabet A–Z' : 'Charm'
+        } keycap quantity to generate print plates.`
       );
       return;
     }
 
     setRemainderMode(mode);
-    const previewList: DraftPlatePreview[] = distribution.fullPlates.map((p) => ({
+    const previewList: DraftPlatePreview[] = batchPreview.fullPlates.map((p) => ({
       ...p,
       letters: { ...p.letters },
       charms: { ...p.charms },
     }));
 
-    if (mode === 'partial_plate' && distribution.remainderCount > 0) {
+    if (mode === 'partial_plate' && batchPreview.remainderCount > 0) {
       const usedNums = new Set<number>(previewList.map((p) => p.plateNumber));
       workspace.jobs
         .filter((j) => j.projectId === currentProject.id && j.colorId === selectedColorId)
         .forEach((j) => {
-          if (
-            Boolean(j.archived) ||
-            j.stage === 'Completed' ||
-            j.stage === 'Printing' ||
-            j.stage === 'Failed / Reprint' ||
-            j.stage === 'Cancelled' ||
-            (effectivePreserveQueued &&
-              (j.stage === 'Planned' || j.stage === 'Ready to Print')) ||
-            (generationMode === 'alphabet_only' &&
-              countLetters(j.letters) === 0 &&
-              countCharms(j.charms) > 0) ||
-            (generationMode === 'charm_only' &&
-              countCharms(j.charms) === 0 &&
-              countLetters(j.letters) > 0)
-          ) {
+          if (!j.archived && j.stage !== 'Cancelled') {
             usedNums.add(j.plateNumber);
           }
         });
@@ -403,9 +378,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         partialNum += 1;
       }
 
-      const remLetters = { ...distribution.remainder };
-      const remCharms = { ...distribution.remainderCharms };
-      const freeCap = Math.max(0, plateCapacity - distribution.remainderCount);
+      const remLetters = { ...batchPreview.remainderLetters };
+      const remCharms = { ...batchPreview.remainderCharms };
+      const freeCap = Math.max(0, plateCapacity - batchPreview.remainderCount);
 
       previewList.push({
         tempId: `draft-partial-${Date.now()}`,
@@ -416,11 +391,23 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         plateMode: inferPlateMode(remLetters, remCharms),
         estimatedMinutes: Math.max(
           15,
-          Math.round((distribution.remainderCount / plateCapacity) * defaultPlateMinutes)
+          Math.round((batchPreview.remainderCount / plateCapacity) * defaultPlateMinutes)
         ),
         slicerVerified: false,
-        notes: `Incomplete plate (${distribution.remainderCount}/${plateCapacity} pcs · ${freeCap} pcs remaining capacity)`,
+        notes: `Incomplete plate (${batchPreview.remainderCount}/${plateCapacity} pcs · ${freeCap} pcs remaining capacity)`,
       });
+    }
+
+    // Validate strict single-category plate isolation at preview generation
+    for (const plate of previewList) {
+      const isoCheck = validateBuiltInPlateCategoryIsolation(plate, builtInMode);
+      if (!isoCheck.valid) {
+        onAlert(
+          isoCheck.error || 'Cannot mix different categories on a single plate.',
+          'Category Mixing Blocked'
+        );
+        return;
+      }
     }
 
     if (previewList.length === 0 && mode === 'carry_forward') {
@@ -450,7 +437,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         return {
           ...plate,
           letters: nextLetters,
-          plateMode: inferPlateMode(nextLetters, plate.charms),
+          plateMode: 'alphabet_only',
         };
       })
     );
@@ -475,14 +462,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         return {
           ...plate,
           charms: nextCharms,
-          plateMode: inferPlateMode(plate.letters, nextCharms),
+          plateMode: 'charm_only',
         };
       })
     );
   };
 
   const handleAddLetterToStagedPlate = (tempId: string, letter: string) => {
-    if (!stagedPlates || !ABC.includes(letter)) return;
+    if (!stagedPlates || !ABC.includes(letter) || builtInMode !== 'alphabet_only') return;
     setStagedPlates(
       stagedPlates.map((plate) => {
         if (plate.tempId !== tempId) return plate;
@@ -501,14 +488,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         return {
           ...plate,
           letters: nextLetters,
-          plateMode: inferPlateMode(nextLetters, plate.charms),
+          plateMode: 'alphabet_only',
         };
       })
     );
   };
 
   const handleAddCharmToStagedPlate = (tempId: string, charmId: CharmId) => {
-    if (!stagedPlates || !CHARM_IDS.includes(charmId)) return;
+    if (!stagedPlates || !CHARM_IDS.includes(charmId) || builtInMode !== 'charm_only') return;
     setStagedPlates(
       stagedPlates.map((plate) => {
         if (plate.tempId !== tempId) return plate;
@@ -527,7 +514,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         return {
           ...plate,
           charms: nextCharms,
-          plateMode: inferPlateMode(plate.letters, nextCharms),
+          plateMode: 'charm_only',
         };
       })
     );
@@ -552,9 +539,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   };
 
   const handleConfirmAndSavePlates = () => {
-    if (!stagedPlates || !distribution) return;
+    if (!stagedPlates || !batchPreview) return;
 
-    // Strictly validate capacity on every staged plate before saving (never exceed plate capacity)
+    // Validate capacity AND strict single-category plate isolation before confirming to Print Queue
     for (const plate of stagedPlates) {
       const qty = countPlateKeycaps(plate);
       if (qty <= 0) {
@@ -568,29 +555,47 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         );
         return;
       }
+      const isoCheck = validateBuiltInPlateCategoryIsolation(plate, builtInMode);
+      if (!isoCheck.valid) {
+        onAlert(
+          isoCheck.error || 'Cannot mix different categories on a single plate.',
+          'Category Mixing Blocked'
+        );
+        return;
+      }
     }
 
+    const baseCarryLetters = carryIncludedInBatch
+      ? emptyAlphabetMap()
+      : carryForwardLettersDerived;
+    const baseCarryCharms: CharmsMap = carryIncludedInBatch
+      ? {}
+      : carryForwardCharmsDerived;
+
     const carryForwardLettersToSave =
-      remainderMode === 'carry_forward' && generationMode !== 'charm_only'
-        ? distribution.remainder
-        : generationMode === 'charm_only'
-        ? compactLettersMap(carryForwardLettersDerived)
-        : emptyAlphabetMap();
+      builtInMode === 'alphabet_only'
+        ? remainderMode === 'carry_forward'
+          ? compactLettersMap(
+              sumAlphabetMaps([baseCarryLetters, batchPreview.remainderLetters])
+            )
+          : compactLettersMap(baseCarryLetters)
+        : compactLettersMap(carryForwardLettersDerived);
 
     const carryForwardCharmsToSave =
-      remainderMode === 'carry_forward' && generationMode !== 'alphabet_only'
-        ? distribution.remainderCharms
-        : generationMode === 'alphabet_only'
-        ? compactCharmsMap(carryForwardCharmsDerived)
-        : {};
+      builtInMode === 'charm_only'
+        ? remainderMode === 'carry_forward'
+          ? compactCharmsMap(
+              sumCharmsMaps([baseCarryCharms, batchPreview.remainderCharms])
+            )
+          : compactCharmsMap(baseCarryCharms)
+        : compactCharmsMap(carryForwardCharmsDerived);
 
-    // Reconcile targets with confirmed staged plates + locked plates + carry-forward so manual edits stay accurate,
-    // while strictly preserving the untouched category when in Alphabet Only or Charm Only mode.
     const stagedLettersSum = sumAlphabetMaps(stagedPlates.map((p) => p.letters));
     const stagedCharmsSum = sumCharmsMaps(stagedPlates.map((p) => p.charms));
 
+    // Preserve all existing Completed, Printing, and Queued plates and add this new batch cleanly
     const committedTargetLetters =
-      generationMode === 'charm_only'
+      builtInMode === 'charm_only'
         ? compactLettersMap(
             sumAlphabetMaps([
               colorPlanningState.validAllocatedLetters,
@@ -599,14 +604,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           )
         : compactLettersMap(
             sumAlphabetMaps([
-              distribution.lockedTotals,
+              colorPlanningState.validAllocatedLetters,
               stagedLettersSum,
               carryForwardLettersToSave,
             ])
           );
 
     const committedTargetCharms =
-      generationMode === 'alphabet_only'
+      builtInMode === 'alphabet_only'
         ? compactCharmsMap(
             sumCharmsMaps([
               colorPlanningState.validAllocatedCharms,
@@ -615,7 +620,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           )
         : compactCharmsMap(
             sumCharmsMaps([
-              distribution.lockedCharms,
+              colorPlanningState.validAllocatedCharms,
               stagedCharmsSum,
               carryForwardCharmsToSave,
             ])
@@ -625,15 +630,20 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       projectId: currentProject.id,
       colorId: selectedColorId,
       plateCapacity,
-      mode: generationMode,
+      mode: builtInMode,
       targetLetters: committedTargetLetters,
       targetCharms: committedTargetCharms,
       carryForwardLetters: carryForwardLettersToSave,
       carryForwardCharms: carryForwardCharmsToSave,
       confirmedPlates: stagedPlates,
-      preserveQueuedPlates: effectivePreserveQueued,
+      preserveQueuedPlates: true,
       onSuccess: () => {
-        setHasUnsavedGridEdits(false);
+        if (builtInMode === 'alphabet_only') {
+          setDraftLetters(emptyAlphabetMap());
+        } else {
+          setDraftCharms(emptyCharmsMap());
+        }
+        setCarryIncludedInBatch(false);
         setStagedPlates(null);
       },
     });
@@ -641,38 +651,65 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
   const totalAlphabetRequested = countLetters(draftLetters);
   const totalCharmsRequested = countCharms(draftCharms);
-  const activeModeTargetTotal =
-    generationMode === 'alphabet_only'
-      ? totalAlphabetRequested
-      : generationMode === 'charm_only'
-      ? totalCharmsRequested
-      : totalAlphabetRequested + totalCharmsRequested;
+  const totalCatalogRequested = Object.values(draftCatalogQuantities).reduce(
+    (sum, v) => sum + Math.max(0, Math.floor(Number(v || 0))),
+    0
+  );
 
-  const lockedAlphabetCount = distribution ? countLetters(distribution.lockedTotals) : 0;
-  const lockedCharmCount = distribution ? countCharms(distribution.lockedCharms) : 0;
-  const activeModeLockedCount =
-    generationMode === 'alphabet_only'
-      ? lockedAlphabetCount
-      : generationMode === 'charm_only'
-      ? lockedCharmCount
-      : lockedAlphabetCount + lockedCharmCount;
+  const currentPlannerInputDisplay = isCatalogWorkflow
+    ? totalCatalogRequested
+    : builtInMode === 'alphabet_only'
+    ? totalAlphabetRequested
+    : totalCharmsRequested;
 
   const remainderSummaryParts: string[] = [];
-  if (distribution) {
-    for (const [k, v] of Object.entries(distribution.remainder)) {
+  if (batchPreview) {
+    for (const [k, v] of Object.entries(batchPreview.remainderLetters)) {
       if (v > 0) remainderSummaryParts.push(`${k}×${v}`);
     }
     for (const def of CHARM_DEFINITIONS) {
-      const v = distribution.remainderCharms[def.id] || 0;
+      const v = batchPreview.remainderCharms[def.id] || 0;
       if (v > 0) remainderSummaryParts.push(`${def.symbol} ${def.label}×${v}`);
     }
   }
 
   return (
     <div className="space-y-6">
-      {/* Top Context Selector: Project, Color, Plate Capacity, Presets & Production Mode */}
+      {/* Top Context Selector: Project, Color, Reset & Category Isolation Selector */}
       <section className="bg-surface border border-line rounded-xl p-6 space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-line">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">
+              Production Batch Context
+            </h2>
+            <p className="text-xs text-muted mt-0.5">
+              Select target project, filament color, and a single product category. Products share a plate only within the same category.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {onOpenProductStudio && (
+              <button
+                type="button"
+                onClick={onOpenProductStudio}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line bg-elevated hover:bg-recessed text-xs font-medium text-ink whitespace-nowrap transition-colors"
+              >
+                <Store className="w-3.5 h-3.5 text-brand-text" />
+                <span>Product Studio</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleResetPlannerInputs}
+              title="Reset current planner quantity inputs to 0 without affecting completed production or Print Queue"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-line bg-elevated hover:bg-recessed text-xs font-semibold text-ink whitespace-nowrap transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-ink-secondary" />
+              <span>Reset</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-semibold text-ink-secondary mb-1">
               Target Project
@@ -690,9 +727,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             </select>
           </div>
 
-          <div>
+          <div className={isCatalogWorkflow ? 'lg:col-span-3' : ''}>
             <label className="block text-xs font-semibold text-ink-secondary mb-1">
-              Color Variant
+              Filament Color
             </label>
             <div className="flex flex-wrap gap-1.5">
               {projectColors.map((c) => (
@@ -716,114 +753,173 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-ink-secondary mb-1">
-              Capacity &amp; Bambu Est. Time
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                max={1000}
-                title="Keycaps per plate (1 letter = 1 pc, 1 charm = 1 pc)"
-                value={plateCapacity}
-                onChange={(e) => {
-                  setPlateCapacity(Math.max(1, Math.floor(Number(e.target.value) || 138)));
-                  setStagedPlates(null);
-                }}
-                className="w-20 px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink font-mono-data focus:border-brand focus:outline-none"
-              />
-              <DurationHMInput
-                compact
-                minutes={defaultPlateMinutes}
-                onChangeMinutes={(mins) => {
-                  setDefaultPlateMinutes(mins);
-                  setStagedPlates(null);
-                }}
-                ariaLabelPrefix="Default plate Bambu Studio duration"
-              />
-            </div>
-          </div>
+          {!isCatalogWorkflow && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-ink-secondary mb-1">
+                  Capacity &amp; Bambu Est. Time
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    title="Keycaps per plate"
+                    value={plateCapacity}
+                    onChange={(e) => {
+                      setPlateCapacity(
+                        Math.max(1, Math.floor(Number(e.target.value) || 138))
+                      );
+                      setStagedPlates(null);
+                    }}
+                    className="w-20 px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink font-mono-data focus:border-brand focus:outline-none"
+                  />
+                  <DurationHMInput
+                    compact
+                    minutes={defaultPlateMinutes}
+                    onChangeMinutes={(mins) => {
+                      setDefaultPlateMinutes(mins);
+                      setStagedPlates(null);
+                    }}
+                    ariaLabelPrefix="Default plate Bambu Studio duration"
+                  />
+                </div>
+              </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-ink-secondary mb-1">
-              Load Alphabet Preset
-            </label>
-            <div className="flex gap-2">
-              <select
-                value={selectedPresetId}
-                onChange={(e) => setSelectedPresetId(e.target.value)}
-                className="flex-1 min-w-0 px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
-              >
-                <option value="">Select preset...</option>
-                {workspace.presets.map((pr) => (
-                  <option key={pr.id} value={pr.id}>
-                    {pr.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!selectedPresetId}
-                onClick={handleApplyPreset}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-40 whitespace-nowrap transition-colors"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink-secondary mb-1">
+                  Load Alphabet Preset
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedPresetId}
+                    onChange={(e) => setSelectedPresetId(e.target.value)}
+                    className="flex-1 min-w-0 px-2.5 py-2 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
+                  >
+                    <option value="">Select preset...</option>
+                    {workspace.presets.map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!selectedPresetId}
+                    onClick={handleApplyPreset}
+                    className="px-3 py-2 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-40 whitespace-nowrap transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Auto Plate Generator Mode Selector */}
-        <div className="pt-4 border-t border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold text-ink">
-              Auto Plate Generator Mode
-            </div>
-            <div className="text-[11px] text-muted mt-0.5">
-              {MODE_OPTIONS.find((m) => m.id === generationMode)?.hint}
-            </div>
+        {/* Category Selector (Product Studio Categories + Built-in Single-Category Keycaps) */}
+        <div className="pt-4 border-t border-line space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-ink">
+              Product Category (Same-Category Plate Rule)
+            </span>
+            <span className="text-[11px] text-muted">
+              Items from different categories never mix on the same plate
+            </span>
           </div>
 
           <div
-            role="group"
-            aria-label="Plate generation mode"
-            className="inline-flex flex-wrap items-center gap-1 p-1 rounded-xl bg-recessed border border-line"
+            role="tablist"
+            aria-label="Production category selector"
+            className="flex flex-wrap items-center gap-2"
           >
-            {MODE_OPTIONS.map((opt) => {
-              const active = generationMode === opt.id;
+            {activeCatalogCategories.map((cat) => {
+              const wfId: PlannerWorkflowId = `catalog:${cat.id}`;
+              const active = selectedWorkflow === wfId;
+              const catProdCount = products.filter(
+                (p) => p.categoryId === cat.id && p.status === 'active'
+              ).length;
               return (
                 <button
-                  key={opt.id}
+                  key={cat.id}
                   type="button"
+                  role="tab"
+                  aria-selected={active}
                   onClick={() => {
-                    setGenerationMode(opt.id);
+                    setSelectedWorkflow(wfId);
                     setStagedPlates(null);
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
                     active
-                      ? 'bg-brand text-white shadow-xs'
-                      : 'text-ink-secondary hover:text-ink'
+                      ? 'border-brand bg-brand text-white'
+                      : 'border-line bg-elevated text-ink-secondary hover:text-ink'
                   }`}
                 >
-                  {opt.label}
+                  <CategoryIcon
+                    name={cat.iconName}
+                    className="w-3.5 h-3.5 shrink-0"
+                  />
+                  <span>{cat.name}</span>
+                  <span
+                    className={`font-mono-data text-[11px] ${
+                      active ? 'text-white/85' : 'text-muted'
+                    }`}
+                  >
+                    ({catProdCount})
+                  </span>
                 </button>
               );
             })}
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedWorkflow === 'builtin:alphabet'}
+              onClick={() => {
+                setSelectedWorkflow('builtin:alphabet');
+                setCarryIncludedInBatch(false);
+                setStagedPlates(null);
+              }}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+                selectedWorkflow === 'builtin:alphabet'
+                  ? 'border-brand bg-brand text-white'
+                  : 'border-line bg-elevated text-ink-secondary hover:text-ink'
+              }`}
+            >
+              <span>Alphabet Keycaps (A–Z)</span>
+            </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedWorkflow === 'builtin:charm'}
+              onClick={() => {
+                setSelectedWorkflow('builtin:charm');
+                setCarryIncludedInBatch(false);
+                setStagedPlates(null);
+              }}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+                selectedWorkflow === 'builtin:charm'
+                  ? 'border-brand bg-brand text-white'
+                  : 'border-line bg-elevated text-ink-secondary hover:text-ink'
+              }`}
+            >
+              <span>Charm Keycaps (♥ ★ ✿ # @)</span>
+            </button>
           </div>
         </div>
 
-        {/* 4-Metric Color Plate & Carry-Forward Breakdown */}
+        {/* 4-Metric Color Plate & Production Status Breakdown */}
         <div className="rounded-xl border border-line bg-recessed grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-line">
           <div className="p-3">
             <div className="text-[11px] font-medium text-muted">
               Current Planner Input
             </div>
             <div className="text-sm font-bold font-mono-data text-ink mt-0.5">
-              {(totalAlphabetRequested + totalCharmsRequested).toLocaleString()} pcs
+              {currentPlannerInputDisplay.toLocaleString()} pcs
             </div>
-            <div className="text-[11px] font-mono-data text-muted mt-0.5">
-              {totalAlphabetRequested} A–Z · {totalCharmsRequested} Charm
+            <div className="text-[11px] text-muted mt-0.5">
+              New batch quantity to plate
             </div>
           </div>
 
@@ -871,21 +967,21 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           </div>
         </div>
 
-        {/* Carry-Forward Controls */}
-        {carryForwardTotal > 0 && (
+        {/* Carry-Forward Controls (hidden completely when no Carry-Forward controls are visible) */}
+        {!isCatalogWorkflow && carryForwardTotal > 0 && (
           <div className="p-3.5 rounded-xl bg-warning-soft border border-warning-border text-xs text-warning-text flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
-              {missingCarryTotal > 0 ? (
+              {!carryIncludedInBatch ? (
                 <button
                   type="button"
                   onClick={handleIncludeCarryForward}
                   className="px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white font-semibold whitespace-nowrap transition-colors"
                 >
-                  + Merge Carry-Forward ({missingCarryTotal} pcs)
+                  + Merge Carry-Forward ({carryForwardTotal} pcs)
                 </button>
               ) : (
                 <span className="px-2.5 py-1 rounded-lg bg-surface border border-warning-border text-[11px] font-medium text-warning-text whitespace-nowrap">
-                  Carry-forward ({carryForwardTotal} pcs) included in target grid
+                  Carry-forward ({carryForwardTotal} pcs) merged into current batch
                 </span>
               )}
               {onClearCarryForward && (
@@ -895,7 +991,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     onClearCarryForward({
                       projectId: currentProject.id,
                       colorId: selectedColorId,
-                      mode: generationMode,
+                      mode: builtInMode,
                       trimTargetRemainder: true,
                     })
                   }
@@ -909,365 +1005,288 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         )}
       </section>
 
-      {/* Category 1: Alphabet A–Z */}
-      <section
-        className={`bg-surface border border-line rounded-xl p-6 space-y-5 transition-opacity ${
-          generationMode === 'charm_only' ? 'opacity-65' : ''
-        }`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-ink">
-                Alphabet A–Z
-              </h2>
-              <span className="text-xs font-mono-data text-brand-text font-semibold">
-                · {totalAlphabetRequested} pcs
-              </span>
-              {generationMode === 'charm_only' && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-recessed border border-line text-muted font-medium">
-                  Excluded in Charm Only mode · Existing A–Z plates preserved
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted mt-0.5">
-              Enter custom quantity per letter for this filament color. Unrequested letters are never added automatically.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {hasUnsavedGridEdits && (
-              <button
-                type="button"
-                onClick={() => {
-                  setHasUnsavedGridEdits(false);
-                  setStagedPlates(null);
-                }}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-brand-border bg-brand-soft text-brand-text whitespace-nowrap transition-colors"
-              >
-                Reset to Active Queue
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleLoadAlphabetFromQueue}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
-            >
-              Load Queue A–Z
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (distribution) {
-                  setHasUnsavedGridEdits(true);
-                  setDraftLetters({ ...distribution.lockedTotals });
-                  setStagedPlates(null);
-                }
-              }}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
-            >
-              Reset A–Z to Locked Minimum
-            </button>
-          </div>
-        </div>
+      {/* Dynamic Product Studio Category Planner */}
+      {isCatalogWorkflow && selectedCatalogCategory && selectedColorObj && (
+        <CatalogCategoryPlannerSection
+          category={selectedCatalogCategory}
+          categoryProducts={products}
+          plateSetting={plateSettingsByCategoryId[selectedCatalogCategory.id] || null}
+          currentProject={currentProject}
+          selectedColor={selectedColorObj}
+          existingJobs={workspace.jobs}
+          quantitiesByKey={draftCatalogQuantities}
+          highlightedProductId={highlightedProductId}
+          onChangeQuantity={handleChangeCatalogQuantity}
+          onSaveCategoryPlateSetting={
+            onSaveCategoryPlateSetting || (async () => undefined)
+          }
+          onConfirmCatalogPlates={(category, confirmedPlates, onSuccess) => {
+            onCommitCatalogPlates?.({
+              projectId: currentProject.id,
+              colorId: selectedColorId,
+              category,
+              confirmedPlates,
+              onSuccess: () => {
+                onSuccess();
+                // Clear planned quantities for this category after successful queue commit
+                const catProductIds = new Set(
+                  products
+                    .filter((p) => p.categoryId === category.id)
+                    .map((p) => p.id)
+                );
+                setDraftCatalogQuantities((prev) => {
+                  const next: Record<string, number> = {};
+                  for (const [key, val] of Object.entries(prev)) {
+                    const pid = key.split('::')[0];
+                    if (!catProductIds.has(pid)) {
+                      next[key] = val;
+                    }
+                  }
+                  return next;
+                });
+              },
+            });
+          }}
+          onOpenProductStudio={onOpenProductStudio || (() => undefined)}
+          onAlert={onAlert}
+          resetSignal={resetSignal}
+        />
+      )}
 
-        <div className="grid grid-cols-4 sm:grid-cols-7 md:grid-cols-9 lg:grid-cols-13 gap-2.5">
-          {ABC.map((letter) => {
-            const lockedVal = distribution?.lockedTotals[letter] || 0;
-            const currentVal = draftLetters[letter] ?? 0;
-            const isInvalid = generationMode !== 'charm_only' && currentVal < lockedVal;
-            return (
-              <div
-                key={letter}
-                className={`p-2 rounded-xl border ${
-                  isInvalid
-                    ? 'border-status-error bg-error-soft'
-                    : currentVal > 0
-                    ? 'border-brand-border bg-brand-soft'
-                    : 'border-line bg-elevated'
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-bold text-ink">{letter}</span>
-                  {lockedVal > 0 && (
-                    <span
-                      className="text-[10px] font-mono-data text-muted"
-                      title="Locked in Printing/Completed plates"
-                    >
-                      L:{lockedVal}
-                    </span>
-                  )}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  aria-label={`Quantity for letter ${letter}`}
-                  value={currentVal}
-                  onChange={(e) => handleSetLetterQty(letter, e.target.value)}
-                  className="w-full px-1.5 py-1.5 text-center rounded-lg border border-line bg-input text-xs font-mono-data text-ink focus:border-brand focus:outline-none"
-                />
+      {isCatalogWorkflow && !selectedCatalogCategory && (
+        <section className="bg-surface border border-line rounded-xl p-8 text-center space-y-3">
+          <p className="text-sm text-ink-secondary">
+            The selected Product Studio category was not found. Choose another category above or open Product Studio.
+          </p>
+          {onOpenProductStudio && (
+            <button
+              type="button"
+              onClick={onOpenProductStudio}
+              className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover text-xs font-semibold text-white transition-colors"
+            >
+              Open Product Studio
+            </button>
+          )}
+        </section>
+      )}
+
+      {/* Built-in Category 1: Alphabet Keycaps A–Z */}
+      {!isCatalogWorkflow && builtInMode === 'alphabet_only' && (
+        <section className="bg-surface border border-line rounded-xl p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base font-semibold text-ink">
+                  Alphabet A–Z Batch Quantities
+                </h2>
+                <span className="text-xs font-mono-data text-brand-text font-semibold">
+                  · {totalAlphabetRequested} pcs
+                </span>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Save Reusable Alphabet Preset Bar */}
-        <div className="pt-4 border-t border-line flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2 flex-1 max-w-md">
-            <input
-              placeholder="Save current A–Z grid as reusable preset..."
-              value={presetName}
-              onChange={(e) => setPresetName(e.target.value)}
-              maxLength={80}
-              className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={handleSaveNewPreset}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
-            >
-              Save Preset
-            </button>
-            {selectedPresetId && !selectedPresetId.startsWith('preset-woopp-') && (
-              <button
-                type="button"
-                onClick={() => {
-                  onDeletePreset(selectedPresetId);
-                  setSelectedPresetId('');
-                }}
-                className="px-2.5 py-1.5 text-xs text-error-text hover:underline whitespace-nowrap"
-              >
-                Delete Preset
-              </button>
-            )}
-          </div>
-          <div className="text-xs font-mono-data text-muted">
-            Alphabet Subtotal: <b className="text-ink">{totalAlphabetRequested}</b> pcs · Locked: <b className="text-ink">{lockedAlphabetCount}</b> pcs
-          </div>
-        </div>
-      </section>
-
-      {/* Category 2: Charm Keycaps */}
-      <section
-        className={`bg-surface border border-line rounded-xl p-6 space-y-5 transition-opacity ${
-          generationMode === 'alphabet_only' ? 'opacity-65' : ''
-        }`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-ink">
-                Charm Keycaps
-              </h2>
-              <span className="text-xs font-mono-data text-brand-text font-semibold">
-                · {totalCharmsRequested} pcs
-              </span>
-              {generationMode === 'alphabet_only' && (
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-recessed border border-line text-muted font-medium">
-                  Excluded in Alphabet Only mode · Existing Charm plates preserved
-                </span>
-              )}
+              <p className="text-xs text-muted mt-0.5">
+                Enter new keycap quantities to print for this filament color. Completed and queued plates remain untouched.
+              </p>
             </div>
-            <p className="text-xs text-muted mt-0.5">
-              Each charm counts as 1 physical keycap and supports independent quantities per filament color (defaults to 0).
-            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleLoadCharmsFromQueue}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
-            >
-              Load Queue Charms
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (distribution) {
-                  setHasUnsavedGridEdits(true);
-                  setDraftCharms({ ...distribution.lockedCharms });
-                  setStagedPlates(null);
-                }
-              }}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
-            >
-              Reset Charms to Locked Minimum
-            </button>
-          </div>
-        </div>
-
-        {/* 5 Visual Charm Cards (Desktop 5-col, Tablet 3-col, Mobile 1-2 col) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
-          {CHARM_DEFINITIONS.map((charm) => {
-            const lockedVal = distribution?.lockedCharms[charm.id] || 0;
-            const currentVal = draftCharms[charm.id] ?? 0;
-            const isInvalid = generationMode !== 'alphabet_only' && currentVal < lockedVal;
-
-            return (
-              <div
-                key={charm.id}
-                className={`rounded-xl border p-4 flex flex-col justify-between gap-3 transition-colors ${
-                  isInvalid
-                    ? 'border-status-error bg-error-soft'
-                    : currentVal > 0
-                    ? 'border-brand-border bg-brand-soft'
-                    : 'border-line bg-elevated'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className="w-10 h-10 rounded-xl bg-brand-soft border border-brand-border flex items-center justify-center text-lg font-bold text-brand-text shrink-0"
-                      aria-hidden="true"
-                    >
-                      {charm.symbol}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-bold tracking-wide text-ink truncate">
-                        {charm.label}
-                      </div>
-                      <div className="text-[10px] font-mono-data text-muted truncate">
-                        {charm.id}
-                      </div>
-                    </div>
+          <div className="grid grid-cols-4 sm:grid-cols-7 md:grid-cols-9 lg:grid-cols-13 gap-2.5">
+            {ABC.map((letter) => {
+              const currentVal = draftLetters[letter] ?? 0;
+              return (
+                <div
+                  key={letter}
+                  className={`p-2 rounded-xl border ${
+                    currentVal > 0
+                      ? 'border-brand-border bg-brand-soft'
+                      : 'border-line bg-elevated'
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-bold text-ink">{letter}</span>
                   </div>
-
-                  {lockedVal > 0 && (
-                    <span
-                      className="text-[10px] font-mono-data px-1.5 py-0.5 rounded bg-recessed border border-line text-ink-secondary shrink-0"
-                      title="Locked in Printing/Completed plates"
-                    >
-                      L:{lockedVal}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    aria-label={`Decrease ${charm.label} quantity`}
-                    onClick={() => handleSetCharmQty(charm.id, currentVal - 1)}
-                    className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
-                  >
-                    −
-                  </button>
                   <input
                     type="number"
                     min={0}
                     step={1}
-                    aria-label={`Quantity for charm ${charm.label}`}
+                    aria-label={`Quantity for letter ${letter}`}
                     value={currentVal}
-                    onChange={(e) =>
-                      handleSetCharmQty(charm.id, Math.floor(Number(e.target.value) || 0))
-                    }
-                    className="w-full h-9 px-2 text-center rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none"
+                    onChange={(e) => handleSetLetterQty(letter, e.target.value)}
+                    className="w-full px-1.5 py-1.5 text-center rounded-lg border border-line bg-input text-xs font-mono-data text-ink focus:border-brand focus:outline-none"
                   />
-                  <button
-                    type="button"
-                    aria-label={`Increase ${charm.label} quantity`}
-                    onClick={() => handleSetCharmQty(charm.id, currentVal + 1)}
-                    className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
-                  >
-                    +
-                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              );
+            })}
+          </div>
 
-      {/* Auto Plate Generator Summary & Remainder Controls */}
-      {distribution && (
+          {/* Save Reusable Alphabet Preset Bar */}
+          <div className="pt-4 border-t border-line flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2 flex-1 max-w-md">
+              <input
+                placeholder="Save current A–Z grid as reusable preset..."
+                value={presetName}
+                onChange={(e) => setPresetName(e.target.value)}
+                maxLength={80}
+                className="flex-1 min-w-[200px] px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleSaveNewPreset}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-line bg-elevated text-ink hover:bg-recessed whitespace-nowrap transition-colors"
+              >
+                Save Preset
+              </button>
+              {selectedPresetId && !selectedPresetId.startsWith('preset-woopp-') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDeletePreset(selectedPresetId);
+                    setSelectedPresetId('');
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-error-text hover:underline whitespace-nowrap"
+                >
+                  Delete Preset
+                </button>
+              )}
+            </div>
+            <div className="text-xs font-mono-data text-muted">
+              New Batch Subtotal: <b className="text-ink">{totalAlphabetRequested}</b> pcs
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Built-in Category 2: Charm Keycaps */}
+      {!isCatalogWorkflow && builtInMode === 'charm_only' && (
+        <section className="bg-surface border border-line rounded-xl p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base font-semibold text-ink">
+                  Charm Keycaps Batch Quantities
+                </h2>
+                <span className="text-xs font-mono-data text-brand-text font-semibold">
+                  · {totalCharmsRequested} pcs
+                </span>
+              </div>
+              <p className="text-xs text-muted mt-0.5">
+                Enter new charm keycap quantities to print for this filament color. Completed and queued plates remain untouched.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {CHARM_DEFINITIONS.map((charm) => {
+              const currentVal = draftCharms[charm.id] ?? 0;
+
+              return (
+                <div
+                  key={charm.id}
+                  className={`rounded-xl border p-4 flex flex-col justify-between gap-3 transition-colors ${
+                    currentVal > 0
+                      ? 'border-brand-border bg-brand-soft'
+                      : 'border-line bg-elevated'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className="w-10 h-10 rounded-xl bg-brand-soft border border-brand-border flex items-center justify-center text-lg font-bold text-brand-text shrink-0"
+                        aria-hidden="true"
+                      >
+                        {charm.symbol}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold tracking-wide text-ink truncate">
+                          {charm.label}
+                        </div>
+                        <div className="text-[10px] font-mono-data text-muted truncate">
+                          {charm.id}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      aria-label={`Decrease ${charm.label} quantity`}
+                      onClick={() => handleSetCharmQty(charm.id, currentVal - 1)}
+                      className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      aria-label={`Quantity for charm ${charm.label}`}
+                      value={currentVal}
+                      onChange={(e) =>
+                        handleSetCharmQty(
+                          charm.id,
+                          Math.floor(Number(e.target.value) || 0)
+                        )
+                      }
+                      className="w-full h-9 px-2 text-center rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Increase ${charm.label} quantity`}
+                      onClick={() => handleSetCharmQty(charm.id, currentVal + 1)}
+                      className="w-8 h-9 rounded-lg border border-line bg-input hover:bg-recessed text-sm font-semibold text-ink shrink-0 transition-colors"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Built-in Auto Plate Generator Summary & Remainder Controls */}
+      {!isCatalogWorkflow && batchPreview && (
         <section className="bg-surface border border-line rounded-xl p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-ink">
-                Auto Plate Generator ({MODE_OPTIONS.find((m) => m.id === generationMode)?.label})
+                Auto Plate Generator (
+                {builtInMode === 'alphabet_only'
+                  ? 'Alphabet Keycaps A–Z'
+                  : 'Charm Keycaps'}
+                )
               </h2>
               <p className="text-xs text-muted mt-0.5">
-                Completed, Failed, and Printing plate history is strictly preserved. Deleted plates and missing letters or charms are never recreated automatically.
+                Completed, Printing, and existing Queued plates remain untouched. New plates contain only items from this category.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {colorPlanningState.queuedPlatesCount > 0 && (
-                <div
-                  role="group"
-                  aria-label="Queue preservation mode"
-                  className="inline-flex items-center gap-1 p-1 rounded-xl bg-recessed border border-line"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPreserveQueuedPlates(false);
-                      setStagedPlates(null);
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
-                      !effectivePreserveQueued
-                        ? 'bg-brand text-white'
-                        : 'text-ink-secondary hover:text-ink'
-                    }`}
-                  >
-                    Regenerate Queue
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPreserveQueuedPlates(true);
-                      setStagedPlates(null);
-                    }}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap ${
-                      effectivePreserveQueued
-                        ? 'bg-brand text-white'
-                        : 'text-ink-secondary hover:text-ink'
-                    }`}
-                  >
-                    Queue Remaining Demand Only ({colorPlanningState.queuedPlatesCount} kept)
-                  </button>
-                </div>
-              )}
-
-              <div className="text-xs font-mono-data text-ink-secondary">
-                Mode Target: <b className="text-ink">{activeModeTargetTotal}</b> pcs
-                {generationMode === 'mixed' && (
-                  <span className="text-muted">
-                    {' '}
-                    ({totalAlphabetRequested} A–Z + {totalCharmsRequested} Charm)
-                  </span>
-                )}{' '}
-                · {effectivePreserveQueued ? 'Allocated' : 'Locked'}:{' '}
-                <b className="text-ink">{activeModeLockedCount}</b> pcs · Net to Plate:{' '}
-                <b className="text-ink">{distribution.totalNetCount}</b> pcs · Full Plates:{' '}
-                <b className="text-ink">{distribution.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
-                <b className="text-ink">{distribution.remainderCount}</b> pcs
-              </div>
+            <div className="text-xs font-mono-data text-ink-secondary">
+              Batch Input: <b className="text-ink">{batchPreview.totalRequestedCount}</b> pcs · Full Plates:{' '}
+              <b className="text-ink">{batchPreview.fullPlates.length}</b> ({plateCapacity}/plate) · Remainder:{' '}
+              <b className="text-ink">{batchPreview.remainderCount}</b> pcs
             </div>
           </div>
 
           <div className="p-4 rounded-xl bg-recessed border border-line space-y-3">
-            {distribution.underLockedLabels.length > 0 ? (
-              <p className="text-xs font-semibold text-error-text">
-                Increase target quantities for locked items ({distribution.underLockedLabels.join(', ')}) so they are at least equal to already Completed/Printing plates.
-              </p>
-            ) : distribution.remainderCount > 0 ? (
+            {batchPreview.remainderCount > 0 ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink">
                   <div>
                     <span className="font-semibold">
-                      Incomplete Plate Remainder ({distribution.remainderCount} / {plateCapacity} pcs):
+                      Incomplete Plate Remainder ({batchPreview.remainderCount} / {plateCapacity} pcs):
                     </span>{' '}
                     <span className="font-mono-data">{remainderSummaryParts.join(', ')}</span>
                   </div>
                   <span className="px-2.5 py-1 rounded-lg bg-brand-soft border border-brand-border text-brand-text font-mono-data font-semibold whitespace-nowrap">
-                    Remaining Capacity: {distribution.neededForNextFullPlate} pcs available
+                    Remaining Capacity: {batchPreview.neededForNextFullPlate} pcs available
                   </span>
                 </div>
                 <p className="text-xs text-muted">
-                  Unrequested letters or charms are never added automatically. You can generate an incomplete plate with{' '}
+                  Unrequested items are never added automatically. Generate an incomplete plate with{' '}
                   <span className="font-mono-data font-semibold text-ink">
-                    {distribution.neededForNextFullPlate} pcs
+                    {batchPreview.neededForNextFullPlate} pcs
                   </span>{' '}
                   remaining capacity, carry the remainder forward, or adjust quantities above:
                 </p>
@@ -1277,35 +1296,37 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     onClick={() => handlePreparePlatesPreview('partial_plate')}
                     className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover text-white whitespace-nowrap transition-colors"
                   >
-                    {distribution.fullPlates.length > 0
-                      ? `Preview ${distribution.fullPlates.length} Full + 1 Incomplete Plate (${distribution.remainderCount}/${plateCapacity} pcs · ${distribution.neededForNextFullPlate} free)`
-                      : `Preview 1 Incomplete Plate (${distribution.remainderCount}/${plateCapacity} pcs · ${distribution.neededForNextFullPlate} pcs free)`}
+                    {batchPreview.fullPlates.length > 0
+                      ? `Preview ${batchPreview.fullPlates.length} Full + 1 Incomplete Plate (${batchPreview.remainderCount}/${plateCapacity} pcs)`
+                      : `Preview 1 Incomplete Plate (${batchPreview.remainderCount}/${plateCapacity} pcs)`}
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePreparePlatesPreview('carry_forward')}
                     className="px-4 py-2 text-xs font-medium rounded-lg border border-line bg-surface hover:bg-elevated text-ink whitespace-nowrap transition-colors"
                   >
-                    {distribution.fullPlates.length > 0
-                      ? `Generate ${distribution.fullPlates.length} Exact Plate(s) & Carry Remainder (${distribution.remainderCount} pcs) Forward`
-                      : `Carry Remainder (${distribution.remainderCount} pcs) Forward Only`}
+                    {batchPreview.fullPlates.length > 0
+                      ? `Generate ${batchPreview.fullPlates.length} Exact Plate(s) & Carry Remainder (${batchPreview.remainderCount} pcs) Forward`
+                      : `Carry Remainder (${batchPreview.remainderCount} pcs) Forward Only`}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs text-brand-text font-medium">
-                  {distribution.totalNetCount > 0
-                    ? `Exact multiple of ${plateCapacity} pcs — distributes cleanly into ${distribution.fullPlates.length} full plate(s) with 0 remainder.`
-                    : 'Enter net Alphabet or Charm quantities above to generate print plates.'}
+                  {batchPreview.totalRequestedCount > 0
+                    ? `Exact multiple of ${plateCapacity} pcs — distributes cleanly into ${batchPreview.fullPlates.length} full plate(s) with 0 remainder.`
+                    : `Enter ${
+                        builtInMode === 'alphabet_only' ? 'Alphabet A–Z' : 'Charm'
+                      } quantities above to generate print plates.`}
                 </div>
                 <button
                   type="button"
-                  disabled={distribution.totalNetCount === 0}
+                  disabled={batchPreview.totalRequestedCount === 0}
                   onClick={() => handlePreparePlatesPreview('carry_forward')}
                   className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-40 text-white whitespace-nowrap transition-colors"
                 >
-                  Preview &amp; Adjust {distribution.fullPlates.length} Plate(s)
+                  Preview &amp; Adjust {batchPreview.fullPlates.length} Plate(s)
                 </button>
               </div>
             )}
@@ -1313,8 +1334,8 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         </section>
       )}
 
-      {/* Interactive Pre-Confirmation Plate Adjustment Area */}
-      {stagedPlates !== null && (
+      {/* Interactive Pre-Confirmation Plate Adjustment Area for Built-in Workflows */}
+      {!isCatalogWorkflow && stagedPlates !== null && (
         <section className="bg-surface border-2 border-brand rounded-xl p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1322,7 +1343,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 Review &amp; Manually Adjust Generated Plates Before Saving
               </h3>
               <p className="text-xs text-muted mt-0.5">
-                Completed, Failed, and Printing plates remain untouched. Adjust letter or charm counts below (never exceeding {plateCapacity} pcs/plate), and verify physical fit in Bambu Studio.
+                Existing plates remain untouched. Adjust counts below (never exceeding {plateCapacity} pcs/plate), and verify physical fit in Bambu Studio.
               </p>
             </div>
             <div className="flex items-center gap-2.5">
@@ -1346,7 +1367,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           {stagedPlates.length === 0 ? (
             <div className="p-4 rounded-xl bg-recessed border border-line text-xs text-ink-secondary">
               0 full plates to create right now. Confirming will save the{' '}
-              <b className="text-ink">{distribution?.remainderCount || 0} pcs</b> remainder to this project&apos;s Carry-Forward pool.
+              <b className="text-ink">{batchPreview?.remainderCount || 0} pcs</b> remainder to this project&apos;s Carry-Forward pool.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1357,6 +1378,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                   <StagedPlateEditorCard
                     key={plate.tempId}
                     plate={plate}
+                    builtInMode={builtInMode}
                     count={count}
                     overCap={overCap}
                     onAdjustLetter={handleAdjustStagedPlateLetter}
@@ -1378,6 +1400,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
 interface StagedPlateEditorCardProps {
   plate: DraftPlatePreview;
+  builtInMode: 'alphabet_only' | 'charm_only';
   count: number;
   overCap: boolean;
   onAdjustLetter: (tempId: string, letter: string, val: string) => void;
@@ -1390,6 +1413,7 @@ interface StagedPlateEditorCardProps {
 
 const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
   plate,
+  builtInMode,
   count,
   overCap,
   onAdjustLetter,
@@ -1411,12 +1435,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
     })
   );
 
-  const modeBadgeLabel =
-    letterEntries.length > 0 && charmEntries.length > 0
-      ? 'Mixed'
-      : charmEntries.length > 0
-      ? 'Charm'
-      : 'Alphabet';
+  const modeBadgeLabel = builtInMode === 'charm_only' ? 'Charm' : 'Alphabet';
 
   return (
     <div
@@ -1448,7 +1467,6 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
         </span>
       </div>
 
-      {/* Remaining capacity indicator for incomplete plates */}
       {overCap ? (
         <div className="text-[11px] font-mono-data font-semibold text-error-text">
           Exceeds plate capacity by {count - plate.capacity} pcs (max {plate.capacity} pcs)
@@ -1473,8 +1491,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
         />
       </div>
 
-      {/* Alphabet Quantities on Plate */}
-      {letterEntries.length > 0 && (
+      {builtInMode === 'alphabet_only' && letterEntries.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-[11px] font-semibold text-muted">
             Alphabet A–Z ({countLetters(plate.letters)} pcs)
@@ -1502,8 +1519,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
         </div>
       )}
 
-      {/* Charm Quantities on Plate */}
-      {charmEntries.length > 0 && (
+      {builtInMode === 'charm_only' && charmEntries.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-[11px] font-semibold text-brand-text">
             Charm Keycaps ({countCharms(plate.charms)} pcs)
@@ -1531,50 +1547,55 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
         </div>
       )}
 
-      {/* Manual Add Letter / Add Charm Controls + Bambu Studio Fit Checkbox */}
       <div className="space-y-2 pt-2 border-t border-line">
         <div className="flex flex-wrap items-center gap-1.5">
-          <select
-            aria-label="Select letter to add to plate"
-            value={letterToAdd}
-            onChange={(e) => setLetterToAdd(e.target.value)}
-            className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
-          >
-            {ABC.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={count >= plate.capacity}
-            onClick={() => onAddLetter(plate.tempId, letterToAdd)}
-            className="px-2 py-1 text-xs rounded border border-line bg-surface hover:bg-recessed text-ink disabled:opacity-40 whitespace-nowrap transition-colors"
-          >
-            + Letter
-          </button>
-
-          <select
-            aria-label="Select charm to add to plate"
-            value={charmToAdd}
-            onChange={(e) => setCharmToAdd(e.target.value as CharmId)}
-            className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
-          >
-            {CHARM_DEFINITIONS.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.symbol} {c.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={count >= plate.capacity}
-            onClick={() => onAddCharm(plate.tempId, charmToAdd)}
-            className="px-2 py-1 text-xs rounded border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text disabled:opacity-40 whitespace-nowrap transition-colors"
-          >
-            + Charm
-          </button>
+          {builtInMode === 'alphabet_only' ? (
+            <>
+              <select
+                aria-label="Select letter to add to plate"
+                value={letterToAdd}
+                onChange={(e) => setLetterToAdd(e.target.value)}
+                className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
+              >
+                {ABC.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={count >= plate.capacity}
+                onClick={() => onAddLetter(plate.tempId, letterToAdd)}
+                className="px-2 py-1 text-xs rounded border border-line bg-surface hover:bg-recessed text-ink disabled:opacity-40 whitespace-nowrap transition-colors"
+              >
+                + Letter
+              </button>
+            </>
+          ) : (
+            <>
+              <select
+                aria-label="Select charm to add to plate"
+                value={charmToAdd}
+                onChange={(e) => setCharmToAdd(e.target.value as CharmId)}
+                className="px-2 py-1 rounded border border-line bg-input text-ink text-xs focus:border-brand focus:outline-none"
+              >
+                {CHARM_DEFINITIONS.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.symbol} {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={count >= plate.capacity}
+                onClick={() => onAddCharm(plate.tempId, charmToAdd)}
+                className="px-2 py-1 text-xs rounded border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text disabled:opacity-40 whitespace-nowrap transition-colors"
+              >
+                + Charm
+              </button>
+            </>
+          )}
         </div>
 
         <label className="flex items-center gap-1.5 text-[11px] text-ink-secondary cursor-pointer">
@@ -1589,4 +1610,3 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
     </div>
   );
 };
-
