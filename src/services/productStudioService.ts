@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDocs,
   onSnapshot,
   Query,
   query,
@@ -18,14 +19,17 @@ import {
 import {
   CatalogProduct,
   CatalogSkuReservation,
+  CatalogVariantDoc,
   CategoryPlateSetting,
   ProductCategory,
+  ProductVariant,
 } from '../types';
 import {
   prepareCategoryForFirestore,
   prepareCategoryPlateSettingForFirestore,
   prepareProductForFirestore,
   prepareSkuReservationForFirestore,
+  prepareVariantDocForFirestore,
 } from '../utils/catalogValidation';
 import {
   generateUniqueWooppSku,

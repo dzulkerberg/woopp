@@ -45,7 +45,24 @@ interface ProductFormTabProps {
   onSavedSuccess: (saved: CatalogProduct) => void;
 }
 
-const OPTION_PRESET_SUGGESTIONS = ['Color', 'Style', 'Size', 'Design'] as const;
+const OPTION_PRESET_SUGGESTIONS = ['Alphabet', 'Color', 'Style', 'Size', 'Design'] as const;
+
+export const ALPHABET_A_TO_Z = Array.from({ length: 26 }, (_, i) =>
+  String.fromCharCode(65 + i)
+);
+export const NUMBERS_0_TO_9 = Array.from({ length: 10 }, (_, i) => String(i));
+export const POPULAR_COLORS = [
+  'White',
+  'Black',
+  'Red',
+  'Blue',
+  'Gold',
+  'Silver',
+  'Green',
+  'Yellow',
+  'Purple',
+  'Orange',
+];
 
 export const ProductFormTab: React.FC<ProductFormTabProps> = ({
   ownerId,
@@ -220,10 +237,11 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
 
   const handleAddOption = (initialName = '') => {
     if (options.length >= MAX_PRODUCT_OPTIONS) return;
+    const isAlphabet = initialName.toLowerCase() === 'alphabet';
     const nextOpt: ProductOptionDefinition = {
       id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       name: initialName,
-      values: [],
+      values: isAlphabet ? [...ALPHABET_A_TO_Z] : [],
       sortOrder: options.length,
     };
     recomputeVariants([...options, nextOpt]);
@@ -249,30 +267,33 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
     recomputeVariants(options.filter((o) => o.id !== optId));
   };
 
-  const handleAddOptionValue = (optId: string) => {
-    const rawVal = (newOptionValueByOptId[optId] || '').trim();
-    if (!rawVal) return;
-    if (rawVal.length > 80) {
-      setFormError('Each option value must be 80 characters or fewer.');
+  const handleAddMultipleOptionValues = (optId: string, valuesToAdd: string[]) => {
+    const targetOpt = options.find((o) => o.id === optId);
+    if (!targetOpt) return;
+
+    const existingLower = new Set(targetOpt.values.map((v) => v.toLowerCase()));
+    const validNew: string[] = [];
+
+    for (const raw of valuesToAdd) {
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed.length > 80) continue;
+      if (!existingLower.has(trimmed.toLowerCase())) {
+        existingLower.add(trimmed.toLowerCase());
+        validNew.push(trimmed);
+      }
+    }
+
+    if (validNew.length === 0) return;
+
+    if (targetOpt.values.length + validNew.length > MAX_PRODUCT_OPTION_VALUES) {
+      setFormError(`Each option supports at most ${MAX_PRODUCT_OPTION_VALUES} values.`);
       return;
     }
 
-    const targetOpt = options.find((o) => o.id === optId);
-    if (!targetOpt) return;
-    if (targetOpt.values.some((v) => v.toLowerCase() === rawVal.toLowerCase())) {
-      setNewOptionValueByOptId((prev) => ({ ...prev, [optId]: '' }));
-      return;
-    }
-    if (targetOpt.values.length >= MAX_PRODUCT_OPTION_VALUES) {
-      setFormError(
-        `Each option supports at most ${MAX_PRODUCT_OPTION_VALUES} values.`
-      );
-      return;
-    }
     const currentTotalValues = options.reduce((sum, o) => sum + o.values.length, 0);
-    if (options.length + currentTotalValues + 1 > MAX_OPTION_COMPLEXITY_BUDGET) {
+    if (options.length + currentTotalValues + validNew.length > MAX_OPTION_COMPLEXITY_BUDGET) {
       setFormError(
-        `Maximum variation option values reached for up to 12 product variants.`
+        `Maximum variation option complexity reached across configured option groups (up to ${MAX_PRODUCT_OPTION_VALUES} values per option).`
       );
       return;
     }
@@ -282,13 +303,27 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
       opt.id === optId
         ? {
             ...opt,
-            values: [...opt.values, rawVal],
+            values: [...opt.values, ...validNew],
           }
         : opt
     );
 
     setNewOptionValueByOptId((prev) => ({ ...prev, [optId]: '' }));
     recomputeVariants(nextOptions);
+  };
+
+  const handleAddOptionValue = (optId: string) => {
+    const rawVal = (newOptionValueByOptId[optId] || '').trim();
+    if (!rawVal) return;
+    if (rawVal.includes(',')) {
+      const parts = rawVal
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      handleAddMultipleOptionValues(optId, parts);
+      return;
+    }
+    handleAddMultipleOptionValues(optId, [rawVal]);
   };
 
   const handleRemoveOptionValue = (optId: string, valToRemove: string) => {
@@ -834,11 +869,37 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
                     ))}
                   </div>
 
+                  {/* Quick Preset Value Buttons */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted pt-0.5">
+                    <span className="font-medium text-ink-secondary">Quick populate:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleAddMultipleOptionValues(opt.id, ALPHABET_A_TO_Z)}
+                      className="px-2 py-0.5 rounded border border-line bg-surface hover:bg-elevated text-ink hover:text-brand font-medium transition-colors"
+                    >
+                      + A–Z (26 Letters)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddMultipleOptionValues(opt.id, POPULAR_COLORS)}
+                      className="px-2 py-0.5 rounded border border-line bg-surface hover:bg-elevated text-ink hover:text-brand font-medium transition-colors"
+                    >
+                      + Multi-Colors (10)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddMultipleOptionValues(opt.id, NUMBERS_0_TO_9)}
+                      className="px-2 py-0.5 rounded border border-line bg-surface hover:bg-elevated text-ink hover:text-brand font-medium transition-colors"
+                    >
+                      + 0–9 Numbers
+                    </button>
+                  </div>
+
                   <div className="flex gap-2">
                     <input
                       type="text"
                       maxLength={80}
-                      placeholder="Add option value (e.g., Crescent, Full Moon)..."
+                      placeholder="Add option value or paste comma-separated values (e.g., A, B, C or Red, Blue)..."
                       value={newOptionValueByOptId[opt.id] || ''}
                       onChange={(e) =>
                         setNewOptionValueByOptId((prev) => ({
@@ -871,8 +932,13 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
         {/* Variant Override Matrix */}
         {variants.length > 0 && (
           <div className="space-y-2 pt-2">
-            <div className="text-xs font-semibold text-ink">
-              Variant Pricing &amp; Image Overrides ({variants.length})
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-ink">
+              <span>Variant Pricing &amp; Image Overrides ({variants.length})</span>
+              {variants.length >= MAX_PRODUCT_VARIANTS && (
+                <span className="text-[11px] font-normal text-amber-500">
+                  Combinations capped at {MAX_PRODUCT_VARIANTS} to prevent excessive explosion.
+                </span>
+              )}
             </div>
             <div className="border border-line rounded-xl overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">

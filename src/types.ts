@@ -343,6 +343,19 @@ export interface ProductVariant {
   sortOrder: number;
 }
 
+export interface CatalogVariantDoc {
+  id: string;
+  productId: string;
+  ownerId: string;
+  label: string;
+  optionValues: Record<string, string>;
+  priceMyr: number | null;
+  imageUrl: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CatalogProduct {
   id: string;
   ownerId: string;

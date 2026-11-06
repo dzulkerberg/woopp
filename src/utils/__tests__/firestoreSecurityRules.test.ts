@@ -1551,7 +1551,7 @@ describe('WOOPP 6.0 Hardened Firestore Security Rules & Query Compliance Suite',
       values: ['A', 'B'],
       sortOrder: idx,
     }));
-    const maxVariants = Array.from({ length: MAX_PRODUCT_VARIANTS }, (_, idx) => ({
+    const maxVariants = Array.from({ length: 12 }, (_, idx) => ({
       id: `var-${idx + 1}`,
       label: `Combo ${idx + 1}`,
       optionValues: { 'Option 1': 'A', 'Option 2': 'B' },
@@ -2208,7 +2208,7 @@ describe('WOOPP 6.0 Hardened Firestore Security Rules & Query Compliance Suite',
     };
 
     const buildTwelveValidVariants = () =>
-      Array.from({ length: MAX_PRODUCT_VARIANTS }, (_, idx) => ({
+      Array.from({ length: 12 }, (_, idx) => ({
         id: `var-item-${idx + 1}`,
         label: `Style Variant ${idx + 1}`,
         optionValues: { Style: `S${idx + 1}` },

@@ -2,6 +2,7 @@ import {
   CatalogProduct,
   CatalogSkuReservation,
   CatalogStatus,
+  CatalogVariantDoc,
   CategoryAllocationMode,
   CategoryIconName,
   CategoryPlateSetting,
@@ -38,9 +39,9 @@ export const CATEGORY_ALLOCATION_MODES: readonly CategoryAllocationMode[] = [
 
 export const MAX_PRODUCT_IMAGES = 12;
 export const MAX_PRODUCT_OPTIONS = 4;
-export const MAX_PRODUCT_OPTION_VALUES = 12;
-export const MAX_OPTION_COMPLEXITY_BUDGET = 14;
-export const MAX_PRODUCT_VARIANTS = 12;
+export const MAX_PRODUCT_OPTION_VALUES = 60;
+export const MAX_OPTION_COMPLEXITY_BUDGET = 120;
+export const MAX_PRODUCT_VARIANTS = 60;
 export const MAX_IMAGE_URL_LENGTH = 2048;
 
 export interface HttpsUrlValidationResult {
@@ -122,13 +123,20 @@ export function validateHttpsImageUrl(raw: unknown): HttpsUrlValidationResult {
   };
 }
 
+export type VariantGenerationStrategy = 'cartesian' | 'primary_only';
+
 /**
- * Generates cartesian product of option definitions and preserves any existing
+ * Generates variants from option definitions and preserves any existing
  * variant-specific `priceMyr` and `imageUrl` when option values match.
+ * - Supports full Alphabet A–Z (26 values) and custom lists.
+ * - Avoids excessive Cartesian product explosion when multiple option groups exist
+ *   by capping total auto-generated combinations at MAX_PRODUCT_VARIANTS (60), or
+ *   generating variants focused on the primary option when selected.
  */
 export function syncVariantsFromOptions(
   options: readonly ProductOptionDefinition[],
-  existingVariants: readonly ProductVariant[] = []
+  existingVariants: readonly ProductVariant[] = [],
+  strategy: VariantGenerationStrategy = 'cartesian'
 ): ProductVariant[] {
   const activeOptions = [...options]
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -158,20 +166,39 @@ export function syncVariantsFromOptions(
     }
   }
 
-  let combinations: Record<string, string>[] = [{}];
-  for (const opt of activeOptions) {
-    const next: Record<string, string>[] = [];
-    for (const combo of combinations) {
-      for (const val of opt.values) {
-        if (next.length >= MAX_PRODUCT_VARIANTS) break;
-        next.push({
-          ...combo,
-          [opt.name]: val,
-        });
-      }
-      if (next.length >= MAX_PRODUCT_VARIANTS) break;
+  let combinations: Record<string, string>[] = [];
+
+  if (strategy === 'primary_only' && activeOptions.length > 1) {
+    // Primary option focus (e.g. all 26 letters of Alphabet), paired with default primary value of other options
+    const primaryOpt = activeOptions[0];
+    const secondaryDefaults: Record<string, string> = {};
+    for (let i = 1; i < activeOptions.length; i += 1) {
+      secondaryDefaults[activeOptions[i].name] = activeOptions[i].values[0];
     }
-    combinations = next;
+    for (const val of primaryOpt.values) {
+      if (combinations.length >= MAX_PRODUCT_VARIANTS) break;
+      combinations.push({
+        [primaryOpt.name]: val,
+        ...secondaryDefaults,
+      });
+    }
+  } else {
+    // Cartesian product capped at MAX_PRODUCT_VARIANTS to avoid runaway combinatorial explosions
+    combinations = [{}];
+    for (const opt of activeOptions) {
+      const next: Record<string, string>[] = [];
+      for (const combo of combinations) {
+        for (const val of opt.values) {
+          if (next.length >= MAX_PRODUCT_VARIANTS) break;
+          next.push({
+            ...combo,
+            [opt.name]: val,
+          });
+        }
+        if (next.length >= MAX_PRODUCT_VARIANTS) break;
+      }
+      combinations = next;
+    }
   }
 
   return combinations.map((optionValues, idx) => {
@@ -574,6 +601,76 @@ export function prepareCategoryPlateSettingForFirestore(
     plateCapacity,
     defaultEstimatedMinutes,
     updatedAt: assertUtcIsoString(setting.updatedAt, 'updatedAt'),
+  };
+
+  return sanitizeFirestoreValue(clean);
+}
+
+/**
+ * Validates and sanitizes a `CatalogVariantDoc` before writing to
+ * `users/{uid}/catalogProducts/{productId}/variants/{variantId}`.
+ */
+export function prepareVariantDocForFirestore(
+  variant: ProductVariant,
+  ownerId: string,
+  productId: string,
+  timestamps?: { createdAt?: string; updatedAt?: string }
+): CatalogVariantDoc {
+  const validOwner = assertValidEntityId(ownerId, 'ownerId');
+  const validProductId = assertValidEntityId(productId, 'productId');
+  const validId = assertValidEntityId(variant.id || 'var-1', 'id');
+
+  const trimmedLabel = typeof variant.label === 'string' ? variant.label.trim() : '';
+  if (!trimmedLabel || trimmedLabel.length > 200) {
+    throw new FirestorePayloadValidationError(
+      'label',
+      'Variant label is required (1–200 characters).'
+    );
+  }
+
+  const optionValues: Record<string, string> = {};
+  if (
+    variant.optionValues &&
+    typeof variant.optionValues === 'object' &&
+    !Array.isArray(variant.optionValues)
+  ) {
+    for (const [k, v] of Object.entries(variant.optionValues)) {
+      if (typeof k === 'string' && typeof v === 'string' && k.trim() && v.trim()) {
+        optionValues[k.trim().slice(0, 60)] = v.trim().slice(0, 80);
+      }
+    }
+  }
+
+  const imgCheck = validateHttpsImageUrl(variant.imageUrl);
+  if (!imgCheck.valid) {
+    throw new FirestorePayloadValidationError(
+      'imageUrl',
+      imgCheck.error || 'Invalid variant image URL.'
+    );
+  }
+
+  const sortOrder =
+    typeof variant.sortOrder === 'number' &&
+    Number.isInteger(variant.sortOrder) &&
+    variant.sortOrder >= 0 &&
+    variant.sortOrder <= 10000
+      ? variant.sortOrder
+      : 0;
+
+  const priceMyr = normalizePriceMyr(variant.priceMyr, 'priceMyr');
+  const nowIso = new Date().toISOString();
+
+  const clean: CatalogVariantDoc = {
+    id: validId,
+    productId: validProductId,
+    ownerId: validOwner,
+    label: trimmedLabel,
+    optionValues,
+    priceMyr,
+    imageUrl: imgCheck.normalizedUrl,
+    sortOrder,
+    createdAt: assertUtcIsoString(timestamps?.createdAt || nowIso, 'createdAt'),
+    updatedAt: assertUtcIsoString(timestamps?.updatedAt || nowIso, 'updatedAt'),
   };
 
   return sanitizeFirestoreValue(clean);

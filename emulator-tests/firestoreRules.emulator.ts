@@ -26,6 +26,7 @@ import { createFreshWorkspaceV5, emptyAlphabetMap, emptyCharmsMap } from '../src
 import {
   CatalogProduct,
   CatalogSkuReservation,
+  CatalogVariantDoc,
   CategoryPlateSetting,
   LegacyTrackerState,
   ProductCategory,
@@ -37,6 +38,7 @@ import {
   prepareCategoryPlateSettingForFirestore,
   prepareProductForFirestore,
   prepareSkuReservationForFirestore,
+  prepareVariantDocForFirestore,
 } from '../src/utils/catalogValidation';
 import {
   buildFirestoreSetDocPayload,
@@ -1563,6 +1565,208 @@ describe('Official Firebase Firestore Emulator Verification — WOOPP Products 6
           })
         );
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. Scalable Alphabet A–Z & Multi-Color Variations (Subcollection & 26+ Option Values)
+  // ---------------------------------------------------------------------------
+  describe('7. Scalable Alphabet A–Z & Multi-Color Variations', () => {
+    it('creates an Alphabet product with 26 letters (A–Z) and multiple colors, storing all 26 variants in the subcollection safely within emulator expression limits', async () => {
+      const db = ownerDb();
+      const cat = makeValidCategory({ id: 'cat-alphabet-keychains' });
+      await assertSucceeds(
+        setDoc(doc(db, 'users', OWNER_UID, 'catalogCategories', cat.id), cat)
+      );
+
+      const alphabetLetters = Array.from({ length: 26 }, (_, i) =>
+        String.fromCharCode(65 + i)
+      );
+      const colors = ['White', 'Black', 'Red', 'Blue', 'Gold'];
+
+      const alphabetProduct = makeValidProduct({
+        id: 'prod-alphabet-series',
+        sku: 'WOOPP-ALPHA026',
+        categoryId: cat.id,
+        name: 'WOOPP Alphabet Keychains (A–Z Collection)',
+        options: [
+          {
+            id: 'opt-alphabet',
+            name: 'Letter',
+            values: alphabetLetters,
+            sortOrder: 0,
+          },
+          {
+            id: 'opt-colors',
+            name: 'Filament Color',
+            values: colors,
+            sortOrder: 1,
+          },
+        ],
+        variants: [], // Stored in dedicated subcollection for scalable architecture
+      });
+
+      const skuDoc = makeValidSkuReservation('WOOPP-ALPHA026', 'prod-alphabet-series');
+
+      // 1. Atomically create product and SKU
+      const productBatch = writeBatch(db);
+      productBatch.set(
+        doc(db, 'users', OWNER_UID, 'catalogProducts', alphabetProduct.id),
+        alphabetProduct
+      );
+      productBatch.set(
+        doc(db, 'users', OWNER_UID, 'catalogSkus', alphabetProduct.sku),
+        skuDoc
+      );
+      await assertSucceeds(productBatch.commit());
+
+      // 2. Create all 26 letter variants as individual documents in the subcollection
+      const variantBatch = writeBatch(db);
+      alphabetLetters.forEach((letter, idx) => {
+        const vId = `var-letter-${letter.toLowerCase()}`;
+        const vDoc = prepareVariantDocForFirestore(
+          {
+            id: vId,
+            label: `Letter ${letter}`,
+            optionValues: {
+              Letter: letter,
+              'Filament Color': colors[idx % colors.length],
+            },
+            priceMyr: 15.0 + (idx % 5),
+            imageUrl: `https://cdn.wooppartcraft.com/alphabet/${letter}.webp`,
+            sortOrder: idx,
+          },
+          OWNER_UID,
+          alphabetProduct.id,
+          { createdAt: NOW_ISO, updatedAt: NOW_ISO }
+        );
+        variantBatch.set(
+          doc(
+            db,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            vId
+          ),
+          vDoc
+        );
+      });
+      await assertSucceeds(variantBatch.commit());
+
+      // 3. Read back and verify variant count and data
+      const variantsSnap = await assertSucceeds(
+        getDocs(
+          collection(
+            db,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants'
+          )
+        )
+      );
+      expect(variantsSnap.size).toBe(26);
+
+      const zDocSnap = await assertSucceeds(
+        getDoc(
+          doc(
+            db,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            'var-letter-z'
+          )
+        )
+      );
+      expect(zDocSnap.exists()).toBe(true);
+      expect(zDocSnap.data()?.label).toBe('Letter Z');
+
+      // 4. Update variant in subcollection
+      await assertSucceeds(
+        updateDoc(
+          doc(
+            db,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            'var-letter-z'
+          ),
+          {
+            priceMyr: 19.99,
+            imageUrl: 'https://cdn.wooppartcraft.com/alphabet/Z-gold.webp',
+            updatedAt: LATER_ISO,
+          }
+        )
+      );
+
+      // 5. Security isolation: Attacker cannot read or write variants
+      const badDb = attackerDb();
+      await assertFails(
+        getDoc(
+          doc(
+            badDb,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            'var-letter-a'
+          )
+        )
+      );
+      await assertFails(
+        setDoc(
+          doc(
+            badDb,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            'var-hack'
+          ),
+          {
+            id: 'var-hack',
+            ownerId: ATTACKER_UID,
+            productId: alphabetProduct.id,
+            label: 'Hacked',
+          }
+        )
+      );
+
+      // 6. Security rejection: Invalid variant (negative price, non-HTTPS image, missing fields) rejected
+      await assertFails(
+        setDoc(
+          doc(
+            db,
+            'users',
+            OWNER_UID,
+            'catalogProducts',
+            alphabetProduct.id,
+            'variants',
+            'var-invalid'
+          ),
+          {
+            id: 'var-invalid',
+            ownerId: OWNER_UID,
+            productId: alphabetProduct.id,
+            label: 'Invalid',
+            optionValues: {},
+            priceMyr: -10,
+            imageUrl: 'http://insecure.com/pic.jpg',
+            sortOrder: 0,
+            createdAt: NOW_ISO,
+            updatedAt: NOW_ISO,
+          }
+        )
+      );
     });
   });
 });
