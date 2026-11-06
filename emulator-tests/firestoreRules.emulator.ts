@@ -1768,6 +1768,118 @@ describe('Official Firebase Firestore Emulator Verification — WOOPP Products 6
         )
       );
     });
+
+    it('explicitly verifies atomic product + SKU creation across 12, 13, and 26 option values and distinguishes option values from variants', async () => {
+      const db = ownerDb();
+      const cat = makeValidCategory({ id: 'cat-boundary-test' });
+      await assertSucceeds(
+        setDoc(doc(db, 'users', OWNER_UID, 'catalogCategories', cat.id), cat)
+      );
+
+      const letters12 = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+      const letters13 = [...letters12, 'M'];
+      const letters26 = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
+
+      // 1. Boundary Test: Exactly 12 option values (12 embedded variants)
+      const p12 = makeValidProduct({
+        id: 'prod-opt-12',
+        sku: 'WOOPP-OPT12001',
+        categoryId: cat.id,
+        options: [{ id: 'opt-l12', name: 'Letter', values: letters12, sortOrder: 0 }],
+        variants: letters12.map((l, i) => ({
+          id: `var-12-${i + 1}`,
+          label: `Letter ${l}`,
+          optionValues: { Letter: l },
+          priceMyr: 10,
+          imageUrl: null,
+          sortOrder: i,
+        })),
+      });
+      const s12 = makeValidSkuReservation(p12.sku, p12.id);
+
+      const b12 = writeBatch(db);
+      b12.set(doc(db, 'users', OWNER_UID, 'catalogProducts', p12.id), p12);
+      b12.set(doc(db, 'users', OWNER_UID, 'catalogSkus', p12.sku), s12);
+      await assertSucceeds(b12.commit());
+
+      // 2. Boundary Test: Exactly 13 option values (crossing the old 12-value limit)
+      // Note: With >12 variants, variants are saved in subcollection, leaving parent variants: []
+      const p13 = makeValidProduct({
+        id: 'prod-opt-13',
+        sku: 'WOOPP-OPT13001',
+        categoryId: cat.id,
+        options: [{ id: 'opt-l13', name: 'Letter', values: letters13, sortOrder: 0 }],
+        variants: [], // Scalable architecture: parent doc carries []
+      });
+      const s13 = makeValidSkuReservation(p13.sku, p13.id);
+
+      const b13 = writeBatch(db);
+      b13.set(doc(db, 'users', OWNER_UID, 'catalogProducts', p13.id), p13);
+      b13.set(doc(db, 'users', OWNER_UID, 'catalogSkus', p13.sku), s13);
+      await assertSucceeds(b13.commit());
+
+      // Store 13th variant in subcollection
+      const v13Doc = prepareVariantDocForFirestore(
+        {
+          id: 'var-13-m',
+          label: 'Letter M',
+          optionValues: { Letter: 'M' },
+          priceMyr: 12,
+          imageUrl: null,
+          sortOrder: 12,
+        },
+        OWNER_UID,
+        p13.id,
+        { createdAt: NOW_ISO, updatedAt: NOW_ISO }
+      );
+      await assertSucceeds(
+        setDoc(
+          doc(db, 'users', OWNER_UID, 'catalogProducts', p13.id, 'variants', v13Doc.id),
+          v13Doc
+        )
+      );
+
+      // 3. Boundary Test: Exactly 26 option values (Full A–Z Alphabet)
+      const p26 = makeValidProduct({
+        id: 'prod-opt-26',
+        sku: 'WOOPP-OPT26001',
+        categoryId: cat.id,
+        options: [{ id: 'opt-l26', name: 'Letter', values: letters26, sortOrder: 0 }],
+        variants: [],
+      });
+      const s26 = makeValidSkuReservation(p26.sku, p26.id);
+
+      const b26 = writeBatch(db);
+      b26.set(doc(db, 'users', OWNER_UID, 'catalogProducts', p26.id), p26);
+      b26.set(doc(db, 'users', OWNER_UID, 'catalogSkus', p26.sku), s26);
+      await assertSucceeds(b26.commit());
+
+      // 4. Distinction Test: Attempting 13 EMBEDDED variants on parent document
+      // (Should be rejected by rules because parent document caps embedded variants at 12)
+      const p13EmbeddedVariants = makeValidProduct({
+        id: 'prod-opt-13-bad',
+        sku: 'WOOPP-OPT13BAD',
+        categoryId: cat.id,
+        options: [{ id: 'opt-bad', name: 'Letter', values: letters13, sortOrder: 0 }],
+        variants: letters13.map((l, i) => ({
+          id: `var-bad-${i + 1}`,
+          label: `Letter ${l}`,
+          optionValues: { Letter: l },
+          priceMyr: 10,
+          imageUrl: null,
+          sortOrder: i,
+        })),
+      });
+      const s13Bad = makeValidSkuReservation(p13EmbeddedVariants.sku, p13EmbeddedVariants.id);
+      const b13Bad = writeBatch(db);
+      b13Bad.set(
+        doc(db, 'users', OWNER_UID, 'catalogProducts', p13EmbeddedVariants.id),
+        p13EmbeddedVariants
+      );
+      b13Bad.set(doc(db, 'users', OWNER_UID, 'catalogSkus', p13EmbeddedVariants.sku), s13Bad);
+      // Rules correctly reject >12 embedded variants on parent doc to prevent 1,000-expression limit:
+      await assertFails(b13Bad.commit());
+    });
   });
 });
 

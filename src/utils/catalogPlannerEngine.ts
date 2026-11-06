@@ -31,11 +31,91 @@ import {
   DraftPlatePreview,
   inferPlateMode,
 } from './productionEngine';
+import { syncVariantsFromOptions } from './catalogValidation';
 
 export interface CatalogPlannerSelectionInput {
   productId: string;
   variantId: string | null;
   quantity: number;
+}
+
+export interface PlannableProductItem {
+  id: string;
+  label: string;
+  optionValues?: Record<string, string>;
+  priceMyr?: number | null;
+  sortOrder: number;
+}
+
+/**
+ * Resolves plannable items for a product by checking:
+ * 1. Saved `product.variants` if populated and non-empty.
+ * 2. Dynamically deriving variants from `product.options` (e.g. 26 alphabet letters, colors, charms, or custom option values)
+ *    when variants are stored in the scalable subcollection or when options are configured.
+ * 3. Fallback to a single base item (`id: 'base'`) if the product has neither options nor variants.
+ */
+export function getPlannableProductItems(
+  product: CatalogProduct
+): PlannableProductItem[] {
+  if (product.options && product.options.length > 0) {
+    if (product.variants && product.variants.length > 0) {
+      return product.variants.map((v) => ({
+        id: v.id,
+        label: v.label,
+        optionValues: v.optionValues,
+        priceMyr: v.priceMyr,
+        sortOrder: v.sortOrder,
+      }));
+    }
+    const derived = syncVariantsFromOptions(product.options, product.variants || []);
+    if (derived.length > 0) {
+      return derived.map((v) => ({
+        id: v.id,
+        label: v.label,
+        optionValues: v.optionValues,
+        priceMyr: v.priceMyr,
+        sortOrder: v.sortOrder,
+      }));
+    }
+  }
+
+  if (product.variants && product.variants.length > 0) {
+    return product.variants.map((v) => ({
+      id: v.id,
+      label: v.label,
+      optionValues: v.optionValues,
+      priceMyr: v.priceMyr,
+      sortOrder: v.sortOrder,
+    }));
+  }
+
+  return [
+    {
+      id: 'base',
+      label: product.name,
+      sortOrder: 0,
+    },
+  ];
+}
+
+/**
+ * Checks whether an array of plannable items represents an alphabet grid
+ * (e.g. 26 letters A–Z or single uppercase letter characters).
+ */
+export function isAlphabetProductItems(
+  items: readonly PlannableProductItem[]
+): boolean {
+  if (items.length === 0) return false;
+  if (
+    items.length === 26 &&
+    items.every((it) => it.label.length === 1 && /[A-Za-z]/.test(it.label))
+  ) {
+    return true;
+  }
+  return (
+    items.length >= 2 &&
+    items.every((it) => it.label.length === 1 && ABC.includes(it.label.toUpperCase() as any))
+  );
 }
 
 export interface DraftCatalogPlatePreview {
@@ -192,13 +272,19 @@ export function resolveCatalogSnapshotsFromSelections(params: {
     let variantId: string | null = null;
     let variantLabel: string | null = null;
 
-    if (product.variants.length > 0) {
+    const plannableItems = getPlannableProductItems(product);
+    const hasConfiguredVariants =
+      (product.options && product.options.length > 0) ||
+      (product.variants && product.variants.length > 0) ||
+      (plannableItems.length > 1 || (plannableItems.length === 1 && plannableItems[0].id !== 'base'));
+
+    if (hasConfiguredVariants) {
       if (!sel.variantId) {
         return {
           error: `Select a variation for "${product.name}" before generating plates.`,
         };
       }
-      const matchedVar = product.variants.find((v) => v.id === sel.variantId);
+      const matchedVar = plannableItems.find((v) => v.id === sel.variantId);
       if (!matchedVar) {
         return {
           error: `Selected variation for "${product.name}" was not found.`,
@@ -347,6 +433,15 @@ export function generateAutomaticCatalogPlatePreviews(params: {
     }
 
     if (plateItems.length === 0) return;
+
+    // Sort plate items cleanly by productName and variant label (natural alphanumeric / A–Z order)
+    plateItems.sort((a, b) => {
+      const cmpName = a.productName.localeCompare(b.productName);
+      if (cmpName !== 0) return cmpName;
+      const vA = a.variantLabel || '';
+      const vB = b.variantLabel || '';
+      return vA.localeCompare(vB, undefined, { numeric: true, sensitivity: 'base' });
+    });
 
     const unitSum = countCatalogItems(plateItems);
     const estMins = isPartial
@@ -562,13 +657,22 @@ export function commitCatalogPlatesToWorkspace(
     const effectivePlateCapacity =
       draft.capacity !== null && draft.capacity >= 1 ? Math.floor(draft.capacity) : unitTotal;
 
+    // Build companion letters map if items correspond to single A–Z letters (e.g. Keycap Letter A–Z)
+    const companionLetters: LettersMap = {};
+    for (const snap of immutableSnapshots) {
+      const vLabel = (snap.variantLabel || '').trim().toUpperCase();
+      if (vLabel.length === 1 && ABC.includes(vLabel as any) && snap.quantity > 0) {
+        companionLetters[vLabel] = (companionLetters[vLabel] || 0) + snap.quantity;
+      }
+    }
+
     const job: ProductionJob = {
       id: `job-${nowMs}-${idx}-${color.id}`,
       projectId: project.id,
       colorId: color.id,
       plateNumber: draft.plateNumber,
       plateCapacity: effectivePlateCapacity,
-      letters: {},
+      letters: companionLetters,
       plateMode: 'catalog_category',
       planningSessionId: sessionId,
       categoryId: params.category.id,

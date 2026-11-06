@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layers, Plus, Save, Sliders, Trash2 } from 'lucide-react';
+import { Layers, Plus, RotateCcw, Save, Sliders, Trash2 } from 'lucide-react';
 import { countCatalogItems } from '../constants';
 import {
   CatalogProduct,
@@ -16,6 +16,9 @@ import {
   CatalogPlannerSelectionInput,
   DraftCatalogPlatePreview,
   generateAutomaticCatalogPlatePreviews,
+  getPlannableProductItems,
+  isAlphabetProductItems,
+  PlannableProductItem,
   validateCategoryForPlanning,
   validateSameCategoryPlateItems,
 } from '../utils/catalogPlannerEngine';
@@ -105,22 +108,25 @@ export const CatalogCategoryPlannerSection: React.FC<
   >(null);
 
   // Manual plate composition state
-  const createBlankManualPlate = (defaultProd?: CatalogProduct): ManualDraftPlate => ({
-    draftPlateId: `mplate-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    estimatedMinutes: defaultMinutes,
-    slicerVerified: false,
-    notes: '',
-    rows: defaultProd
-      ? [
-          {
-            rowId: `mrow-${Date.now()}-1`,
-            productId: defaultProd.id,
-            variantId: defaultProd.variants[0]?.id ?? null,
-            quantity: 0,
-          },
-        ]
-      : [],
-  });
+  const createBlankManualPlate = (defaultProd?: CatalogProduct): ManualDraftPlate => {
+    const firstItem = defaultProd ? getPlannableProductItems(defaultProd)[0] : undefined;
+    return {
+      draftPlateId: `mplate-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      estimatedMinutes: defaultMinutes,
+      slicerVerified: false,
+      notes: '',
+      rows: defaultProd
+        ? [
+            {
+              rowId: `mrow-${Date.now()}-1`,
+              productId: defaultProd.id,
+              variantId: firstItem && firstItem.id !== 'base' ? firstItem.id : null,
+              quantity: 0,
+            },
+          ]
+        : [],
+    };
+  };
 
   const [manualPlates, setManualPlates] = useState<ManualDraftPlate[]>(() => [
     createBlankManualPlate(activeCategoryProducts[0]),
@@ -160,12 +166,16 @@ export const CatalogCategoryPlannerSection: React.FC<
   const selectionsList: CatalogPlannerSelectionInput[] = useMemo(() => {
     const out: CatalogPlannerSelectionInput[] = [];
     for (const prod of activeCategoryProducts) {
-      if (prod.variants.length > 0) {
-        for (const v of prod.variants) {
-          const key = buildCatalogSelectionKey(prod.id, v.id);
+      const items = getPlannableProductItems(prod);
+      const isConfiguredVariants =
+        items.length > 1 || (items.length === 1 && items[0].id !== 'base');
+
+      if (isConfiguredVariants) {
+        for (const item of items) {
+          const key = buildCatalogSelectionKey(prod.id, item.id);
           const qty = Math.floor(Number(quantitiesByKey[key] || 0));
           if (qty > 0) {
-            out.push({ productId: prod.id, variantId: v.id, quantity: qty });
+            out.push({ productId: prod.id, variantId: item.id, quantity: qty });
           }
         }
       } else {
@@ -495,6 +505,43 @@ export const CatalogCategoryPlannerSection: React.FC<
             {activeCategoryProducts.map((product) => {
               const isHighlighted = highlightedProductId === product.id;
               const thumb = product.images[0] || null;
+              const plannableItems = getPlannableProductItems(product);
+              const hasConfiguredOptions =
+                (product.options && product.options.length > 0) ||
+                (product.variants && product.variants.length > 0) ||
+                (plannableItems.length > 1 || (plannableItems.length === 1 && plannableItems[0].id !== 'base'));
+
+              // Compute real-time product total dynamically from individual inputs
+              let productTotal = 0;
+              if (hasConfiguredOptions) {
+                for (const item of plannableItems) {
+                  const key = buildCatalogSelectionKey(product.id, item.id);
+                  productTotal += quantitiesByKey[key] ?? 0;
+                }
+              } else {
+                const key = buildCatalogSelectionKey(product.id, null);
+                productTotal = quantitiesByKey[key] ?? 0;
+              }
+
+              const handleResetProductQuantities = () => {
+                if (hasConfiguredOptions) {
+                  for (const item of plannableItems) {
+                    const key = buildCatalogSelectionKey(product.id, item.id);
+                    if ((quantitiesByKey[key] ?? 0) > 0) {
+                      onChangeQuantity(key, 0);
+                    }
+                  }
+                } else {
+                  const key = buildCatalogSelectionKey(product.id, null);
+                  if ((quantitiesByKey[key] ?? 0) > 0) {
+                    onChangeQuantity(key, 0);
+                  }
+                }
+                setStagedCatalogPlates(null);
+              };
+
+              // Detect multiple option groups (e.g. Letter + Color)
+              const hasMultipleGroups = Boolean(product.options && product.options.length > 1);
 
               return (
                 <div
@@ -503,64 +550,62 @@ export const CatalogCategoryPlannerSection: React.FC<
                     isHighlighted
                       ? 'border-brand ring-1 ring-brand bg-brand-soft/40'
                       : 'border-line bg-elevated'
-                  }`}
+                  } ${hasConfiguredOptions && plannableItems.length >= 10 ? 'md:col-span-2 lg:col-span-3' : ''}`}
                 >
-                  <div className="flex items-start gap-3">
-                    {thumb ? (
-                      <img
-                        src={thumb}
-                        alt={product.name}
-                        className="w-12 h-12 rounded-lg object-cover border border-line bg-recessed shrink-0"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-lg border border-line bg-recessed flex items-center justify-center text-muted shrink-0">
-                        <CategoryIcon name={category.iconName} className="w-5 h-5" />
+                  {/* Product Header: thumbnail, name, SKU, price, real-time total, and exact Reset button */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={product.name}
+                          className="w-12 h-12 rounded-lg object-cover border border-line bg-recessed shrink-0"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-lg border border-line bg-recessed flex items-center justify-center text-muted shrink-0">
+                          <CategoryIcon name={category.iconName} className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-ink truncate">
+                          {product.name}
+                        </div>
+                        <div className="text-[11px] font-mono-data text-muted">
+                          {product.sku} · {formatMyrPrice(product.priceMyr)}
+                        </div>
                       </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-ink truncate">
-                        {product.name}
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <div className="text-xs font-mono-data bg-recessed border border-line px-2.5 py-1 rounded-lg">
+                        <span className="text-muted">Total: </span>
+                        <span className="font-bold text-ink">{productTotal} pcs</span>
                       </div>
-                      <div className="text-[11px] font-mono-data text-muted">
-                        {product.sku} · {formatMyrPrice(product.priceMyr)}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetProductQuantities}
+                        disabled={productTotal === 0}
+                        title={`Reset ${product.name} quantity inputs to 0`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-line bg-surface hover:bg-recessed text-xs font-semibold text-ink disabled:opacity-40 transition-colors"
+                      >
+                        <RotateCcw className="w-3 h-3 text-ink-secondary" />
+                        <span>Reset</span>
+                      </button>
                     </div>
                   </div>
 
-                  {product.variants.length > 0 ? (
-                    <div className="space-y-2 pt-1 border-t border-line/60">
-                      {product.variants.map((v) => {
-                        const key = buildCatalogSelectionKey(product.id, v.id);
-                        const qty = quantitiesByKey[key] ?? 0;
-                        return (
-                          <div
-                            key={v.id}
-                            className="flex items-center justify-between gap-2 text-xs"
-                          >
-                            <span className="text-ink-secondary truncate">
-                              {v.label}
-                            </span>
-                            <input
-                              type="number"
-                              min={0}
-                              step={1}
-                              aria-label={`Quantity for ${product.name} (${v.label})`}
-                              value={qty}
-                              onChange={(e) => {
-                                onChangeQuantity(
-                                  key,
-                                  Math.max(0, Math.floor(Number(e.target.value) || 0))
-                                );
-                                setStagedCatalogPlates(null);
-                              }}
-                              className="w-24 px-2.5 py-1.5 text-right rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none"
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
+                  {/* Quantity Inputs Section */}
+                  {hasConfiguredOptions ? (
+                    <ProductOptionQuantitiesGrid
+                      product={product}
+                      items={plannableItems}
+                      quantitiesByKey={quantitiesByKey}
+                      hasMultipleGroups={hasMultipleGroups}
+                      onChangeQuantity={onChangeQuantity}
+                      onDirty={() => setStagedCatalogPlates(null)}
+                    />
                   ) : (
-                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-line/60">
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-line/60">
                       <span className="text-xs font-medium text-ink-secondary">
                         Print Quantity (pcs)
                       </span>
@@ -742,38 +787,50 @@ export const CatalogCategoryPlannerSection: React.FC<
                         </div>
 
                         <div className="sm:col-span-4">
-                          {selectedProd && selectedProd.variants.length > 0 ? (
-                            <select
-                              value={row.variantId || selectedProd.variants[0].id}
-                              onChange={(e) =>
-                                setManualPlates((prev) =>
-                                  prev.map((p) =>
-                                    p.draftPlateId === mp.draftPlateId
-                                      ? {
-                                          ...p,
-                                          rows: p.rows.map((r) =>
-                                            r.rowId === row.rowId
-                                              ? { ...r, variantId: e.target.value }
-                                              : r
-                                          ),
-                                        }
-                                      : p
+                          {(() => {
+                            if (!selectedProd) return null;
+                            const plannableItems = getPlannableProductItems(selectedProd);
+                            const hasVariants =
+                              plannableItems.length > 1 ||
+                              (plannableItems.length === 1 && plannableItems[0].id !== 'base');
+
+                            if (!hasVariants) {
+                              return (
+                                <span className="text-xs text-muted px-2">
+                                  Standard item
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <select
+                                value={row.variantId || plannableItems[0]?.id || ''}
+                                onChange={(e) =>
+                                  setManualPlates((prev) =>
+                                    prev.map((p) =>
+                                      p.draftPlateId === mp.draftPlateId
+                                        ? {
+                                            ...p,
+                                            rows: p.rows.map((r) =>
+                                              r.rowId === row.rowId
+                                                ? { ...r, variantId: e.target.value }
+                                                : r
+                                            ),
+                                          }
+                                        : p
+                                    )
                                   )
-                                )
-                              }
-                              className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink"
-                            >
-                              {selectedProd.variants.map((v) => (
-                                <option key={v.id} value={v.id}>
-                                  {v.label}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="text-xs text-muted px-2">
-                              Standard item
-                            </span>
-                          )}
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs text-ink"
+                              >
+                                {plannableItems.map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {v.label}
+                                  </option>
+                                ))}
+                              </select>
+                            );
+                          })()}
                         </div>
 
                         <div className="sm:col-span-2">
@@ -1026,3 +1083,176 @@ export const CatalogCategoryPlannerSection: React.FC<
     </div>
   );
 };
+
+interface ProductOptionQuantitiesGridProps {
+  product: CatalogProduct;
+  items: PlannableProductItem[];
+  quantitiesByKey: Record<string, number>;
+  hasMultipleGroups: boolean;
+  onChangeQuantity: (selectionKey: string, nextQty: number) => void;
+  onDirty: () => void;
+}
+
+const ProductOptionQuantitiesGrid: React.FC<ProductOptionQuantitiesGridProps> = ({
+  product,
+  items,
+  quantitiesByKey,
+  hasMultipleGroups,
+  onChangeQuantity,
+  onDirty,
+}) => {
+  const isAlphabet = useMemo(() => isAlphabetProductItems(items), [items]);
+
+  // Handle multiple option groups (e.g. Letter + Color)
+  const secondaryGroup = hasMultipleGroups && product.options ? product.options[1] : null;
+  const [activeSecondaryValue, setActiveSecondaryValue] = useState<string>(
+    secondaryGroup && secondaryGroup.values.length > 0 ? secondaryGroup.values[0] : ''
+  );
+
+  useEffect(() => {
+    if (secondaryGroup && secondaryGroup.values.length > 0) {
+      if (!secondaryGroup.values.includes(activeSecondaryValue)) {
+        setActiveSecondaryValue(secondaryGroup.values[0]);
+      }
+    }
+  }, [secondaryGroup, activeSecondaryValue]);
+
+  // Filter items if secondary group is active
+  const displayedItems = useMemo(() => {
+    if (!secondaryGroup || !activeSecondaryValue) {
+      return items;
+    }
+    return items.filter((item) => {
+      if (!item.optionValues) return true;
+      return item.optionValues[secondaryGroup.name] === activeSecondaryValue;
+    });
+  }, [items, secondaryGroup, activeSecondaryValue]);
+
+  const isAlphabetSubset = useMemo(
+    () => isAlphabetProductItems(displayedItems),
+    [displayedItems]
+  );
+
+  return (
+    <div className="space-y-3 pt-2 border-t border-line/60">
+      {/* Secondary Option Selector Tabs (e.g. Color / Finish / Material) */}
+      {secondaryGroup && secondaryGroup.values.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-semibold text-ink-secondary">
+            Select {secondaryGroup.name}:
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {secondaryGroup.values.map((val) => {
+              const tabItems = items.filter(
+                (item) => item.optionValues?.[secondaryGroup.name] === val
+              );
+              const tabTotal = tabItems.reduce((sum, item) => {
+                const k = buildCatalogSelectionKey(product.id, item.id);
+                return sum + (quantitiesByKey[k] ?? 0);
+              }, 0);
+              const isActive = activeSecondaryValue === val;
+
+              return (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setActiveSecondaryValue(val)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+                    isActive
+                      ? 'border-brand bg-brand-soft text-brand-text font-bold ring-1 ring-brand'
+                      : 'border-line bg-surface hover:bg-elevated text-ink'
+                  }`}
+                >
+                  <span>{val}</span>
+                  {tabTotal > 0 && (
+                    <span className="text-[10px] font-mono-data px-1.5 py-0.2 rounded-full bg-brand text-white">
+                      {tabTotal}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Grid of Option Inputs */}
+      {isAlphabet || isAlphabetSubset ? (
+        /* A–Z Alphabet Style Grid: Responsive 13-column layout matching original workflow */
+        <div className="space-y-1">
+          <div className="grid grid-cols-4 sm:grid-cols-7 md:grid-cols-9 lg:grid-cols-13 gap-2">
+            {displayedItems.map((item) => {
+              const key = buildCatalogSelectionKey(product.id, item.id);
+              const qty = quantitiesByKey[key] ?? 0;
+              return (
+                <div
+                  key={item.id}
+                  className={`p-2 rounded-xl border text-center transition-colors ${
+                    qty > 0
+                      ? 'border-brand-border bg-brand-soft ring-1 ring-brand/50'
+                      : 'border-line bg-surface hover:border-line-hover'
+                  }`}
+                >
+                  <div className="font-bold text-xs text-ink mb-1 truncate select-none">
+                    {item.label}
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="0"
+                    aria-label={`Quantity for ${product.name} ${item.label}`}
+                    value={qty === 0 ? '' : qty}
+                    onChange={(e) => {
+                      const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                      onChangeQuantity(key, parsed);
+                      onDirty();
+                    }}
+                    className="w-full px-1 py-1 text-center rounded-lg border border-line bg-input text-xs font-mono-data text-ink font-semibold focus:border-brand focus:outline-none placeholder:text-muted/60"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        /* Dynamic Word / Custom Options Grid: responsive card grid */
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          {displayedItems.map((item) => {
+            const key = buildCatalogSelectionKey(product.id, item.id);
+            const qty = quantitiesByKey[key] ?? 0;
+            return (
+              <div
+                key={item.id}
+                className={`p-2.5 rounded-xl border transition-colors ${
+                  qty > 0
+                    ? 'border-brand-border bg-brand-soft ring-1 ring-brand/50'
+                    : 'border-line bg-surface hover:border-line-hover'
+                }`}
+              >
+                <div className="text-xs font-semibold text-ink truncate mb-1.5" title={item.label}>
+                  {item.label}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="0"
+                  aria-label={`Quantity for ${product.name} ${item.label}`}
+                  value={qty === 0 ? '' : qty}
+                  onChange={(e) => {
+                    const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                    onChangeQuantity(key, parsed);
+                    onDirty();
+                  }}
+                  className="w-full px-2 py-1 text-right rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none placeholder:text-muted/60"
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+

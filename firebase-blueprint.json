@@ -229,11 +229,11 @@
         },
         "options": {
           "type": "array",
-          "description": "Optional variation option definitions (max 4; each option validates id, name, int sortOrder, and 1–12 string values of 1–80 chars)"
+          "description": "Optional variation option definitions (max 4; each option validates id, name, int sortOrder, and 1–60 string values of 1–80 chars, supporting alphabet A–Z and custom lists)"
         },
         "variants": {
           "type": "array",
-          "description": "Optional cartesian product variations (max 12; all 12 variants validate id, label, optionValues map, optional MYR price, optional HTTPS imageUrl, and int sortOrder)"
+          "description": "Product variations (up to 12 embedded directly on parent document; products with >12 variants persist to users/{userId}/catalogProducts/{productId}/variants/{variantId} subcollection to stay within Firestore 1,000-expression ceiling)"
         },
         "status": {
           "type": "string",
