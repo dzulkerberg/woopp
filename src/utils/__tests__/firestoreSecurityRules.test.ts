@@ -17,7 +17,6 @@ import {
   MAX_PRODUCT_IMAGES,
   MAX_PRODUCT_OPTION_VALUES,
   MAX_PRODUCT_OPTIONS,
-  MAX_PRODUCT_VARIANTS,
   prepareCategoryForFirestore,
   prepareCategoryPlateSettingForFirestore,
   prepareProductForFirestore,

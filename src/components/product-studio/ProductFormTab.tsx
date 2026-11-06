@@ -19,10 +19,14 @@ import {
   ProductVariant,
 } from '../../types';
 import {
+  ALPHABET_A_TO_Z,
   MAX_OPTION_COMPLEXITY_BUDGET,
   MAX_PRODUCT_IMAGES,
   MAX_PRODUCT_OPTION_VALUES,
   MAX_PRODUCT_OPTIONS,
+  MAX_PRODUCT_VARIANTS,
+  NUMBERS_0_TO_9,
+  POPULAR_COLORS,
   syncVariantsFromOptions,
   validateHttpsImageUrl,
 } from '../../utils/catalogValidation';
@@ -46,23 +50,6 @@ interface ProductFormTabProps {
 }
 
 const OPTION_PRESET_SUGGESTIONS = ['Alphabet', 'Color', 'Style', 'Size', 'Design'] as const;
-
-export const ALPHABET_A_TO_Z = Array.from({ length: 26 }, (_, i) =>
-  String.fromCharCode(65 + i)
-);
-export const NUMBERS_0_TO_9 = Array.from({ length: 10 }, (_, i) => String(i));
-export const POPULAR_COLORS = [
-  'White',
-  'Black',
-  'Red',
-  'Blue',
-  'Gold',
-  'Silver',
-  'Green',
-  'Yellow',
-  'Purple',
-  'Orange',
-];
 
 export const ProductFormTab: React.FC<ProductFormTabProps> = ({
   ownerId,
@@ -267,7 +254,7 @@ export const ProductFormTab: React.FC<ProductFormTabProps> = ({
     recomputeVariants(options.filter((o) => o.id !== optId));
   };
 
-  const handleAddMultipleOptionValues = (optId: string, valuesToAdd: string[]) => {
+  const handleAddMultipleOptionValues = (optId: string, valuesToAdd: readonly string[]) => {
     const targetOpt = options.find((o) => o.id === optId);
     if (!targetOpt) return;
 

@@ -44,6 +44,36 @@ export const MAX_OPTION_COMPLEXITY_BUDGET = 120;
 export const MAX_PRODUCT_VARIANTS = 60;
 export const MAX_IMAGE_URL_LENGTH = 2048;
 
+export const ALPHABET_A_TO_Z: readonly string[] = Object.freeze(
+  Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
+);
+
+export const POPULAR_COLORS: readonly string[] = Object.freeze([
+  'White',
+  'Black',
+  'Red',
+  'Blue',
+  'Gold',
+  'Silver',
+  'Green',
+  'Yellow',
+  'Orange',
+  'Purple',
+]);
+
+export const NUMBERS_0_TO_9: readonly string[] = Object.freeze([
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+]);
+
 export interface HttpsUrlValidationResult {
   valid: boolean;
   normalizedUrl: string | null;

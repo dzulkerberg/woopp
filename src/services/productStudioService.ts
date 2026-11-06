@@ -439,12 +439,41 @@ export async function createOrDuplicateCatalogProductInFirestore(params: {
           return false;
         }
 
+        const hasSubcollectionVariants = validatedProduct.variants.length > 12;
+        const productDocToPersist = hasSubcollectionVariants
+          ? { ...validatedProduct, variants: [] }
+          : validatedProduct;
+
         tx.set(skuRef, validatedReservation);
-        tx.set(productRef, validatedProduct);
+        tx.set(productRef, productDocToPersist);
         return true;
       });
 
       if (committed) {
+        if (validatedProduct.variants.length > 12) {
+          const variantBatch = writeBatch(db);
+          validatedProduct.variants.forEach((v) => {
+            const vDoc = prepareVariantDocForFirestore(
+              v,
+              ownerId,
+              validatedProduct.id,
+              { createdAt: nowIso, updatedAt: nowIso }
+            );
+            variantBatch.set(
+              doc(
+                db,
+                'users',
+                ownerId,
+                'catalogProducts',
+                validatedProduct.id,
+                'variants',
+                vDoc.id
+              ),
+              vDoc
+            );
+          });
+          await variantBatch.commit();
+        }
         return validatedProduct;
       }
 
@@ -492,23 +521,94 @@ export async function updateCatalogProductInFirestore(params: {
     params.ownerId
   );
 
+  const hasSubcollectionVariants = validated.variants.length > 12;
+  const productToSave = hasSubcollectionVariants
+    ? { ...validated, variants: [] }
+    : validated;
+
   const path = `users/${params.ownerId}/catalogProducts/${validated.id}`;
   try {
     await updateDoc(doc(db, 'users', params.ownerId, 'catalogProducts', validated.id), {
-      name: validated.name,
-      description: validated.description,
-      categoryId: validated.categoryId,
-      priceMyr: validated.priceMyr,
-      images: validated.images,
-      options: validated.options,
-      variants: validated.variants,
-      status: validated.status,
-      updatedAt: validated.updatedAt,
+      name: productToSave.name,
+      description: productToSave.description,
+      categoryId: productToSave.categoryId,
+      priceMyr: productToSave.priceMyr,
+      images: productToSave.images,
+      options: productToSave.options,
+      variants: productToSave.variants,
+      status: productToSave.status,
+      updatedAt: productToSave.updatedAt,
     });
+
+    if (hasSubcollectionVariants) {
+      const nowIso = new Date().toISOString();
+      const variantBatch = writeBatch(db);
+      validated.variants.forEach((v) => {
+        const vDoc = prepareVariantDocForFirestore(
+          v,
+          params.ownerId,
+          validated.id,
+          {
+            createdAt: params.existingProduct.createdAt,
+            updatedAt: nowIso,
+          }
+        );
+        variantBatch.set(
+          doc(
+            db,
+            'users',
+            params.ownerId,
+            'catalogProducts',
+            validated.id,
+            'variants',
+            vDoc.id
+          ),
+          vDoc
+        );
+      });
+      await variantBatch.commit();
+    }
+
     return validated;
   } catch (err: unknown) {
     const info = buildFirestoreErrorInfo(err, OperationType.UPDATE, path);
     throw new Error(`Could not update product in Cloud Firestore: ${info.error}`);
+  }
+}
+
+/**
+ * Fetches variants for a product from the scalable subcollection:
+ * `users/{ownerId}/catalogProducts/{productId}/variants`
+ */
+export async function fetchProductVariantsFromFirestore(
+  ownerId: string,
+  productId: string
+): Promise<ProductVariant[]> {
+  try {
+    const snap = await getDocs(
+      collection(db, 'users', ownerId, 'catalogProducts', productId, 'variants')
+    );
+    const variants: ProductVariant[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() as Partial<CatalogVariantDoc>;
+      variants.push({
+        id: d.id || docSnap.id,
+        label: d.label || '',
+        optionValues: d.optionValues || {},
+        priceMyr: typeof d.priceMyr === 'number' ? d.priceMyr : null,
+        imageUrl: typeof d.imageUrl === 'string' ? d.imageUrl : null,
+        sortOrder: typeof d.sortOrder === 'number' ? d.sortOrder : 0,
+      });
+    });
+    return variants.sort((a, b) => a.sortOrder - b.sortOrder);
+  } catch (err: unknown) {
+    const info = buildFirestoreErrorInfo(
+      err,
+      OperationType.LIST,
+      `users/${ownerId}/catalogProducts/${productId}/variants`
+    );
+    console.warn(`[ProductStudio] Could not fetch variants subcollection: ${info.error}`);
+    return [];
   }
 }
 

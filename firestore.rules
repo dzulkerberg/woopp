@@ -590,7 +590,7 @@ service cloud.firestore {
 
     // Product Studio: Scalable Variant Document Validation Blueprint (stored at catalogProducts/{productId}/variants/{variantId})
     function isValidCatalogVariantDoc(d, userId, productId, variantId) {
-      return d.size() == 9 &&
+      return d.size() == 10 &&
         d.id == variantId &&
         d.ownerId == userId &&
         d.productId == productId &&
@@ -710,7 +710,7 @@ service cloud.firestore {
       // users/{userId}/catalogProducts/{productId}/variants/{variantId}
       match /variants/{variantId} {
         allow get: if isAuthorizedWorkspaceAdmin(userId) && isValidId(productId) && isValidId(variantId);
-        allow list: if isAuthorizedWorkspaceAdmin(userId) && isValidId(productId) && resource.data.ownerId == request.auth.uid;
+        allow list: if isAuthorizedWorkspaceAdmin(userId) && isValidId(productId);
         allow create: if resource == null &&
           isAuthorizedWorkspaceAdmin(userId) &&
           isValidId(productId) &&
