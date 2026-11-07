@@ -329,4 +329,61 @@ describe('WOOPP Products 6.0 — Per-Option Quantity Planner & Scalable Options'
     expect(job.stage).toBe('Ready to Print'); // Because slicerVerified was true
     expect(job.machineId).toBeNull(); // Never auto-assigned
   });
+
+  it('8. Supports long option labels, varying option numbers, and handles 4-digit quantities cleanly in snapshot resolutions', () => {
+    const longLabelsProduct: CatalogProduct = {
+      id: 'prod-special-edition',
+      ownerId: 'user-1',
+      sku: 'SPEC-ED-01',
+      name: 'Artisan Switch Collection Special Edition',
+      description: 'Long labels with custom switches',
+      categoryId: dummyCategory.id,
+      images: ['https://storage.googleapis.com/test/switch.png'],
+      priceMyr: 25.0,
+      options: [
+        {
+          id: 'opt-switch',
+          name: 'Switch Type & Actuation Force',
+          values: [
+            'Gateron Oil King Linear 55g Heavy Lubricated',
+            'KTT Strawberry Tactile 45g Ultra Smooth',
+            'TTC Silent Bluish White Muted Bump 42g',
+          ],
+          sortOrder: 0,
+        },
+      ],
+      variants: [],
+      status: 'active',
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-01T00:00:00.000Z',
+    };
+
+    const items = getPlannableProductItems(longLabelsProduct);
+    expect(items).toHaveLength(3);
+    expect(items[0].label).toBe('Gateron Oil King Linear 55g Heavy Lubricated');
+    expect(items[1].label).toBe('KTT Strawberry Tactile 45g Ultra Smooth');
+    expect(items[2].label).toBe('TTC Silent Bluish White Muted Bump 42g');
+    expect(isAlphabetProductItems(items)).toBe(false);
+
+    // Test 4-digit quantities (e.g. 1500 pcs, 2500 pcs)
+    const selections = [
+      { productId: longLabelsProduct.id, variantId: items[0].id, quantity: 1500 },
+      { productId: longLabelsProduct.id, variantId: items[1].id, quantity: 2500 },
+    ];
+
+    const resolved = resolveCatalogSnapshotsFromSelections({
+      category: dummyCategory,
+      products: [longLabelsProduct],
+      selections,
+      color: dummyColor,
+    });
+
+    expect(resolved.error).toBeUndefined();
+    expect(resolved.snapshots).toHaveLength(2);
+    expect(countCatalogItems(resolved.snapshots!)).toBe(4000);
+    expect(resolved.snapshots![0].quantity).toBe(1500);
+    expect(resolved.snapshots![0].variantLabel).toBe('Gateron Oil King Linear 55g Heavy Lubricated');
+    expect(resolved.snapshots![1].quantity).toBe(2500);
+  });
 });
+

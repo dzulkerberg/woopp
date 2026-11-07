@@ -17,12 +17,11 @@ import {
   DraftCatalogPlatePreview,
   generateAutomaticCatalogPlatePreviews,
   getPlannableProductItems,
-  isAlphabetProductItems,
-  PlannableProductItem,
   validateCategoryForPlanning,
   validateSameCategoryPlateItems,
 } from '../utils/catalogPlannerEngine';
 import { DurationHMInput } from './DurationHMInput';
+import { DynamicOptionQuantityGrid } from './DynamicOptionQuantityGrid';
 import { CategoryIcon } from './product-studio/CategoryIcon';
 import { formatMyrPrice } from './product-studio/ProductDetailModal';
 
@@ -550,35 +549,35 @@ export const CatalogCategoryPlannerSection: React.FC<
                     isHighlighted
                       ? 'border-brand ring-1 ring-brand bg-brand-soft/40'
                       : 'border-line bg-elevated'
-                  } ${hasConfiguredOptions && plannableItems.length >= 10 ? 'md:col-span-2 lg:col-span-3' : ''}`}
+                  } ${hasConfiguredOptions ? 'col-span-1 md:col-span-2 lg:col-span-3' : ''}`}
                 >
-                  {/* Product Header: thumbnail, name, SKU, price, real-time total, and exact Reset button */}
+                  {/* Product Header: thumbnail, name, SKU, price, real-time total, and compact Reset button */}
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                       {thumb ? (
                         <img
                           src={thumb}
                           alt={product.name}
-                          className="w-12 h-12 rounded-lg object-cover border border-line bg-recessed shrink-0"
+                          className="w-11 h-11 rounded-lg object-cover border border-line bg-recessed shrink-0"
                         />
                       ) : (
-                        <div className="w-12 h-12 rounded-lg border border-line bg-recessed flex items-center justify-center text-muted shrink-0">
-                          <CategoryIcon name={category.iconName} className="w-5 h-5" />
+                        <div className="w-11 h-11 rounded-lg border border-line bg-recessed flex items-center justify-center text-muted shrink-0">
+                          <CategoryIcon name={category.iconName} className="w-5 h-5 text-ink-secondary" />
                         </div>
                       )}
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ink truncate">
+                        <div className="text-sm font-semibold text-ink truncate leading-tight">
                           {product.name}
                         </div>
-                        <div className="text-[11px] font-mono-data text-muted">
+                        <div className="text-[11px] font-mono-data text-muted mt-0.5">
                           {product.sku} · {formatMyrPrice(product.priceMyr)}
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5">
-                      <div className="text-xs font-mono-data bg-recessed border border-line px-2.5 py-1 rounded-lg">
-                        <span className="text-muted">Total: </span>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-mono-data bg-recessed/80 border border-line/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[11px] text-muted uppercase tracking-wider font-sans">Total</span>
                         <span className="font-bold text-ink">{productTotal} pcs</span>
                       </div>
                       <button
@@ -586,7 +585,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                         onClick={handleResetProductQuantities}
                         disabled={productTotal === 0}
                         title={`Reset ${product.name} quantity inputs to 0`}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-line bg-surface hover:bg-recessed text-xs font-semibold text-ink disabled:opacity-40 transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-line bg-surface hover:bg-recessed text-xs font-semibold text-ink disabled:opacity-35 transition-colors cursor-pointer disabled:cursor-not-allowed"
                       >
                         <RotateCcw className="w-3 h-3 text-ink-secondary" />
                         <span>Reset</span>
@@ -596,7 +595,7 @@ export const CatalogCategoryPlannerSection: React.FC<
 
                   {/* Quantity Inputs Section */}
                   {hasConfiguredOptions ? (
-                    <ProductOptionQuantitiesGrid
+                    <DynamicOptionQuantityGrid
                       product={product}
                       items={plannableItems}
                       quantitiesByKey={quantitiesByKey}
@@ -1084,175 +1083,4 @@ export const CatalogCategoryPlannerSection: React.FC<
   );
 };
 
-interface ProductOptionQuantitiesGridProps {
-  product: CatalogProduct;
-  items: PlannableProductItem[];
-  quantitiesByKey: Record<string, number>;
-  hasMultipleGroups: boolean;
-  onChangeQuantity: (selectionKey: string, nextQty: number) => void;
-  onDirty: () => void;
-}
-
-const ProductOptionQuantitiesGrid: React.FC<ProductOptionQuantitiesGridProps> = ({
-  product,
-  items,
-  quantitiesByKey,
-  hasMultipleGroups,
-  onChangeQuantity,
-  onDirty,
-}) => {
-  const isAlphabet = useMemo(() => isAlphabetProductItems(items), [items]);
-
-  // Handle multiple option groups (e.g. Letter + Color)
-  const secondaryGroup = hasMultipleGroups && product.options ? product.options[1] : null;
-  const [activeSecondaryValue, setActiveSecondaryValue] = useState<string>(
-    secondaryGroup && secondaryGroup.values.length > 0 ? secondaryGroup.values[0] : ''
-  );
-
-  useEffect(() => {
-    if (secondaryGroup && secondaryGroup.values.length > 0) {
-      if (!secondaryGroup.values.includes(activeSecondaryValue)) {
-        setActiveSecondaryValue(secondaryGroup.values[0]);
-      }
-    }
-  }, [secondaryGroup, activeSecondaryValue]);
-
-  // Filter items if secondary group is active
-  const displayedItems = useMemo(() => {
-    if (!secondaryGroup || !activeSecondaryValue) {
-      return items;
-    }
-    return items.filter((item) => {
-      if (!item.optionValues) return true;
-      return item.optionValues[secondaryGroup.name] === activeSecondaryValue;
-    });
-  }, [items, secondaryGroup, activeSecondaryValue]);
-
-  const isAlphabetSubset = useMemo(
-    () => isAlphabetProductItems(displayedItems),
-    [displayedItems]
-  );
-
-  return (
-    <div className="space-y-3 pt-2 border-t border-line/60">
-      {/* Secondary Option Selector Tabs (e.g. Color / Finish / Material) */}
-      {secondaryGroup && secondaryGroup.values.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-[11px] font-semibold text-ink-secondary">
-            Select {secondaryGroup.name}:
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {secondaryGroup.values.map((val) => {
-              const tabItems = items.filter(
-                (item) => item.optionValues?.[secondaryGroup.name] === val
-              );
-              const tabTotal = tabItems.reduce((sum, item) => {
-                const k = buildCatalogSelectionKey(product.id, item.id);
-                return sum + (quantitiesByKey[k] ?? 0);
-              }, 0);
-              const isActive = activeSecondaryValue === val;
-
-              return (
-                <button
-                  key={val}
-                  type="button"
-                  onClick={() => setActiveSecondaryValue(val)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                    isActive
-                      ? 'border-brand bg-brand-soft text-brand-text font-bold ring-1 ring-brand'
-                      : 'border-line bg-surface hover:bg-elevated text-ink'
-                  }`}
-                >
-                  <span>{val}</span>
-                  {tabTotal > 0 && (
-                    <span className="text-[10px] font-mono-data px-1.5 py-0.2 rounded-full bg-brand text-white">
-                      {tabTotal}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Grid of Option Inputs */}
-      {isAlphabet || isAlphabetSubset ? (
-        /* A–Z Alphabet Style Grid: Responsive 13-column layout matching original workflow */
-        <div className="space-y-1">
-          <div className="grid grid-cols-4 sm:grid-cols-7 md:grid-cols-9 lg:grid-cols-13 gap-2">
-            {displayedItems.map((item) => {
-              const key = buildCatalogSelectionKey(product.id, item.id);
-              const qty = quantitiesByKey[key] ?? 0;
-              return (
-                <div
-                  key={item.id}
-                  className={`p-2 rounded-xl border text-center transition-colors ${
-                    qty > 0
-                      ? 'border-brand-border bg-brand-soft ring-1 ring-brand/50'
-                      : 'border-line bg-surface hover:border-line-hover'
-                  }`}
-                >
-                  <div className="font-bold text-xs text-ink mb-1 truncate select-none">
-                    {item.label}
-                  </div>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    placeholder="0"
-                    aria-label={`Quantity for ${product.name} ${item.label}`}
-                    value={qty === 0 ? '' : qty}
-                    onChange={(e) => {
-                      const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
-                      onChangeQuantity(key, parsed);
-                      onDirty();
-                    }}
-                    className="w-full px-1 py-1 text-center rounded-lg border border-line bg-input text-xs font-mono-data text-ink font-semibold focus:border-brand focus:outline-none placeholder:text-muted/60"
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : (
-        /* Dynamic Word / Custom Options Grid: responsive card grid */
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
-          {displayedItems.map((item) => {
-            const key = buildCatalogSelectionKey(product.id, item.id);
-            const qty = quantitiesByKey[key] ?? 0;
-            return (
-              <div
-                key={item.id}
-                className={`p-2.5 rounded-xl border transition-colors ${
-                  qty > 0
-                    ? 'border-brand-border bg-brand-soft ring-1 ring-brand/50'
-                    : 'border-line bg-surface hover:border-line-hover'
-                }`}
-              >
-                <div className="text-xs font-semibold text-ink truncate mb-1.5" title={item.label}>
-                  {item.label}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  placeholder="0"
-                  aria-label={`Quantity for ${product.name} ${item.label}`}
-                  value={qty === 0 ? '' : qty}
-                  onChange={(e) => {
-                    const parsed = Math.max(0, Math.floor(Number(e.target.value) || 0));
-                    onChangeQuantity(key, parsed);
-                    onDirty();
-                  }}
-                  className="w-full px-2 py-1 text-right rounded-lg border border-line bg-input text-xs font-mono-data font-semibold text-ink focus:border-brand focus:outline-none placeholder:text-muted/60"
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
 
