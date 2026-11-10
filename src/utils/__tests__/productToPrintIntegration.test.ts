@@ -226,10 +226,15 @@ describe('Product-to-Print Integration, Category Plate Mixing & Planner Reset Su
       includePartialRemainderPlate: true,
     });
     expect(sameCatPreview.error).toBeUndefined();
-    expect(sameCatPreview.previews).toHaveLength(1);
-    expect(sameCatPreview.previews![0].items).toHaveLength(2);
+    // MANDATORY PRODUCTION INVARIANT: ONE PLATE = ONE PRODUCT ID
+    // Even in the same category, different products (Charm Moon & Charm Star) are strictly isolated onto separate plates
+    expect(sameCatPreview.previews).toHaveLength(2);
+    expect(sameCatPreview.previews![0].items).toHaveLength(1);
+    expect(sameCatPreview.previews![1].items).toHaveLength(1);
+    expect(sameCatPreview.previews![0].productId).toBe(charmMoon.id);
+    expect(sameCatPreview.previews![1].productId).toBe(charmStar.id);
 
-    // 2. Renaming category preserves immutable categoryId -> still shares plate!
+    // 2. Renaming category preserves immutable categoryId -> generates isolated plates
     const renamedCharmCategory: ProductCategory = {
       ...charmCategory,
       name: ' Cute Keycap Charms ',
@@ -248,7 +253,7 @@ describe('Product-to-Print Integration, Category Plate Mixing & Planner Reset Su
       includePartialRemainderPlate: true,
     });
     expect(afterRenamePreview.error).toBeUndefined();
-    expect(afterRenamePreview.previews).toHaveLength(1);
+    expect(afterRenamePreview.previews).toHaveLength(2);
 
     // 3. Different categoryId -> rejected at preview generation!
     const crossCatPreview = generateAutomaticCatalogPlatePreviews({

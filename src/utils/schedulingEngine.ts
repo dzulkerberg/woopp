@@ -204,7 +204,7 @@ export function computeGlobalSchedule(
     const slot: ScheduledJobSlot = {
       job,
       project: proj,
-      colorName: colorMap.get(job.colorId) || 'Color',
+      colorName: colorMap.get(job.colorId) || 'Unassigned Color',
       assignedMachineId: machine?.id || null,
       assignedMachineName: machine?.name || 'Unassigned Printer',
       isVirtualAssignment: false,
@@ -332,7 +332,7 @@ export function computeGlobalSchedule(
       slotsByJobId[job.id] = {
         job,
         project: proj,
-        colorName: colorMap.get(job.colorId) || 'Color',
+        colorName: colorMap.get(job.colorId) || 'Unassigned Color',
         assignedMachineId: job.machineId,
         assignedMachineName: 'No Online Printer',
         isVirtualAssignment: true,
@@ -369,7 +369,7 @@ export function computeGlobalSchedule(
     const slot: ScheduledJobSlot = {
       job,
       project: proj,
-      colorName: colorMap.get(job.colorId) || 'Color',
+      colorName: colorMap.get(job.colorId) || 'Unassigned Color',
       assignedMachineId: chosenMachine.id,
       assignedMachineName: chosenMachine.name,
       isVirtualAssignment: isVirtual,

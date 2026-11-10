@@ -11,6 +11,7 @@ export interface DynamicOptionQuantityGridProps {
   items: PlannableProductItem[];
   quantitiesByKey: Record<string, number>;
   hasMultipleGroups: boolean;
+  colorId?: string;
   onChangeQuantity: (selectionKey: string, nextQty: number) => void;
   onDirty: () => void;
 }
@@ -32,6 +33,7 @@ export const DynamicOptionQuantityGrid: React.FC<DynamicOptionQuantityGridProps>
   items,
   quantitiesByKey,
   hasMultipleGroups,
+  colorId,
   onChangeQuantity,
   onDirty,
 }) => {
@@ -90,7 +92,7 @@ export const DynamicOptionQuantityGrid: React.FC<DynamicOptionQuantityGridProps>
                 (item) => item.optionValues?.[secondaryGroup.name] === val
               );
               const tabTotal = tabItems.reduce((sum, item) => {
-                const k = buildCatalogSelectionKey(product.id, item.id);
+                const k = buildCatalogSelectionKey(product.id, item.id, colorId);
                 return sum + (quantitiesByKey[k] ?? 0);
               }, 0);
               const isActive = activeSecondaryValue === val;
@@ -129,7 +131,7 @@ export const DynamicOptionQuantityGrid: React.FC<DynamicOptionQuantityGridProps>
         }}
       >
         {displayedItems.map((item) => {
-          const key = buildCatalogSelectionKey(product.id, item.id);
+          const key = buildCatalogSelectionKey(product.id, item.id, colorId);
           const qty = quantitiesByKey[key] ?? 0;
           const isSingleShort = isShortOptionSet && item.label.length <= 3;
 

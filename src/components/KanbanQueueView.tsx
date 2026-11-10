@@ -61,6 +61,7 @@ interface KanbanQueueViewProps {
       Pick<
         ProductionJob,
         | 'machineId'
+        | 'colorId'
         | 'estimatedMinutes'
         | 'actualMinutes'
         | 'notes'
@@ -383,6 +384,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               className="px-3 py-1.5 rounded-lg border border-line bg-input text-xs text-ink focus:border-brand focus:outline-none"
             >
               <option value="ALL">All Colors</option>
+              <option value="UNASSIGNED">Unassigned Color</option>
               {workspace.colors.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -765,17 +767,42 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                       </div>
                     </td>
                     <td className="py-3 px-3 text-ink-secondary align-top">
-                      <div className="font-medium text-ink">
+                      <div
+                        className="font-semibold text-ink truncate max-w-[170px]"
+                        title={`Project: ${proj?.name || 'Unassigned Project'}`}
+                      >
                         {proj?.name || 'Project'}
                       </div>
-                      <div className="text-muted flex items-center gap-1.5 mt-0.5">
-                        {color && (
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0 border border-line"
-                            style={{ backgroundColor: color.hex }}
-                          />
+                      <div
+                        className="flex items-center gap-1.5 mt-1 text-xs"
+                        title={
+                          color
+                            ? `Plate Printing Color: ${color.name}`
+                            : 'Plate Printing Color: Unassigned'
+                        }
+                      >
+                        {color ? (
+                          <>
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-line shadow-xs"
+                              style={{ backgroundColor: color.hex }}
+                              aria-hidden="true"
+                            />
+                            <span className="font-medium text-ink truncate">
+                              {color.name}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-dashed border-line bg-recessed"
+                              aria-hidden="true"
+                            />
+                            <span className="font-medium text-muted italic">
+                              Unassigned Color
+                            </span>
+                          </>
                         )}
-                        <span>{color?.name || 'Color'}</span>
                       </div>
                     </td>
                     <td className="py-3 px-3 align-top">
@@ -1030,7 +1057,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
       }`}
     >
       <div className="flex items-start justify-between gap-2 min-w-0">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-ink">
               Plate {job.plateNumber}
@@ -1041,16 +1068,46 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               </span>
             )}
           </div>
-          <div className="text-[11px] text-muted flex items-center gap-1.5 truncate">
-            {color && (
-              <span
-                className="w-2 h-2 rounded-full shrink-0 border border-line"
-                style={{ backgroundColor: color.hex }}
-              />
+
+          {/* Project Name (Kept separate from plate printing color) */}
+          <div
+            className="text-[11px] font-semibold text-ink truncate leading-tight"
+            title={`Project: ${project?.name || 'Unassigned Project'}`}
+          >
+            {project?.name || 'Project'}
+          </div>
+
+          {/* Plate Printing Filament Color (Authoritative, distinct from project name) */}
+          <div
+            className="text-[11px] flex items-center gap-1.5 truncate"
+            title={
+              color
+                ? `Plate Printing Color: ${color.name}`
+                : 'Plate Printing Color: Unassigned'
+            }
+          >
+            {color ? (
+              <>
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 border border-line shadow-xs"
+                  style={{ backgroundColor: color.hex }}
+                  aria-hidden="true"
+                />
+                <span className="font-medium text-ink-secondary truncate">
+                  {color.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 border border-dashed border-line bg-recessed"
+                  aria-hidden="true"
+                />
+                <span className="font-medium text-muted italic">
+                  Unassigned Color
+                </span>
+              </>
             )}
-            <span className="truncate">
-              {project?.name || 'Project'} · {color?.name || 'Color'}
-            </span>
           </div>
         </div>
 
@@ -1349,6 +1406,38 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
 
       {expanded && !job.archived && (
         <div className="pt-2 space-y-2.5 border-t border-line text-xs min-w-0">
+          {/* Quick Filament Color Reassignment */}
+          {!['Completed', 'Cancelled'].includes(job.stage) && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] text-muted font-medium">Filament Color:</span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                {color && (
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0 border border-line shadow-xs"
+                    style={{ backgroundColor: color.hex }}
+                    aria-hidden="true"
+                  />
+                )}
+                <select
+                  aria-label={`Filament color for Plate ${job.plateNumber}`}
+                  disabled={isBusy}
+                  value={job.colorId || ''}
+                  onChange={(e) =>
+                    onUpdateJobMetadata(job.id, { colorId: e.target.value })
+                  }
+                  className="px-2 py-1 rounded-lg border border-line bg-input text-xs font-semibold text-ink focus:border-brand focus:outline-none"
+                >
+                  <option value="unassigned">Unassigned Color</option>
+                  {workspace.colors.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-muted">Bambu Est. (h/m):</span>
             <DurationHMInput

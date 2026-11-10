@@ -42,7 +42,6 @@ import {
 } from '../utils/productionEngine';
 import { CatalogCategoryPlannerSection } from './CatalogCategoryPlannerSection';
 import { DurationHMInput } from './DurationHMInput';
-import { CategoryIcon } from './product-studio/CategoryIcon';
 
 type PlannerWorkflowId = 'builtin:alphabet' | 'builtin:charm' | `catalog:${string}`;
 
@@ -817,95 +816,45 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           )}
         </div>
 
-        {/* Category Selector (Product Studio Categories + Built-in Single-Category Keycaps) */}
+        {/* Category Selector (Category Dropdown + Quick Select) */}
         <div className="pt-4 border-t border-line space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-ink">
-              Product Category (Same-Category Plate Rule)
-            </span>
+            <label htmlFor="top-category-select" className="text-xs font-semibold text-ink">
+              Product Category
+            </label>
             <span className="text-[11px] text-muted">
-              Items from different categories never mix on the same plate
+              ONE PLATE = ONE PRODUCT ID + ONE FILAMENT COLOR
             </span>
           </div>
 
-          <div
-            role="tablist"
-            aria-label="Production category selector"
-            className="flex flex-wrap items-center gap-2"
-          >
-            {activeCatalogCategories.map((cat) => {
-              const wfId: PlannerWorkflowId = `catalog:${cat.id}`;
-              const active = selectedWorkflow === wfId;
-              const catProdCount = products.filter(
-                (p) => p.categoryId === cat.id && p.status === 'active'
-              ).length;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setSelectedWorkflow(wfId);
-                    setStagedPlates(null);
-                  }}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
-                    active
-                      ? 'border-brand bg-brand text-white'
-                      : 'border-line bg-elevated text-ink-secondary hover:text-ink'
-                  }`}
-                >
-                  <CategoryIcon
-                    name={cat.iconName}
-                    className="w-3.5 h-3.5 shrink-0"
-                  />
-                  <span>{cat.name}</span>
-                  <span
-                    className={`font-mono-data text-[11px] ${
-                      active ? 'text-white/85' : 'text-muted'
-                    }`}
-                  >
-                    ({catProdCount})
-                  </span>
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedWorkflow === 'builtin:alphabet'}
-              onClick={() => {
-                setSelectedWorkflow('builtin:alphabet');
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              id="top-category-select"
+              value={selectedWorkflow}
+              onChange={(e) => {
+                setSelectedWorkflow(e.target.value as PlannerWorkflowId);
                 setCarryIncludedInBatch(false);
                 setStagedPlates(null);
               }}
-              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
-                selectedWorkflow === 'builtin:alphabet'
-                  ? 'border-brand bg-brand text-white'
-                  : 'border-line bg-elevated text-ink-secondary hover:text-ink'
-              }`}
+              className="px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none min-w-[260px] font-semibold"
             >
-              <span>Alphabet Keycaps (A–Z)</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedWorkflow === 'builtin:charm'}
-              onClick={() => {
-                setSelectedWorkflow('builtin:charm');
-                setCarryIncludedInBatch(false);
-                setStagedPlates(null);
-              }}
-              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
-                selectedWorkflow === 'builtin:charm'
-                  ? 'border-brand bg-brand text-white'
-                  : 'border-line bg-elevated text-ink-secondary hover:text-ink'
-              }`}
-            >
-              <span>Charm Keycaps (♥ ★ ✿ # @)</span>
-            </button>
+              <optgroup label="Product Studio Categories">
+                {activeCatalogCategories.map((cat) => {
+                  const catProdCount = products.filter(
+                    (p) => p.categoryId === cat.id && p.status === 'active'
+                  ).length;
+                  return (
+                    <option key={cat.id} value={`catalog:${cat.id}`}>
+                      {cat.name} ({catProdCount} {catProdCount === 1 ? 'product' : 'products'})
+                    </option>
+                  );
+                })}
+              </optgroup>
+              <optgroup label="Built-in Single-Category Workflows">
+                <option value="builtin:alphabet">Alphabet Keycaps (A–Z)</option>
+                <option value="builtin:charm">Charm Keycaps (♥ ★ ✿ # @)</option>
+              </optgroup>
+            </select>
           </div>
         </div>
 
@@ -1013,9 +962,19 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           plateSetting={plateSettingsByCategoryId[selectedCatalogCategory.id] || null}
           currentProject={currentProject}
           selectedColor={selectedColorObj}
+          workspaceColors={workspace.colors}
           existingJobs={workspace.jobs}
           quantitiesByKey={draftCatalogQuantities}
           highlightedProductId={highlightedProductId}
+          allCategories={activeCatalogCategories}
+          onSelectCategory={(catId) => {
+            setSelectedWorkflow(`catalog:${catId}`);
+            setStagedPlates(null);
+          }}
+          onSelectColor={(colorId) => {
+            setSelectedColorId(colorId);
+            setStagedPlates(null);
+          }}
           onChangeQuantity={handleChangeCatalogQuantity}
           onSaveCategoryPlateSetting={
             onSaveCategoryPlateSetting || (async () => undefined)
@@ -1037,7 +996,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                 setDraftCatalogQuantities((prev) => {
                   const next: Record<string, number> = {};
                   for (const [key, val] of Object.entries(prev)) {
-                    const pid = key.split('::')[0];
+                    const pid = key.includes(':::')
+                      ? key.split(':::')[0]
+                      : key.split('::')[0];
                     if (!catProductIds.has(pid)) {
                       next[key] = val;
                     }

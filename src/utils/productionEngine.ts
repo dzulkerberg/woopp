@@ -1903,7 +1903,9 @@ export function filterQueueJobs(
       if (criteria.projectId !== 'ALL' && j.projectId !== criteria.projectId) {
         return false;
       }
-      if (criteria.colorId !== 'ALL' && j.colorId !== criteria.colorId) {
+      if (criteria.colorId === 'UNASSIGNED') {
+        if (j.colorId && j.colorId !== 'unassigned') return false;
+      } else if (criteria.colorId !== 'ALL' && j.colorId !== criteria.colorId) {
         return false;
       }
       if (criteria.machineId === 'UNASSIGNED') {

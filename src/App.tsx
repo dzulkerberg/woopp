@@ -886,7 +886,7 @@ export const App: React.FC = () => {
       if (saved) {
         params.onSuccess?.();
         showAlert(
-          `Saved ${result.createdJobs.length} plate(s) (${totalUnits} pcs) for ${project.name} (${color.name}) · ${params.category.name}.`,
+          `Saved ${result.createdJobs.length} plate(s) (${totalUnits} pcs) for ${project.name} · ${params.category.name}.`,
           'Plates Added to Queue'
         );
       }
@@ -996,6 +996,7 @@ export const App: React.FC = () => {
       Pick<
         ProductionJob,
         | 'machineId'
+        | 'colorId'
         | 'estimatedMinutes'
         | 'actualMinutes'
         | 'notes'
@@ -1045,8 +1046,19 @@ export const App: React.FC = () => {
         ...definedUpdates,
         machineId:
           definedUpdates.machineId !== undefined ? definedUpdates.machineId : j.machineId,
+        colorId:
+          definedUpdates.colorId !== undefined ? definedUpdates.colorId : j.colorId,
         updatedIso: new Date(authNow).toISOString(),
       };
+
+      if (definedUpdates.colorId !== undefined && merged.catalogItems) {
+        const matchedC = workspace.colors.find((c) => c.id === definedUpdates.colorId);
+        merged.catalogItems = merged.catalogItems.map((ci) => ({
+          ...ci,
+          colorId: definedUpdates.colorId!,
+          colorName: matchedC ? matchedC.name : 'Unassigned Color',
+        }));
+      }
 
       // Recalculate live finish ETA if Bambu Studio duration or printer override was updated during a calibrated active print
       if (

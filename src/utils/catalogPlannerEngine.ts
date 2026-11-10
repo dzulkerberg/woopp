@@ -21,6 +21,7 @@ import {
   LettersMap,
   PlateGenerationMode,
   ProductCategory,
+  ProductOptionDefinition,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -118,11 +119,78 @@ export function isAlphabetProductItems(
   );
 }
 
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Dynamically resolves whether a product variant or option values match a known workspace filament color.
+ * Supports unlimited user-created colors without hardcoding color names.
+ */
+export function matchWorkspaceColorForVariant(
+  variant: {
+    label?: string | null;
+    optionValues?: Record<string, string> | null;
+  } | null | undefined,
+  workspaceColors: readonly ColorOption[]
+): ColorOption | null {
+  if (!variant || !workspaceColors || workspaceColors.length === 0) return null;
+
+  // 1. Check option values for color group (e.g. Color, Colour, Warna) or values matching color names
+  if (variant.optionValues) {
+    for (const [groupName, val] of Object.entries(variant.optionValues)) {
+      if (!val || typeof val !== 'string') continue;
+      const cleanVal = val.trim().toLowerCase();
+      // Direct match with color ID or name
+      const direct = workspaceColors.find(
+        (c) => c.id === val.trim() || c.name.trim().toLowerCase() === cleanVal
+      );
+      if (direct) return direct;
+
+      // If group name implies color
+      if (/color|colour|warna/i.test(groupName)) {
+        const matched = workspaceColors.find(
+          (c) =>
+            c.name.trim().toLowerCase() === cleanVal ||
+            cleanVal.includes(c.name.trim().toLowerCase()) ||
+            c.name.trim().toLowerCase().includes(cleanVal)
+        );
+        if (matched) return matched;
+      }
+    }
+  }
+
+  // 2. Check variant label (e.g. "Pink", "Base V1 · Pink", "Pink Glossy")
+  if (variant.label && typeof variant.label === 'string') {
+    const cleanLabel = variant.label.trim().toLowerCase();
+    // Exact name match first
+    const exact = workspaceColors.find((c) => c.name.trim().toLowerCase() === cleanLabel);
+    if (exact) return exact;
+
+    // Word boundary or delimiter match
+    for (const c of workspaceColors) {
+      const cName = c.name.trim().toLowerCase();
+      if (!cName) continue;
+      const escaped = escapeRegExp(cName);
+      const re = new RegExp(`(^|[·\\s\\(\\)\\[\\]\\-_,;:])${escaped}($|[·\\s\\(\\)\\[\\]\\-_,;:])`, 'i');
+      if (re.test(variant.label)) {
+        return c;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface DraftCatalogPlatePreview {
   tempId: string;
   plateNumber: number;
   categoryId: string;
   categoryName: string;
+  productId?: string | null; // Authoritative product ID (MANDATORY INVARIANT: ONE PLATE = ONE PRODUCT ID)
+  productName?: string | null; // Authoritative product name
+  colorId?: string | null; // Authoritative plate printing filament color ID
+  colorName?: string | null; // Authoritative plate printing filament color name
   capacity: number | null; // null when composed in manual_plate mode without a fixed category capacity
   items: JobCatalogItemSnapshot[];
   estimatedMinutes: number;
@@ -158,13 +226,224 @@ export function createZeroedPlannerInputs(): PlannerEditableInputsState {
 }
 
 /**
- * Builds a deterministic selection map key for a product + optional variant.
+ * Builds a deterministic selection map key for a product + optional variant + optional filament color.
+ * When colorId is provided, isolates draft quantities per (product, color, variant).
  */
 export function buildCatalogSelectionKey(
   productId: string,
-  variantId?: string | null
+  variantId?: string | null,
+  colorId?: string | null
 ): string {
+  if (colorId) {
+    return variantId
+      ? `${productId}:::${colorId}:::${variantId}`
+      : `${productId}:::${colorId}:::base`;
+  }
   return variantId ? `${productId}::${variantId}` : `${productId}::base`;
+}
+
+/**
+ * Parses a selection key back into its component parts.
+ */
+export function parseCatalogSelectionKey(key: string): {
+  productId: string;
+  variantId: string | null;
+  colorId: string | null;
+} {
+  if (key.includes(':::')) {
+    const parts = key.split(':::');
+    return {
+      productId: parts[0],
+      colorId: parts[1] || null,
+      variantId: parts[2] === 'base' ? null : parts[2],
+    };
+  }
+  const parts = key.split('::');
+  return {
+    productId: parts[0],
+    colorId: null,
+    variantId: parts[1] === 'base' ? null : parts[1],
+  };
+}
+
+/**
+ * Identifies if a product has a physical color variation option group
+ * (e.g. named Color/Colour/Warna/Filament, or whose values correspond to workspace colors).
+ */
+export function findProductColorOption(
+  product: CatalogProduct,
+  workspaceColors: readonly ColorOption[]
+): ProductOptionDefinition | null {
+  if (!product.options || product.options.length === 0) return null;
+
+  for (const opt of product.options) {
+    if (/^(color|colour|warna|filament)$/i.test(opt.name.trim())) {
+      return opt;
+    }
+  }
+
+  if (workspaceColors && workspaceColors.length > 0) {
+    for (const opt of product.options) {
+      if (!opt.values || opt.values.length === 0) continue;
+      let matchedCount = 0;
+      for (const val of opt.values) {
+        const cleanVal = val.trim().toLowerCase();
+        if (
+          workspaceColors.some(
+            (c) => c.name.trim().toLowerCase() === cleanVal || c.id === val.trim()
+          )
+        ) {
+          matchedCount += 1;
+        }
+      }
+      if (matchedCount > 0 && matchedCount >= Math.ceil(opt.values.length / 2)) {
+        return opt;
+      }
+    }
+  }
+
+  return null;
+}
+
+export interface ColorFilteredPlannableItemsResult {
+  hasColorOption: boolean;
+  colorOptionName?: string;
+  isColorCompatible: boolean;
+  matchingColorValue?: string;
+  availableColors: { name: string; hex?: string; colorId?: string }[];
+  items: PlannableProductItem[];
+  displayMode: 'single_input' | 'variation_grid' | 'incompatible_color';
+}
+
+/**
+ * Resolves plannable items for a product in the context of the active physical filament color.
+ *
+ * CRITICAL RULE (Section 4):
+ * - If product has a physical Color option group:
+ *   - Uses the top-level Filament Color dropdown as authoritative.
+ *   - Resolves the matching variant for that physical color.
+ *   - Never renders a redundant second color grid.
+ *   - If Color is the only option, renders a single quantity input for that color.
+ *   - If Color + other options (Size, Design), renders quantities for that color only.
+ *   - If selected filament color is incompatible with product variations, reports incompatible.
+ * - If product has NO physical color option (e.g. Keycap Letter with Letter A–Z):
+ *   - All variations share the selected physical filament color.
+ */
+export function getPlannableItemsForSelectedFilamentColor(
+  product: CatalogProduct,
+  selectedColor: ColorOption,
+  workspaceColors: readonly ColorOption[]
+): ColorFilteredPlannableItemsResult {
+  const allItems = getPlannableProductItems(product);
+  const colorOpt = findProductColorOption(product, workspaceColors);
+
+  // If no physical color option exists on this product (e.g. Keycap Letter with only Letter A–Z):
+  if (!colorOpt) {
+    const isSingleBase = allItems.length === 1 && allItems[0].id === 'base';
+    return {
+      hasColorOption: false,
+      isColorCompatible: true,
+      availableColors: [],
+      items: allItems,
+      displayMode: isSingleBase ? 'single_input' : 'variation_grid',
+    };
+  }
+
+  // The product HAS a Color option group (e.g. Clicker Base with Pink, Blue, Purple, Mulberry)
+  const availableColors = colorOpt.values.map((v) => {
+    const cleanV = v.trim().toLowerCase();
+    const matched = workspaceColors.find(
+      (c) => c.name.trim().toLowerCase() === cleanV || c.id === v.trim()
+    );
+    return {
+      name: v,
+      hex: matched?.hex,
+      colorId: matched?.id,
+    };
+  });
+
+  const selNameClean = selectedColor.name.trim().toLowerCase();
+  const matchingValue = colorOpt.values.find((v) => {
+    const valClean = v.trim().toLowerCase();
+    return (
+      valClean === selNameClean ||
+      valClean === selectedColor.id.trim().toLowerCase() ||
+      (selectedColor.id &&
+        (v.trim() === selectedColor.id ||
+          valClean.includes(selNameClean) ||
+          selNameClean.includes(valClean)))
+    );
+  });
+
+  if (!matchingValue) {
+    return {
+      hasColorOption: true,
+      colorOptionName: colorOpt.name,
+      isColorCompatible: false,
+      availableColors,
+      items: [],
+      displayMode: 'incompatible_color',
+    };
+  }
+
+  const matchingItems = allItems.filter((item) => {
+    if (item.optionValues && item.optionValues[colorOpt.name]) {
+      return (
+        item.optionValues[colorOpt.name].trim().toLowerCase() ===
+        matchingValue.trim().toLowerCase()
+      );
+    }
+    const cleanLabel = item.label.trim().toLowerCase();
+    return (
+      cleanLabel === matchingValue.trim().toLowerCase() ||
+      cleanLabel.includes(matchingValue.trim().toLowerCase())
+    );
+  });
+
+  const otherOptions = (product.options || []).filter((o) => o.id !== colorOpt.id);
+  if (otherOptions.length === 0 || matchingItems.length === 1) {
+    const singleItem = matchingItems[0] || {
+      id: matchingValue,
+      label: `${product.name} (${matchingValue})`,
+      optionValues: { [colorOpt.name]: matchingValue },
+      sortOrder: 0,
+    };
+    return {
+      hasColorOption: true,
+      colorOptionName: colorOpt.name,
+      isColorCompatible: true,
+      matchingColorValue: matchingValue,
+      availableColors,
+      items: [singleItem],
+      displayMode: 'single_input',
+    };
+  }
+
+  const nonColorItems = matchingItems.map((item) => {
+    let cleanSubLabel = item.label;
+    if (item.optionValues) {
+      const nonColorParts = Object.entries(item.optionValues)
+        .filter(([k]) => k !== colorOpt.name)
+        .map(([, v]) => v);
+      if (nonColorParts.length > 0) {
+        cleanSubLabel = nonColorParts.join(' · ');
+      }
+    }
+    return {
+      ...item,
+      label: cleanSubLabel,
+    };
+  });
+
+  return {
+    hasColorOption: true,
+    colorOptionName: colorOpt.name,
+    isColorCompatible: true,
+    matchingColorValue: matchingValue,
+    availableColors,
+    items: nonColorItems,
+    displayMode: 'variation_grid',
+  };
 }
 
 /**
@@ -227,6 +506,93 @@ export function validateSameCategoryPlateItems(
 }
 
 /**
+ * MANDATORY PRODUCTION INVARIANT:
+ * ONE PLATE = ONE PRODUCT ID + ONE PHYSICAL FILAMENT COLOR.
+ * - A plate MAY contain multiple variations of the same product, provided those variations use the same physical filament color.
+ * - A plate must NEVER contain:
+ *   - Multiple different product IDs.
+ *   - Multiple different physical filament colors.
+ *   - Conflicting physical color variations.
+ */
+export function validateStrictSingleProductPlateItems(
+  items: readonly Pick<
+    JobCatalogItemSnapshot,
+    'productId' | 'productName' | 'categoryId' | 'quantity' | 'colorId'
+  >[],
+  expectedProductId?: string,
+  expectedColorId?: string,
+  expectedCategoryId?: string
+): {
+  valid: boolean;
+  resolvedProductId?: string;
+  resolvedColorId?: string;
+  resolvedCategoryId?: string;
+  error?: string;
+} {
+  const nonEmpty = items.filter((item) => Math.floor(Number(item.quantity || 0)) > 0);
+  if (nonEmpty.length === 0) {
+    return {
+      valid: false,
+      error: 'Each plate must include at least 1 product unit.',
+    };
+  }
+
+  // 1. Strict single category verification
+  const anchorCategoryId = (expectedCategoryId || nonEmpty[0].categoryId || '').trim();
+  if (anchorCategoryId) {
+    for (const item of nonEmpty) {
+      if (!item.categoryId || item.categoryId.trim() !== anchorCategoryId) {
+        return {
+          valid: false,
+          error: `Cross-category plate mixing blocked: "${item.productName}" belongs to category ID "${item.categoryId}", which cannot share a plate with category ID "${anchorCategoryId}".`,
+        };
+      }
+    }
+  }
+
+  // 2. Strict single product verification (NO product mixing allowed!)
+  const anchorProductId = (expectedProductId || nonEmpty[0].productId || '').trim();
+  if (!anchorProductId) {
+    return {
+      valid: false,
+      error: 'Missing productId on plate items.',
+    };
+  }
+  for (const item of nonEmpty) {
+    if (!item.productId || item.productId.trim() !== anchorProductId) {
+      return {
+        valid: false,
+        error: `Product mixing blocked: Plate contains multiple different products ("${item.productName}" [${item.productId}] cannot share a plate with product [${anchorProductId}]). ONE PLATE = ONE PRODUCT ID.`,
+      };
+    }
+  }
+
+  // 3. Strict single filament color verification (NO physical color mixing allowed!)
+  const anchorColorId = (expectedColorId || nonEmpty[0].colorId || '').trim();
+  if (anchorColorId && anchorColorId !== 'unassigned') {
+    for (const item of nonEmpty) {
+      if (
+        item.colorId &&
+        item.colorId.trim() !== anchorColorId &&
+        item.colorId !== 'unassigned'
+      ) {
+        return {
+          valid: false,
+          error: `Color mixing blocked: Plate contains conflicting physical filament colors (${item.colorId} vs ${anchorColorId}). ONE PLATE = ONE PHYSICAL FILAMENT COLOR.`,
+        };
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    resolvedProductId: anchorProductId,
+    resolvedColorId: anchorColorId || undefined,
+    resolvedCategoryId: anchorCategoryId || undefined,
+  };
+}
+
+/**
  * Builds immutable `JobCatalogItemSnapshot` entries from user planner selections,
  * enforcing that every selected product is active and belongs to `category.id`.
  */
@@ -234,7 +600,8 @@ export function resolveCatalogSnapshotsFromSelections(params: {
   category: ProductCategory;
   products: readonly CatalogProduct[];
   selections: readonly CatalogPlannerSelectionInput[];
-  color: ColorOption;
+  color?: ColorOption | null;
+  workspaceColors?: readonly ColorOption[];
 }): { snapshots?: JobCatalogItemSnapshot[]; error?: string } {
   const catCheck = validateCategoryForPlanning(params.category);
   if (!catCheck.ok) {
@@ -278,13 +645,14 @@ export function resolveCatalogSnapshotsFromSelections(params: {
       (product.variants && product.variants.length > 0) ||
       (plannableItems.length > 1 || (plannableItems.length === 1 && plannableItems[0].id !== 'base'));
 
+    let matchedVar: PlannableProductItem | undefined;
     if (hasConfiguredVariants) {
       if (!sel.variantId) {
         return {
           error: `Select a variation for "${product.name}" before generating plates.`,
         };
       }
-      const matchedVar = plannableItems.find((v) => v.id === sel.variantId);
+      matchedVar = plannableItems.find((v) => v.id === sel.variantId);
       if (!matchedVar) {
         return {
           error: `Selected variation for "${product.name}" was not found.`,
@@ -292,6 +660,28 @@ export function resolveCatalogSnapshotsFromSelections(params: {
       }
       variantId = matchedVar.id;
       variantLabel = matchedVar.label;
+    }
+
+    // Resolve snapshot color:
+    // 1. If variant matches a workspace color dynamically, use that matched color
+    // 2. Otherwise fallback to params.color (the planner's active filament color)
+    // 3. Otherwise 'unassigned'
+    let itemColorId = '';
+    let itemColorName = '';
+    if (matchedVar && params.workspaceColors && params.workspaceColors.length > 0) {
+      const matched = matchWorkspaceColorForVariant(matchedVar, params.workspaceColors);
+      if (matched) {
+        itemColorId = matched.id;
+        itemColorName = matched.name;
+      }
+    }
+    if (!itemColorId && params.color) {
+      itemColorId = params.color.id;
+      itemColorName = params.color.name;
+    }
+    if (!itemColorId) {
+      itemColorId = 'unassigned';
+      itemColorName = 'Unassigned Color';
     }
 
     const key = buildCatalogSelectionKey(product.id, variantId);
@@ -307,8 +697,8 @@ export function resolveCatalogSnapshotsFromSelections(params: {
         categoryName: params.category.name,
         variantId,
         variantLabel,
-        colorId: params.color.id,
-        colorName: params.color.name,
+        colorId: itemColorId,
+        colorName: itemColorName,
         quantity: qty,
       });
     }
@@ -332,11 +722,11 @@ export function resolveCatalogSnapshotsFromSelections(params: {
 function getNextSequentialPlateNumberGenerator(
   existingJobs: readonly ProductionJob[],
   projectId: string,
-  colorId: string
+  colorId?: string
 ): () => number {
   const used = new Set(
     existingJobs
-      .filter((j) => j.projectId === projectId && j.colorId === colorId)
+      .filter((j) => j.projectId === projectId && (!colorId || j.colorId === colorId))
       .map((j) => j.plateNumber)
   );
   let cursor = 1;
@@ -357,11 +747,14 @@ function getNextSequentialPlateNumberGenerator(
  * - In `automatic_capacity` mode, requires `plateSetting.plateCapacity >= 1`.
  * - Products in the SAME `categoryId` share plates up to `plateCapacity`.
  * - Products from DIFFERENT `categoryId`s are strictly rejected.
+ * - Naturally groups items by their design/filament color onto separate plates so different colors never conflict.
+ * - Sets explicit, authoritative `colorId` and `colorName` on each generated plate preview.
  */
 export function generateAutomaticCatalogPlatePreviews(params: {
   existingJobs: readonly ProductionJob[];
   project: ProductionProject;
-  color: ColorOption;
+  color?: ColorOption | null;
+  workspaceColors?: readonly ColorOption[];
   category: ProductCategory;
   products: readonly CatalogProduct[];
   selections: readonly CatalogPlannerSelectionInput[];
@@ -377,6 +770,7 @@ export function generateAutomaticCatalogPlatePreviews(params: {
     products: params.products,
     selections: params.selections,
     color: params.color,
+    workspaceColors: params.workspaceColors,
   });
   if (resolved.error || !resolved.snapshots) {
     return { error: resolved.error };
@@ -398,77 +792,135 @@ export function generateAutomaticCatalogPlatePreviews(params: {
   const includePartial = params.includePartialRemainderPlate !== false;
   const nowMs = params.nowMs ?? Date.now();
 
-  const pool = resolved.snapshots.map((s) => ({ ...s }));
-  const totalUnits = countCatalogItems(pool);
-  const fullPlateCount = Math.floor(totalUnits / safeCap);
-  const remainderUnits = totalUnits % safeCap;
-
-  const nextPlateNumber = getNextSequentialPlateNumberGenerator(
-    params.existingJobs,
-    params.project.id,
-    params.color.id
-  );
-
-  const previews: DraftCatalogPlatePreview[] = [];
-
-  const fillOnePlate = (targetRoom: number, isPartial: boolean, idx: number) => {
-    let room = targetRoom;
-    const plateItems: JobCatalogItemSnapshot[] = [];
-
-    // Sort larger remaining quantities first for clean grouping within the same category
-    pool.sort((a, b) => b.quantity - a.quantity);
-
-    for (const candidate of pool) {
-      if (room <= 0) break;
-      if (candidate.quantity <= 0) continue;
-      const take = Math.min(candidate.quantity, room);
-      if (take > 0) {
-        plateItems.push({
-          ...candidate,
-          quantity: take,
-        });
-        candidate.quantity -= take;
-        room -= take;
-      }
+  // Partition snapshots strictly by (productId, colorId) so different products and different physical colors NEVER share a plate!
+  // MANDATORY PRODUCTION INVARIANT: ONE PLATE = ONE PRODUCT ID + ONE PHYSICAL FILAMENT COLOR.
+  const groupsByProductAndColor = new Map<string, JobCatalogItemSnapshot[]>();
+  for (const s of resolved.snapshots) {
+    const pKey = (s.productId || 'unknown').trim();
+    const cKey = (s.colorId || 'unassigned').trim();
+    const comboKey = `${pKey}:::${cKey}`;
+    if (!groupsByProductAndColor.has(comboKey)) {
+      groupsByProductAndColor.set(comboKey, []);
     }
-
-    if (plateItems.length === 0) return;
-
-    // Sort plate items cleanly by productName and variant label (natural alphanumeric / A–Z order)
-    plateItems.sort((a, b) => {
-      const cmpName = a.productName.localeCompare(b.productName);
-      if (cmpName !== 0) return cmpName;
-      const vA = a.variantLabel || '';
-      const vB = b.variantLabel || '';
-      return vA.localeCompare(vB, undefined, { numeric: true, sensitivity: 'base' });
-    });
-
-    const unitSum = countCatalogItems(plateItems);
-    const estMins = isPartial
-      ? Math.max(15, Math.round((unitSum / safeCap) * safeMins))
-      : safeMins;
-
-    previews.push({
-      tempId: `cat-draft-${nowMs}-${idx}`,
-      plateNumber: nextPlateNumber(),
-      categoryId: params.category.id,
-      categoryName: params.category.name,
-      capacity: safeCap,
-      items: plateItems,
-      estimatedMinutes: estMins,
-      slicerVerified: false,
-      notes: isPartial
-        ? `${params.category.name} partial plate (${unitSum}/${safeCap} pcs · verify layout in Bambu Studio)`
-        : `${params.category.name} plate (${unitSum}/${safeCap} pcs · verify layout in Bambu Studio)`,
-    });
-  };
-
-  for (let p = 0; p < fullPlateCount; p += 1) {
-    fillOnePlate(safeCap, false, p);
+    groupsByProductAndColor.get(comboKey)!.push({ ...s });
   }
 
-  if (includePartial && remainderUnits > 0) {
-    fillOnePlate(remainderUnits, true, fullPlateCount);
+  const previews: DraftCatalogPlatePreview[] = [];
+  let totalUnits = 0;
+  let fullPlateCount = 0;
+  let remainderUnits = 0;
+
+  // Track next plate numbers across the project so plate numbers are unique and sequential
+  const usedPlateNumbers = new Set(
+    params.existingJobs
+      .filter((j) => j.projectId === params.project.id)
+      .map((j) => j.plateNumber)
+  );
+  let plateCursor = 1;
+  const getNextPlateNumber = () => {
+    while (usedPlateNumbers.has(plateCursor)) {
+      plateCursor += 1;
+    }
+    const chosen = plateCursor;
+    usedPlateNumbers.add(chosen);
+    plateCursor += 1;
+    return chosen;
+  };
+
+  for (const [comboKey, itemsForGroup] of groupsByProductAndColor.entries()) {
+    const [prodKey, colorKey] = comboKey.split(':::');
+    const groupUnits = countCatalogItems(itemsForGroup);
+    totalUnits += groupUnits;
+    const groupFullPlates = Math.floor(groupUnits / safeCap);
+    const groupRemainder = groupUnits % safeCap;
+    fullPlateCount += groupFullPlates;
+    if (groupRemainder > 0) {
+      remainderUnits += groupRemainder;
+    }
+
+    const matchedProduct = params.products.find((p) => p.id === prodKey);
+    const prodName = itemsForGroup[0]?.productName || matchedProduct?.name || 'Product';
+
+    // Resolve color metadata for this group
+    const matchedColor =
+      (params.workspaceColors || []).find((c) => c.id === colorKey) ||
+      (params.color && params.color.id === colorKey ? params.color : null);
+    const groupColorId = matchedColor
+      ? matchedColor.id
+      : colorKey !== 'unassigned'
+      ? colorKey
+      : null;
+    const groupColorName = matchedColor
+      ? matchedColor.name
+      : colorKey !== 'unassigned'
+      ? colorKey
+      : 'Unassigned Color';
+
+    const pool = itemsForGroup.map((it) => ({ ...it }));
+
+    const fillOnePlate = (targetRoom: number, isPartial: boolean, idx: number) => {
+      let room = targetRoom;
+      const plateItems: JobCatalogItemSnapshot[] = [];
+
+      // Sort larger remaining quantities first for clean variation grouping within the SAME product
+      pool.sort((a, b) => b.quantity - a.quantity);
+
+      for (const candidate of pool) {
+        if (room <= 0) break;
+        if (candidate.quantity <= 0) continue;
+        const take = Math.min(candidate.quantity, room);
+        if (take > 0) {
+          plateItems.push({
+            ...candidate,
+            quantity: take,
+          });
+          candidate.quantity -= take;
+          room -= take;
+        }
+      }
+
+      if (plateItems.length === 0) return;
+
+      // Sort plate items cleanly by variant label (natural alphanumeric / A–Z order)
+      plateItems.sort((a, b) => {
+        const vA = a.variantLabel || '';
+        const vB = b.variantLabel || '';
+        return vA.localeCompare(vB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      const unitSum = countCatalogItems(plateItems);
+      const estMins = isPartial
+        ? Math.max(15, Math.round((unitSum / safeCap) * safeMins))
+        : safeMins;
+
+      const chosenPlateNumber = getNextPlateNumber();
+      const colorSuffix = groupColorName ? ` · ${groupColorName}` : '';
+      previews.push({
+        tempId: `cat-draft-${nowMs}-${prodKey}-${colorKey}-${idx}`,
+        plateNumber: chosenPlateNumber,
+        categoryId: params.category.id,
+        categoryName: params.category.name,
+        productId: prodKey,
+        productName: prodName,
+        colorId: groupColorId,
+        colorName: groupColorName,
+        capacity: safeCap,
+        items: plateItems,
+        estimatedMinutes: estMins,
+        slicerVerified: false,
+        notes: isPartial
+          ? `${prodName}${colorSuffix} partial plate (${unitSum}/${safeCap} pcs · verify layout in Bambu Studio)`
+          : `${prodName}${colorSuffix} plate (${unitSum}/${safeCap} pcs · verify layout in Bambu Studio)`,
+      });
+    };
+
+    for (let p = 0; p < groupFullPlates; p += 1) {
+      fillOnePlate(safeCap, false, p);
+    }
+
+    if (includePartial && groupRemainder > 0) {
+      fillOnePlate(groupRemainder, true, groupFullPlates);
+    }
   }
 
   return {
@@ -486,10 +938,12 @@ export function generateAutomaticCatalogPlatePreviews(params: {
 export function buildManualCatalogPlatePreviews(params: {
   existingJobs: readonly ProductionJob[];
   project: ProductionProject;
-  color: ColorOption;
+  color?: ColorOption | null;
+  workspaceColors?: readonly ColorOption[];
   category: ProductCategory;
   products: readonly CatalogProduct[];
   manualPlates: readonly {
+    colorId?: string | null;
     selections: readonly CatalogPlannerSelectionInput[];
     estimatedMinutes: number;
     slicerVerified?: boolean;
@@ -507,11 +961,22 @@ export function buildManualCatalogPlatePreviews(params: {
     return { error: 'Add at least one manual plate before generating preview.' };
   }
 
-  const nextPlateNumber = getNextSequentialPlateNumberGenerator(
-    params.existingJobs,
-    params.project.id,
-    params.color.id
+  const usedPlateNumbers = new Set(
+    params.existingJobs
+      .filter((j) => j.projectId === params.project.id)
+      .map((j) => j.plateNumber)
   );
+  let plateCursor = 1;
+  const getNextPlateNumber = () => {
+    while (usedPlateNumbers.has(plateCursor)) {
+      plateCursor += 1;
+    }
+    const chosen = plateCursor;
+    usedPlateNumbers.add(chosen);
+    plateCursor += 1;
+    return chosen;
+  };
+
   const nowMs = params.nowMs ?? Date.now();
   const previews: DraftCatalogPlatePreview[] = [];
   let totalUnits = 0;
@@ -523,6 +988,7 @@ export function buildManualCatalogPlatePreviews(params: {
       products: params.products,
       selections: mp.selections,
       color: params.color,
+      workspaceColors: params.workspaceColors,
     });
     if (resolved.error || !resolved.snapshots) {
       return { error: `Manual Plate ${i + 1}: ${resolved.error}` };
@@ -542,19 +1008,55 @@ export function buildManualCatalogPlatePreviews(params: {
       };
     }
 
+    // Determine manual plate's color
+    let plateColorId: string | null = mp.colorId ?? null;
+    if (!plateColorId && resolved.snapshots.length > 0) {
+      // If all items share a color, use it
+      const firstCid = resolved.snapshots[0].colorId;
+      if (firstCid && firstCid !== 'unassigned' && resolved.snapshots.every((it) => it.colorId === firstCid)) {
+        plateColorId = firstCid;
+      }
+    }
+    if (!plateColorId && params.color) {
+      plateColorId = params.color.id;
+    }
+
+    const matchedC = (params.workspaceColors || []).find((c) => c.id === plateColorId) ||
+      (params.color && params.color.id === plateColorId ? params.color : null);
+    const plateColorName = matchedC ? matchedC.name : (plateColorId ? plateColorId : 'Unassigned Color');
+
+    // Enforce strict single-product invariant on manual plates (no product mixing!)
+    const singleProductCheck = validateStrictSingleProductPlateItems(
+      resolved.snapshots,
+      undefined,
+      plateColorId || undefined,
+      params.category.id
+    );
+    if (!singleProductCheck.valid) {
+      return { error: `Manual Plate ${i + 1}: ${singleProductCheck.error}` };
+    }
+
+    const firstProd = resolved.snapshots[0];
+    const manualProdId = firstProd ? firstProd.productId : null;
+    const manualProdName = firstProd ? firstProd.productName : null;
+
     totalUnits += unitsOnPlate;
     previews.push({
       tempId: `cat-manual-${nowMs}-${i}`,
-      plateNumber: nextPlateNumber(),
+      plateNumber: getNextPlateNumber(),
       categoryId: params.category.id,
       categoryName: params.category.name,
+      productId: manualProdId,
+      productName: manualProdName,
+      colorId: plateColorId,
+      colorName: plateColorName,
       capacity: cap,
       items: resolved.snapshots,
       estimatedMinutes: Math.max(1, Math.round(mp.estimatedMinutes || 180)),
       slicerVerified: Boolean(mp.slicerVerified),
       notes:
         mp.notes?.trim() ||
-        `${params.category.name} manual plate (${unitsOnPlate} pcs · verify layout in Bambu Studio)`,
+        `${manualProdName || params.category.name} manual plate (${unitsOnPlate} pcs · verify layout in Bambu Studio)`,
     });
   }
 
@@ -569,6 +1071,7 @@ export function buildManualCatalogPlatePreviews(params: {
 /**
  * Confirms staged Product Studio category plates into `ProductionWorkspaceV5` (`workspace.jobs`):
  * - Re-validates category status (active) and strict single-`categoryId` homogeneity on every plate!
+ * - Preserves each plate's explicit, authoritative `colorId` rather than blindly stamping a single global color!
  * - Stores immutable `JobCatalogItemSnapshot[]` on each `ProductionJob` so future product edits/renames/archives never corrupt Print Queue history.
  * - Never auto-assigns a machine (`machineId: null`) and never auto-starts printing (`Planned` or `Ready to Print` if slicerVerified).
  * - Preserves 100% of existing jobs, projects, machines, countdowns, and inventory.
@@ -577,7 +1080,7 @@ export function commitCatalogPlatesToWorkspace(
   workspace: ProductionWorkspaceV5,
   params: {
     projectId: string;
-    colorId: string;
+    colorId?: string | null;
     category: ProductCategory;
     confirmedPlates: readonly DraftCatalogPlatePreview[];
     nowMs?: number;
@@ -588,13 +1091,16 @@ export function commitCatalogPlatesToWorkspace(
   error?: string;
 } {
   const project = workspace.projects.find((p) => p.id === params.projectId);
-  const color = workspace.colors.find((c) => c.id === params.colorId);
-  if (!project || !color) {
-    return { error: 'Project or filament color not found.' };
+  if (!project) {
+    return { error: 'Project not found.' };
   }
   if (project.status === 'Archived') {
     return { error: 'Cannot add print plates to an archived project.' };
   }
+
+  const defaultColor = params.colorId
+    ? workspace.colors.find((c) => c.id === params.colorId)
+    : null;
 
   const catCheck = validateCategoryForPlanning(params.category);
   if (!catCheck.ok) {
@@ -611,6 +1117,7 @@ export function commitCatalogPlatesToWorkspace(
   const sessionId = `catplan-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
 
   const createdJobs: ProductionJob[] = [];
+  const assignedColorIdsToAdd = new Set<string>();
 
   for (let idx = 0; idx < params.confirmedPlates.length; idx += 1) {
     const draft = params.confirmedPlates[idx];
@@ -623,6 +1130,16 @@ export function commitCatalogPlatesToWorkspace(
     const mixCheck = validateSameCategoryPlateItems(draft.items, params.category.id);
     if (!mixCheck.valid) {
       return { error: `Plate ${draft.plateNumber}: ${mixCheck.error}` };
+    }
+
+    const singleProdCheck = validateStrictSingleProductPlateItems(
+      draft.items,
+      draft.productId || undefined,
+      draft.colorId || undefined,
+      params.category.id
+    );
+    if (!singleProdCheck.valid) {
+      return { error: `Plate ${draft.plateNumber}: ${singleProdCheck.error}` };
     }
 
     const unitTotal = countCatalogItems(draft.items);
@@ -638,6 +1155,19 @@ export function commitCatalogPlatesToWorkspace(
       };
     }
 
+    // Determine plate's authoritative filament color:
+    // 1. draft.colorId if explicitly set on staged plate
+    // 2. defaultColor?.id if provided in params
+    // 3. 'unassigned' if no color assigned
+    const targetColorId = draft.colorId || params.colorId;
+    const plateColor = workspace.colors.find((c) => c.id === targetColorId) || defaultColor;
+    const effectiveColorId = plateColor ? plateColor.id : (targetColorId && targetColorId !== 'unassigned' ? targetColorId : 'unassigned');
+    const effectiveColorName = plateColor ? plateColor.name : 'Unassigned Color';
+
+    if (plateColor) {
+      assignedColorIdsToAdd.add(plateColor.id);
+    }
+
     // Snapshot immutable fields cleanly (zero undefined)
     const immutableSnapshots: JobCatalogItemSnapshot[] = draft.items
       .filter((item) => Math.floor(Number(item.quantity || 0)) > 0)
@@ -649,8 +1179,8 @@ export function commitCatalogPlatesToWorkspace(
         categoryName: params.category.name.trim(),
         variantId: item.variantId ? item.variantId.trim() : null,
         variantLabel: item.variantLabel ? item.variantLabel.trim() : null,
-        colorId: color.id,
-        colorName: color.name,
+        colorId: effectiveColorId,
+        colorName: effectiveColorName,
         quantity: Math.floor(Number(item.quantity)),
       }));
 
@@ -667,9 +1197,9 @@ export function commitCatalogPlatesToWorkspace(
     }
 
     const job: ProductionJob = {
-      id: `job-${nowMs}-${idx}-${color.id}`,
+      id: `job-${nowMs}-${idx}-${effectiveColorId}`,
       projectId: project.id,
-      colorId: color.id,
+      colorId: effectiveColorId,
       plateNumber: draft.plateNumber,
       plateCapacity: effectivePlateCapacity,
       letters: companionLetters,
@@ -703,19 +1233,30 @@ export function commitCatalogPlatesToWorkspace(
     0
   );
 
-  // Ensure color is in project.assignedColorIds if not already assigned
+  // Ensure all colors assigned to plates are recorded in project.assignedColorIds
   const nextProjects = workspace.projects.map((p) => {
     if (p.id !== project.id) return p;
-    const hasColor = p.assignedColorIds.includes(color.id);
-    if (hasColor) return p;
+    const currentAssigned = new Set(p.assignedColorIds || []);
+    let modified = false;
+    for (const cid of assignedColorIdsToAdd) {
+      if (!currentAssigned.has(cid)) {
+        currentAssigned.add(cid);
+        modified = true;
+      }
+    }
+    if (!modified) return p;
     return {
       ...p,
-      assignedColorIds: [...p.assignedColorIds, color.id],
+      assignedColorIds: Array.from(currentAssigned),
       updatedIso: nowIso,
     };
   });
 
-  const logMsg = `${project.name} · ${color.name} (${params.category.name}): Added ${createdJobs.length} plate(s) (${totalConfirmedUnits} pcs) from Product Studio.`;
+  const distinctColorNames = Array.from(
+    new Set(createdJobs.map((j) => workspace.colors.find((c) => c.id === j.colorId)?.name || 'Unassigned Color'))
+  ).join(', ');
+
+  const logMsg = `${project.name} · ${distinctColorNames} (${params.category.name}): Added ${createdJobs.length} plate(s) (${totalConfirmedUnits} pcs) from Product Studio.`;
 
   return {
     createdJobs,

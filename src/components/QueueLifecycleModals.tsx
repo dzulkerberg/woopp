@@ -373,7 +373,7 @@ export const DeletePlateConfirmModal: React.FC<DeletePlateModalProps> = ({
                   style={{ backgroundColor: color.hex }}
                 />
               )}
-              <span>{color?.name || job.colorId}</span>
+              <span>{color?.name || 'Unassigned Color'}</span>
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -524,7 +524,7 @@ export const CancelPrintingConfirmModal: React.FC<CancelPrintingModalProps> = ({
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Project &amp; Color</span>
             <span className="font-medium text-ink">
-              {project?.name || 'Project'} · {color?.name || job.colorId}
+              {project?.name || 'Project'} · {color?.name || 'Unassigned Color'}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -720,7 +720,7 @@ export const BulkQueueActionModal: React.FC<BulkQueueActionModalProps> = ({
               >
                 <div className="min-w-0">
                   <div className="font-semibold text-ink font-mono-data truncate">
-                    Plate {j.plateNumber} · {proj?.name || 'Project'} ({color?.name || j.colorId})
+                    Plate {j.plateNumber} · {proj?.name || 'Project'} ({color?.name || 'Unassigned Color'})
                   </div>
                   <div className="text-[11px] text-muted truncate font-mono-data">
                     {j.id} · {j.stage}
