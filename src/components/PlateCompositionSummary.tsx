@@ -4,7 +4,6 @@ import {
   CHARM_DEFINITIONS,
   countCatalogItems,
   countCharms,
-  countLetters,
 } from '../constants';
 import { CharmsMap, JobCatalogItemSnapshot, LettersMap } from '../types';
 
@@ -23,12 +22,24 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
   categoryNameSnapshot,
   compact = false,
 }) => {
-  const letterEntries = ABC.filter((k) => Math.floor(Number(letters?.[k] || 0)) > 0).map(
-    (k) => ({
-      key: k,
-      qty: Math.floor(Number(letters?.[k] || 0)),
-    })
-  );
+  const catalogEntries = Array.isArray(catalogItems)
+    ? catalogItems.filter((ci) => Math.floor(Number(ci?.quantity || 0)) > 0)
+    : [];
+
+  const mirroredFromCatalog: Record<string, number> = {};
+  for (const ci of catalogEntries) {
+    const qty = Math.floor(Number(ci.quantity || 0));
+    const upperLabel = (ci.variantLabel || '').trim().toUpperCase();
+    if (qty > 0 && upperLabel.length === 1 && ABC.includes(upperLabel as any)) {
+      mirroredFromCatalog[upperLabel] = (mirroredFromCatalog[upperLabel] || 0) + qty;
+    }
+  }
+
+  const letterEntries = ABC.map((k) => {
+    const rawQty = Math.floor(Number(letters?.[k] || 0));
+    const extraQty = Math.max(0, rawQty - (mirroredFromCatalog[k] || 0));
+    return { key: k, qty: extraQty };
+  }).filter((entry) => entry.qty > 0);
 
   const charmEntries = CHARM_DEFINITIONS.filter(
     (def) => Math.floor(Number(charms?.[def.id] || 0)) > 0
@@ -37,11 +48,7 @@ export const PlateCompositionSummary: React.FC<PlateCompositionSummaryProps> = (
     qty: Math.floor(Number(charms?.[def.id] || 0)),
   }));
 
-  const catalogEntries = Array.isArray(catalogItems)
-    ? catalogItems.filter((ci) => Math.floor(Number(ci?.quantity || 0)) > 0)
-    : [];
-
-  const alphabetTotal = countLetters(letters);
+  const alphabetTotal = letterEntries.reduce((sum, e) => sum + e.qty, 0);
   const charmTotal = countCharms(charms);
   const catalogTotal = countCatalogItems(catalogEntries);
 

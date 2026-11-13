@@ -83,6 +83,21 @@ export function toUtcTimestampIso(epochMs: number | null | undefined): string | 
 }
 
 /**
+ * Resolves the authoritative UTC completion epoch milliseconds from a persisted job
+ * (`actualCompletedAt`, `actualCompletedAtMs`, or `completedIso`).
+ * Returns `null` when missing or invalid — never invents or falls back to `updatedIso` or `now`.
+ */
+export function resolveJobCompletionTimestampMs(
+  job: Pick<ProductionJob, 'actualCompletedAt' | 'actualCompletedAtMs' | 'completedIso'>
+): number | null {
+  return (
+    parseUtcTimestampMs(job.actualCompletedAt) ??
+    parseUtcTimestampMs(job.actualCompletedAtMs) ??
+    parseUtcTimestampMs(job.completedIso)
+  );
+}
+
+/**
  * Computes effective print duration in milliseconds for a job on an optional printer,
  * honoring printer-specific overrides and speed multipliers.
  */

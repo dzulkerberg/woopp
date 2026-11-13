@@ -458,6 +458,9 @@ export function transitionJobState(
 
   const hasAlphabetLetters = countLetters(targetJob.letters) > 0;
 
+  const isEnteringCompleted = nextStage === 'Completed' && targetJob.stage !== 'Completed';
+  const isStayingCompleted = nextStage === 'Completed' && targetJob.stage === 'Completed';
+
   // Case A: Entering Completed AND stock has NOT been credited yet -> Credit A–Z letters once (Charm-only plates leave Inventory untouched)
   if (nextStage === 'Completed' && !targetJob.stockApplied) {
     if (hasAlphabetLetters) {
@@ -479,7 +482,9 @@ export function transitionJobState(
       nextStockApplied = true;
       nextTxId = txId;
     }
-    completedIso = nowIso;
+    if (isEnteringCompleted) {
+      completedIso = nowIso;
+    }
   }
 
   // Case B: Leaving Completed -> Safely reverse credited A–Z stock if any was applied
@@ -612,26 +617,44 @@ export function transitionJobState(
       clearNeedsRecalibration = true;
     }
   } else if (nextStage === 'Completed') {
-    let accumulatedElapsedSeconds = targetJob.accumulatedElapsedSeconds || 0;
-    const anchorMs = targetJob.runResumedAtMs ?? resolvedPrevTiming.actualStartedAtMs;
-    if (!resolvedPrevTiming.isPaused && anchorMs !== null && nowMs > anchorMs) {
-      accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
+    if (isStayingCompleted) {
+      // Preserve existing completion timestamps & durations untouched (never overwrite or backfill missing legacy timestamps)
+      timingPatch = {
+        actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+        startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+        estimatedDurationMs: resolvedPrevTiming.estimatedDurationMs,
+        isPaused: false,
+        pausedAt: null,
+        pausedAtMs: null,
+        remainingAtPauseMs: 0,
+        remainingSecondsAtPause: 0,
+        estimatedFinishAt: null,
+        estimatedFinishAtMs: null,
+        actualCompletedAt: targetJob.actualCompletedAt ?? null,
+        actualCompletedAtMs: targetJob.actualCompletedAtMs ?? null,
+      };
+    } else {
+      let accumulatedElapsedSeconds = targetJob.accumulatedElapsedSeconds || 0;
+      const anchorMs = targetJob.runResumedAtMs ?? resolvedPrevTiming.actualStartedAtMs;
+      if (!resolvedPrevTiming.isPaused && anchorMs !== null && nowMs > anchorMs) {
+        accumulatedElapsedSeconds += Math.max(0, Math.floor((nowMs - anchorMs) / 1000));
+      }
+      timingPatch = {
+        actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
+        startedAtMs: resolvedPrevTiming.actualStartedAtMs,
+        estimatedDurationMs: resolvedPrevTiming.estimatedDurationMs,
+        isPaused: false,
+        pausedAt: null,
+        pausedAtMs: null,
+        remainingAtPauseMs: 0,
+        remainingSecondsAtPause: 0,
+        accumulatedElapsedSeconds,
+        estimatedFinishAt: null,
+        estimatedFinishAtMs: null,
+        actualCompletedAt: nowIso,
+        actualCompletedAtMs: nowMs,
+      };
     }
-    timingPatch = {
-      actualStartedAt: toUtcTimestampIso(resolvedPrevTiming.actualStartedAtMs),
-      startedAtMs: resolvedPrevTiming.actualStartedAtMs,
-      estimatedDurationMs: resolvedPrevTiming.estimatedDurationMs,
-      isPaused: false,
-      pausedAt: null,
-      pausedAtMs: null,
-      remainingAtPauseMs: 0,
-      remainingSecondsAtPause: 0,
-      accumulatedElapsedSeconds,
-      estimatedFinishAt: null,
-      estimatedFinishAtMs: null,
-      actualCompletedAt: nowIso,
-      actualCompletedAtMs: nowMs,
-    };
     clearNeedsRecalibration = true;
   } else {
     // Planned, Ready to Print, or Failed / Reprint -> clear active countdown state
@@ -663,6 +686,8 @@ export function transitionJobState(
         remainingSecondsAtPause: null,
         estimatedFinishAt: null,
         estimatedFinishAtMs: null,
+        actualCompletedAt: null,
+        actualCompletedAtMs: null,
       };
     }
     clearNeedsRecalibration = true;
@@ -683,7 +708,7 @@ export function transitionJobState(
   let actualMins = targetJob.actualMinutes;
   if (options?.actualMinutes !== undefined) {
     actualMins = Math.max(0, Math.round(options.actualMinutes));
-  } else if (nextStage === 'Completed') {
+  } else if (isEnteringCompleted) {
     if (finalAccumulatedSecs > 0) {
       actualMins = Math.max(1, Math.round(finalAccumulatedSecs / 60));
     } else if (

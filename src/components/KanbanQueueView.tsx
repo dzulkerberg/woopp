@@ -16,11 +16,14 @@ import {
   formatCountdownHMS,
   formatDateTimeDDMMYYYY,
   formatDurationHoursMinutes,
+  MALAYSIA_TIMEZONE,
 } from '../utils/dateFormat';
+import {
+  resolveCompletedTimestampLabel,
+} from '../utils/completedPlateUtils';
 import {
   ETA_NEEDS_RECALIBRATION_LABEL,
   ETA_REACHED_LABEL,
-  parseUtcTimestampMs,
 } from '../utils/productionCountdown';
 import {
   canArchivePlate,
@@ -29,6 +32,10 @@ import {
   filterQueueJobs,
 } from '../utils/productionEngine';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
+import {
+  CompletedPlateExpandedDetails,
+  CompletedPlateSummaryBlock,
+} from './CompletedPlateDetails';
 import { DurationHMInput } from './DurationHMInput';
 import { EtaRecalibrationBox } from './EtaRecalibrationBox';
 import { PlateCompositionSummary } from './PlateCompositionSummary';
@@ -43,6 +50,7 @@ interface KanbanQueueViewProps {
   selectedProjectId: string;
   isAdmin: boolean;
   busyJobIds: ReadonlySet<string>;
+  initialExpandedJobIds?: ReadonlySet<string>;
   onSelectProject: (projectId: string) => void;
   onTransitionStage: (
     jobId: string,
@@ -91,6 +99,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   selectedProjectId,
   isAdmin,
   busyJobIds,
+  initialExpandedJobIds,
   onSelectProject,
   onTransitionStage,
   onPauseOrResume,
@@ -661,6 +670,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         schedule={schedule}
                         isAdmin={isAdmin}
                         isBusy={busyJobIds.has(job.id)}
+                        defaultExpanded={initialExpandedJobIds?.has(job.id) ?? false}
                         onTransitionStage={onTransitionStage}
                         onPauseOrResume={onPauseOrResume}
                         onRecalibrateJobEta={onRecalibrateJobEta}
@@ -860,16 +870,14 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                           )}
                         </div>
                       ) : job.stage === 'Completed' ? (
-                        <span className="text-brand-text font-semibold whitespace-nowrap">
-                          Done{' '}
-                          {(() => {
-                            const doneMs =
-                              parseUtcTimestampMs(job.actualCompletedAt) ??
-                              job.actualCompletedAtMs ??
-                              parseUtcTimestampMs(job.completedIso);
-                            return doneMs ? formatDateTimeDDMMYYYY(doneMs, timezone) : '';
-                          })()}
-                        </span>
+                        <div className="space-y-0.5">
+                          <div className="text-brand-text font-semibold whitespace-nowrap">
+                            Completed
+                          </div>
+                          <div className="text-[11px] text-ink-secondary whitespace-nowrap">
+                            {resolveCompletedTimestampLabel(job, MALAYSIA_TIMEZONE)}
+                          </div>
+                        </div>
                       ) : job.stage === 'Printing' && slot ? (
                         slot.needsEtaRecalibration ? (
                           <span className="text-warning-text font-sans font-semibold whitespace-nowrap">
@@ -1001,6 +1009,7 @@ interface KanbanJobCardProps {
   schedule: GlobalScheduleResult;
   isAdmin: boolean;
   isBusy: boolean;
+  defaultExpanded?: boolean;
   onTransitionStage: KanbanQueueViewProps['onTransitionStage'];
   onPauseOrResume: KanbanQueueViewProps['onPauseOrResume'];
   onRecalibrateJobEta: KanbanQueueViewProps['onRecalibrateJobEta'];
@@ -1017,6 +1026,7 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   schedule,
   isAdmin,
   isBusy,
+  defaultExpanded = false,
   onTransitionStage,
   onPauseOrResume,
   onRecalibrateJobEta,
@@ -1026,9 +1036,12 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   onArchivePlate,
   onRestorePlate,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const project = workspace.projects.find((p) => p.id === job.projectId);
   const color = workspace.colors.find((c) => c.id === job.colorId);
+  const machine = job.machineId
+    ? workspace.machines.find((m) => m.id === job.machineId) || null
+    : null;
   const qty = countPlateKeycaps(job);
   const slot = schedule.slotsByJobId[job.id];
   const { timezone } = schedule;
@@ -1279,13 +1292,21 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         </div>
       ) : null}
 
-      {/* Alphabet & Charm composition breakdown */}
-      <PlateCompositionSummary
-        letters={job.letters}
-        charms={job.charms}
-        catalogItems={job.catalogItems}
-        categoryNameSnapshot={job.categoryNameSnapshot}
-      />
+      {/* Completed Date & Time + Variation Breakdown OR Active Plate Composition */}
+      {job.stage === 'Completed' ? (
+        <CompletedPlateSummaryBlock
+          job={job}
+          expanded={expanded}
+          onToggleExpand={() => setExpanded((prev) => !prev)}
+        />
+      ) : (
+        <PlateCompositionSummary
+          letters={job.letters}
+          charms={job.charms}
+          catalogItems={job.catalogItems}
+          categoryNameSnapshot={job.categoryNameSnapshot}
+        />
+      )}
 
       {/* Printer Assignment */}
       {!isReadOnlyStage && (
@@ -1383,29 +1404,43 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
         </div>
       )}
 
-      {/* Metadata footer & Expandable Bambu Studio Timing / Machine Overrides */}
+      {/* Metadata footer & Expandable Bambu Studio Timing / Completed Details */}
       <div className="pt-2 border-t border-line flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] text-muted min-w-0">
         <span className="min-w-0 break-words">
           {job.stage === 'Completed'
-            ? `Done (${formatDurationHoursMinutes(
+            ? `Print Duration: ${formatDurationHoursMinutes(
                 job.actualMinutes || job.estimatedMinutes
-              )})`
+              )}`
             : `Bambu Est: ${formatDurationHoursMinutes(job.estimatedMinutes)}`}
           {job.failedCount > 0 ? ` · Fails: ${job.failedCount}` : ''}
         </span>
-        {!job.archived && (
+        {(job.stage === 'Completed' || !job.archived) && (
           <button
             type="button"
             onClick={() => setExpanded(!expanded)}
             className="text-brand-text font-medium hover:underline shrink-0"
           >
-            {expanded ? 'Hide' : 'Timing & Notes'}
+            {expanded
+              ? 'Hide'
+              : job.stage === 'Completed'
+              ? 'Details & Breakdown'
+              : 'Timing & Notes'}
           </button>
         )}
       </div>
 
-      {expanded && !job.archived && (
+      {expanded && (job.stage === 'Completed' || !job.archived) && (
         <div className="pt-2 space-y-2.5 border-t border-line text-xs min-w-0">
+          {job.stage === 'Completed' && (
+            <CompletedPlateExpandedDetails
+              job={job}
+              project={project}
+              color={color}
+              machine={machine}
+            />
+          )}
+          {!job.archived && (
+            <>
           {/* Quick Filament Color Reassignment */}
           {!['Completed', 'Cancelled'].includes(job.stage) && (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1531,6 +1566,8 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
               className="w-full px-2 py-1 rounded border border-line bg-input text-ink focus:border-brand focus:outline-none"
             />
           </div>
+            </>
+          )}
         </div>
       )}
     </article>

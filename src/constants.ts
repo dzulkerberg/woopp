@@ -236,8 +236,32 @@ export function countCatalogItems(
   );
 }
 
+export function countNonCatalogLetters(
+  letters?: LettersMap | null,
+  catalogItems?: readonly JobCatalogItemSnapshot[] | null
+): number {
+  if (!letters) return 0;
+  const mirroredFromCatalog: Record<string, number> = {};
+  if (Array.isArray(catalogItems)) {
+    for (const ci of catalogItems) {
+      const qty = Math.max(0, Math.floor(Number(ci?.quantity || 0)));
+      const labelUpper = (ci?.variantLabel || '').trim().toUpperCase();
+      if (qty > 0 && labelUpper.length === 1 && ABC.includes(labelUpper as any)) {
+        mirroredFromCatalog[labelUpper] =
+          (mirroredFromCatalog[labelUpper] || 0) + qty;
+      }
+    }
+  }
+  return ABC.reduce((sum, key) => {
+    const raw = Math.max(0, Math.floor(Number(letters[key] || 0)));
+    const mirrored = mirroredFromCatalog[key] || 0;
+    return sum + Math.max(0, raw - mirrored);
+  }, 0);
+}
+
 /**
  * Counts total physical items on a plate (1 letter = 1 pc, 1 charm = 1 pc, 1 catalog product unit = 1 pc).
+ * Avoids double-counting companion A–Z `letters` that mirror single-letter `catalogItems` variants.
  * Treats missing charm or catalog item quantities on legacy records as 0.
  */
 export function countPlateKeycaps(item: {
@@ -246,7 +270,7 @@ export function countPlateKeycaps(item: {
   catalogItems?: readonly JobCatalogItemSnapshot[] | null;
 }): number {
   return (
-    countLetters(item.letters) +
+    countNonCatalogLetters(item.letters, item.catalogItems) +
     countCharms(item.charms) +
     countCatalogItems(item.catalogItems)
   );
@@ -286,7 +310,7 @@ export function computeProjectPlateProgress(
   );
 
   const producedLetters = completedJobs.reduce(
-    (sum, j) => sum + countLetters(j.letters),
+    (sum, j) => sum + countNonCatalogLetters(j.letters, j.catalogItems),
     0
   );
   const producedCharms = completedJobs.reduce(
@@ -300,7 +324,7 @@ export function computeProjectPlateProgress(
   const producedKeycaps = producedLetters + producedCharms + producedCatalog;
 
   const plannedLetters = validJobs.reduce(
-    (sum, j) => sum + countLetters(j.letters),
+    (sum, j) => sum + countNonCatalogLetters(j.letters, j.catalogItems),
     0
   );
   const plannedCharms = validJobs.reduce(

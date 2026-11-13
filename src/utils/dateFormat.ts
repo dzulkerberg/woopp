@@ -1,7 +1,11 @@
+import { parseUtcTimestampMs } from './productionCountdown';
+
 /**
  * Date, Duration, and Timezone formatting helpers enforcing DD/MM/YYYY format
  * and displaying timestamps in the user's selected IANA timezone (default Asia/Kuala_Lumpur).
  */
+
+export const MALAYSIA_TIMEZONE = 'Asia/Kuala_Lumpur';
 
 export const SUPPORTED_TIMEZONES: { value: string; label: string }[] = [
   { value: 'Asia/Kuala_Lumpur', label: 'Malaysia (Asia/Kuala_Lumpur · GMT+8)' },
@@ -14,7 +18,7 @@ export const SUPPORTED_TIMEZONES: { value: string; label: string }[] = [
   { value: 'UTC', label: 'Coordinated Universal Time (UTC)' },
 ];
 
-export const DEFAULT_TIMEZONE = 'Asia/Kuala_Lumpur';
+export const DEFAULT_TIMEZONE = MALAYSIA_TIMEZONE;
 
 function extractZonedParts(date: Date, timeZone: string = DEFAULT_TIMEZONE) {
   try {
@@ -281,5 +285,59 @@ export function parseDateTimeLocalInputToUtcMs(
     return candidateUtc;
   } catch {
     return new Date(y, m - 1, d, hh, min, sec).getTime();
+  }
+}
+
+/**
+ * Formats an authoritative completion timestamp in Malaysia time (`Asia/Kuala_Lumpur`)
+ * using `Intl.DateTimeFormat`, producing exact `"13 Nov 2026 · 6:32 PM"` output.
+ * Handles ISO strings, epoch ms, Dates, and Firestore Timestamp objects safely.
+ * Returns `"Not recorded"` when missing, null, undefined, or invalid.
+ */
+export function formatCompletedTimestampMY(
+  value: unknown,
+  timeZone: string = MALAYSIA_TIMEZONE
+): string {
+  const ms = parseUtcTimestampMs(value);
+  if (ms === null) {
+    return 'Not recorded';
+  }
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) {
+    return 'Not recorded';
+  }
+
+  try {
+    const dateParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }).formatToParts(date);
+
+    const timeParts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).formatToParts(date);
+
+    const day = dateParts.find((p) => p.type === 'day')?.value || '';
+    const month = dateParts.find((p) => p.type === 'month')?.value || '';
+    const year = dateParts.find((p) => p.type === 'year')?.value || '';
+
+    const hour = timeParts.find((p) => p.type === 'hour')?.value || '';
+    const minute = timeParts.find((p) => p.type === 'minute')?.value || '';
+    const dayPeriod = (
+      timeParts.find((p) => p.type === 'dayPeriod')?.value || ''
+    ).toUpperCase();
+
+    if (!day || !month || !year || !hour || !minute || !dayPeriod) {
+      return 'Not recorded';
+    }
+
+    return `${day} ${month} ${year} · ${hour}:${minute} ${dayPeriod}`;
+  } catch {
+    return 'Not recorded';
   }
 }
