@@ -19,6 +19,7 @@ import {
   MALAYSIA_TIMEZONE,
 } from '../utils/dateFormat';
 import {
+  compareCompletedJobsNewestFirst,
   resolveCompletedTimestampLabel,
 } from '../utils/completedPlateUtils';
 import {
@@ -32,6 +33,7 @@ import {
   filterQueueJobs,
 } from '../utils/productionEngine';
 import { GlobalScheduleResult } from '../utils/schedulingEngine';
+import { CompletedArchivePanel } from './CompletedArchivePanel';
 import {
   CompletedPlateExpandedDetails,
   CompletedPlateSummaryBlock,
@@ -51,6 +53,7 @@ interface KanbanQueueViewProps {
   isAdmin: boolean;
   busyJobIds: ReadonlySet<string>;
   initialExpandedJobIds?: ReadonlySet<string>;
+  initialLifecycleTab?: QueueLifecycleTab;
   onSelectProject: (projectId: string) => void;
   onTransitionStage: (
     jobId: string,
@@ -100,6 +103,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   isAdmin,
   busyJobIds,
   initialExpandedJobIds,
+  initialLifecycleTab = 'active',
   onSelectProject,
   onTransitionStage,
   onPauseOrResume,
@@ -112,7 +116,9 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   onRestorePlate,
   onRequestBulkAction,
 }) => {
-  const [lifecycleTab, setLifecycleTab] = useState<QueueLifecycleTab>('active');
+  const [lifecycleTab, setLifecycleTab] = useState<QueueLifecycleTab>(
+    initialLifecycleTab
+  );
   const [projectFilter, setProjectFilter] = useState<string>(
     selectedProjectId || 'ALL'
   );
@@ -124,21 +130,26 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
 
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
-  // Tab-level base counts (respecting project/color/machine filters so badges reflect current scope)
+  // Tab-level base counts (respecting project/color/machine filters and current wall-clock nowMs)
   const tabCounts = useMemo(() => {
     const baseScope = {
       projectId: projectFilter,
       colorId: colorFilter,
       machineId: machineFilter,
       status: 'ALL',
+      nowMs: schedule.nowMs,
     };
     return {
       active: filterQueueJobs(workspace.jobs, { ...baseScope, tab: 'active' }).length,
+      completed_archive: filterQueueJobs(workspace.jobs, {
+        ...baseScope,
+        tab: 'completed_archive',
+      }).length,
       cancelled: filterQueueJobs(workspace.jobs, { ...baseScope, tab: 'cancelled' }).length,
       archived: filterQueueJobs(workspace.jobs, { ...baseScope, tab: 'archived' }).length,
       all: filterQueueJobs(workspace.jobs, { ...baseScope, tab: 'all' }).length,
     };
-  }, [workspace.jobs, projectFilter, colorFilter, machineFilter]);
+  }, [workspace.jobs, projectFilter, colorFilter, machineFilter, schedule.nowMs]);
 
   // Single shared source-of-truth filtered array used identically by Kanban Board and Table View
   const filteredJobs = useMemo(
@@ -149,6 +160,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
         colorId: colorFilter,
         machineId: machineFilter,
         status: statusFilter,
+        nowMs: schedule.nowMs,
       }),
     [
       workspace.jobs,
@@ -157,6 +169,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
       colorFilter,
       machineFilter,
       statusFilter,
+      schedule.nowMs,
     ]
   );
 
@@ -183,6 +196,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
     let baseCols: KanbanStage[];
     if (lifecycleTab === 'active') {
       baseCols = [...ACTIVE_KANBAN_STAGES];
+    } else if (lifecycleTab === 'completed_archive') {
+      baseCols = ['Completed'];
     } else if (lifecycleTab === 'cancelled') {
       baseCols = ['Cancelled'];
     } else if (lifecycleTab === 'archived') {
@@ -268,7 +283,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
 
   const handleSwitchTab = (nextTab: QueueLifecycleTab) => {
     setLifecycleTab(nextTab);
-    if (nextTab === 'cancelled') {
+    if (nextTab === 'cancelled' || nextTab === 'completed_archive') {
       setStatusFilter('ALL');
     } else if (nextTab === 'active' && statusFilter === 'Cancelled') {
       setStatusFilter('ALL');
@@ -283,6 +298,7 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
 
   const TABS: { id: QueueLifecycleTab; label: string; count: number }[] = [
     { id: 'active', label: 'Active Queue', count: tabCounts.active },
+    { id: 'completed_archive', label: 'Completed Archive', count: tabCounts.completed_archive },
     { id: 'cancelled', label: 'Cancelled', count: tabCounts.cancelled },
     { id: 'archived', label: 'Archived', count: tabCounts.archived },
     { id: 'all', label: 'All Plates', count: tabCounts.all },
@@ -425,6 +441,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
               <option value="ALL">All Statuses</option>
               {(lifecycleTab === 'active'
                 ? ACTIVE_KANBAN_STAGES
+                : lifecycleTab === 'completed_archive'
+                ? (['Completed'] as KanbanStage[])
                 : lifecycleTab === 'cancelled'
                 ? (['Cancelled'] as KanbanStage[])
                 : KANBAN_STAGES
@@ -616,8 +634,17 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
         </div>
       )}
 
-      {/* Kanban Board vs Table View (Strict Shared Filtered Dataset) */}
-      {viewMode === 'kanban' ? (
+      {/* Dedicated Completed Archive Panel OR Kanban Board vs Table View */}
+      {lifecycleTab === 'completed_archive' && viewMode === 'kanban' ? (
+        <CompletedArchivePanel
+          workspace={workspace}
+          nowMs={schedule.nowMs}
+          projectFilter={projectFilter}
+          colorFilter={colorFilter}
+          machineFilter={machineFilter}
+          initialExpandedJobIds={initialExpandedJobIds}
+        />
+      ) : viewMode === 'kanban' ? (
         <div
           className={`grid grid-cols-1 md:grid-cols-2 ${
             visibleKanbanColumns.length === 1
@@ -630,7 +657,11 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
           } gap-4 items-start`}
         >
           {visibleKanbanColumns.map((stage) => {
-            const stageJobs = filteredJobs.filter((j) => j.stage === stage);
+            const rawStageJobs = filteredJobs.filter((j) => j.stage === stage);
+            const stageJobs =
+              stage === 'Completed'
+                ? [...rawStageJobs].sort(compareCompletedJobsNewestFirst)
+                : rawStageJobs;
             const stageKeycaps = stageJobs.reduce(
               (s, j) => s + countPlateKeycaps(j),
               0

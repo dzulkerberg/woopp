@@ -45,6 +45,11 @@ import {
   resolveJobTimingFields,
   toUtcTimestampIso,
 } from './productionCountdown';
+import {
+  compareCompletedJobsNewestFirst,
+  isCompletedArchivedJob,
+  isCompletedAutoArchived,
+} from './completedPlateUtils';
 import { getEffectivePrintMinutes } from './schedulingEngine';
 
 /**
@@ -1905,6 +1910,7 @@ export interface QueueFilterCriteria {
   colorId: string; // 'ALL' or color.id
   machineId: string; // 'ALL' | 'UNASSIGNED' | machine.id
   status: string; // 'ALL' or KanbanStage
+  nowMs?: number; // Reference wall-clock time for derived 72-hour Completed Archive classification
 }
 
 /**
@@ -1914,36 +1920,43 @@ export function filterQueueJobs(
   jobs: ProductionJob[],
   criteria: QueueFilterCriteria
 ): ProductionJob[] {
-  return jobs
-    .filter((j) => {
-      const isArchived = Boolean(j.archived);
-      if (criteria.tab === 'active') {
-        if (isArchived || j.stage === 'Cancelled') return false;
-      } else if (criteria.tab === 'cancelled') {
-        if (isArchived || j.stage !== 'Cancelled') return false;
-      } else if (criteria.tab === 'archived') {
-        if (!isArchived) return false;
-      }
+  const effectiveNowMs = criteria.nowMs ?? Date.now();
+  const filtered = jobs.filter((j) => {
+    const isManualArchived = Boolean(j.archived);
+    if (criteria.tab === 'active') {
+      if (isManualArchived || j.stage === 'Cancelled') return false;
+      if (isCompletedAutoArchived(j, effectiveNowMs)) return false;
+    } else if (criteria.tab === 'completed_archive') {
+      if (!isCompletedArchivedJob(j, effectiveNowMs)) return false;
+    } else if (criteria.tab === 'cancelled') {
+      if (isManualArchived || j.stage !== 'Cancelled') return false;
+    } else if (criteria.tab === 'archived') {
+      if (!isManualArchived) return false;
+    }
 
-      if (criteria.projectId !== 'ALL' && j.projectId !== criteria.projectId) {
-        return false;
-      }
-      if (criteria.colorId === 'UNASSIGNED') {
-        if (j.colorId && j.colorId !== 'unassigned') return false;
-      } else if (criteria.colorId !== 'ALL' && j.colorId !== criteria.colorId) {
-        return false;
-      }
-      if (criteria.machineId === 'UNASSIGNED') {
-        if (j.machineId !== null && j.machineId !== '') return false;
-      } else if (criteria.machineId !== 'ALL' && j.machineId !== criteria.machineId) {
-        return false;
-      }
-      if (criteria.status !== 'ALL' && j.stage !== criteria.status) {
-        return false;
-      }
-      return true;
-    })
-    .sort((a, b) => a.plateNumber - b.plateNumber);
+    if (criteria.projectId !== 'ALL' && j.projectId !== criteria.projectId) {
+      return false;
+    }
+    if (criteria.colorId === 'UNASSIGNED') {
+      if (j.colorId && j.colorId !== 'unassigned') return false;
+    } else if (criteria.colorId !== 'ALL' && j.colorId !== criteria.colorId) {
+      return false;
+    }
+    if (criteria.machineId === 'UNASSIGNED') {
+      if (j.machineId !== null && j.machineId !== '') return false;
+    } else if (criteria.machineId !== 'ALL' && j.machineId !== criteria.machineId) {
+      return false;
+    }
+    if (criteria.status !== 'ALL' && j.stage !== criteria.status) {
+      return false;
+    }
+    return true;
+  });
+
+  if (criteria.tab === 'completed_archive' || criteria.status === 'Completed') {
+    return [...filtered].sort(compareCompletedJobsNewestFirst);
+  }
+  return [...filtered].sort((a, b) => a.plateNumber - b.plateNumber);
 }
 
 export interface ColorDemandGap {

@@ -8,7 +8,8 @@ import {
   SALES_CHANNELS,
 } from '../constants';
 import { ProductionWorkspaceV5 } from '../types';
-import { formatDateDDMMYYYY } from '../utils/dateFormat';
+import { formatDateDDMMYYYY, MALAYSIA_TIMEZONE } from '../utils/dateFormat';
+import { getCompletionCalendarDateMY } from '../utils/completedPlateUtils';
 import { DateInputDDMMYYYY } from './DateInputDDMMYYYY';
 
 interface AnalyticsViewProps {
@@ -40,13 +41,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ workspace }) => {
       if (!matchingProjectIds.has(j.projectId)) return false;
       if (machineFilter !== 'ALL' && j.machineId !== machineFilter) return false;
       if (colorFilter !== 'ALL' && j.colorId !== colorFilter) return false;
-      if (dateFrom) {
-        const jobDate = (j.completedIso || j.updatedIso || j.createdIso).slice(0, 10);
-        if (jobDate < dateFrom) return false;
-      }
-      if (dateTo) {
-        const jobDate = (j.completedIso || j.updatedIso || j.createdIso).slice(0, 10);
-        if (jobDate > dateTo) return false;
+      if (dateFrom || dateTo) {
+        const completionDateMY = getCompletionCalendarDateMY(j, MALAYSIA_TIMEZONE);
+        const jobDate =
+          completionDateMY ||
+          (j.actualCompletedAt || j.completedIso || j.updatedIso || j.createdIso).slice(
+            0,
+            10
+          );
+        if (dateFrom && jobDate < dateFrom) return false;
+        if (dateTo && jobDate > dateTo) return false;
       }
       return true;
     });

@@ -41,7 +41,12 @@ export type ActiveKanbanStage =
 
 export type KanbanStage = ActiveKanbanStage | 'Cancelled';
 
-export type QueueLifecycleTab = 'active' | 'cancelled' | 'archived' | 'all';
+export type QueueLifecycleTab =
+  | 'active'
+  | 'completed_archive'
+  | 'cancelled'
+  | 'archived'
+  | 'all';
 
 export interface AdminActorContext {
   uid: string | null;
