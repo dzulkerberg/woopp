@@ -123,9 +123,159 @@ function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+export const COLOR_AGNOSTIC_BASE_ITEM_ID = '__color_agnostic_base__';
+export const NON_COLOR_COMBO_PREFIX = '__noncolor__::';
+
+export interface WorkspaceColorMatchDetail {
+  color: ColorOption | null;
+  ambiguous: boolean;
+  candidates: ColorOption[];
+}
+
+/**
+ * Resolves an option value string against workspace filament colors WITHOUT loose substring guessing.
+ * Matches only by exact color ID or exact case-insensitive color name.
+ */
+export function matchWorkspaceColorValue(
+  rawValue: string | null | undefined,
+  workspaceColors: readonly ColorOption[]
+): WorkspaceColorMatchDetail {
+  if (!rawValue || typeof rawValue !== 'string' || !workspaceColors || workspaceColors.length === 0) {
+    return { color: null, ambiguous: false, candidates: [] };
+  }
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return { color: null, ambiguous: false, candidates: [] };
+  }
+  const cleanVal = trimmed.toLowerCase();
+
+  const exactIdMatches = workspaceColors.filter((c) => c.id === trimmed);
+  if (exactIdMatches.length === 1) {
+    return { color: exactIdMatches[0], ambiguous: false, candidates: exactIdMatches };
+  }
+
+  const exactNameMatches = workspaceColors.filter(
+    (c) => c.name.trim().toLowerCase() === cleanVal
+  );
+  if (exactNameMatches.length === 1) {
+    return { color: exactNameMatches[0], ambiguous: false, candidates: exactNameMatches };
+  }
+  if (exactNameMatches.length > 1) {
+    return { color: null, ambiguous: true, candidates: exactNameMatches };
+  }
+
+  return { color: null, ambiguous: false, candidates: [] };
+}
+
+export interface VariantColorConstraintResult {
+  status: 'matched' | 'ambiguous' | 'unmapped_color_option' | 'none';
+  color: ColorOption | null;
+  candidates: ColorOption[];
+  rawColorValue?: string;
+}
+
+/**
+ * Resolves whether a product variant explicitly constrains physical filament color,
+ * avoiding heuristic substring guessing when multiple colors could match.
+ */
+export function resolveVariantColorConstraint(
+  variant: {
+    label?: string | null;
+    optionValues?: Record<string, string> | null;
+  } | null | undefined,
+  workspaceColors: readonly ColorOption[]
+): VariantColorConstraintResult {
+  if (!variant || !workspaceColors || workspaceColors.length === 0) {
+    return { status: 'none', color: null, candidates: [] };
+  }
+
+  if (variant.optionValues) {
+    for (const [groupName, val] of Object.entries(variant.optionValues)) {
+      if (!val || typeof val !== 'string') continue;
+      const valMatch = matchWorkspaceColorValue(val, workspaceColors);
+      if (valMatch.ambiguous) {
+        return {
+          status: 'ambiguous',
+          color: null,
+          candidates: valMatch.candidates,
+          rawColorValue: val.trim(),
+        };
+      }
+      if (valMatch.color) {
+        return {
+          status: 'matched',
+          color: valMatch.color,
+          candidates: [valMatch.color],
+          rawColorValue: val.trim(),
+        };
+      }
+
+      if (/^(color|colour|warna|filament)$/i.test(groupName.trim())) {
+        return {
+          status: 'unmapped_color_option',
+          color: null,
+          candidates: [],
+          rawColorValue: val.trim(),
+        };
+      }
+    }
+  }
+
+  if (variant.label && typeof variant.label === 'string') {
+    const labelMatch = matchWorkspaceColorValue(variant.label, workspaceColors);
+    if (labelMatch.ambiguous) {
+      return {
+        status: 'ambiguous',
+        color: null,
+        candidates: labelMatch.candidates,
+        rawColorValue: variant.label.trim(),
+      };
+    }
+    if (labelMatch.color) {
+      return {
+        status: 'matched',
+        color: labelMatch.color,
+        candidates: [labelMatch.color],
+        rawColorValue: variant.label.trim(),
+      };
+    }
+
+    // Delimiter-delimited exact token match inside compound labels (e.g. "Base V1 · Mulberry")
+    // Only resolves when exactly ONE workspace color matches unambiguously.
+    const tokenMatches: ColorOption[] = [];
+    for (const c of workspaceColors) {
+      const cName = c.name.trim().toLowerCase();
+      if (!cName) continue;
+      const escaped = escapeRegExp(cName);
+      const re = new RegExp(`(^|[·|/\\s\\(\\)\\[\\]\\-,;:])${escaped}($|[·|/\\s\\(\\)\\[\\]\\-,;:])`, 'i');
+      if (re.test(variant.label)) {
+        tokenMatches.push(c);
+      }
+    }
+    if (tokenMatches.length === 1) {
+      return {
+        status: 'matched',
+        color: tokenMatches[0],
+        candidates: tokenMatches,
+        rawColorValue: variant.label.trim(),
+      };
+    }
+    if (tokenMatches.length > 1) {
+      return {
+        status: 'ambiguous',
+        color: null,
+        candidates: tokenMatches,
+        rawColorValue: variant.label.trim(),
+      };
+    }
+  }
+
+  return { status: 'none', color: null, candidates: [] };
+}
+
 /**
  * Dynamically resolves whether a product variant or option values match a known workspace filament color.
- * Supports unlimited user-created colors without hardcoding color names.
+ * Supports unlimited user-created colors without hardcoding color names or loose substring guessing.
  */
 export function matchWorkspaceColorForVariant(
   variant: {
@@ -134,52 +284,8 @@ export function matchWorkspaceColorForVariant(
   } | null | undefined,
   workspaceColors: readonly ColorOption[]
 ): ColorOption | null {
-  if (!variant || !workspaceColors || workspaceColors.length === 0) return null;
-
-  // 1. Check option values for color group (e.g. Color, Colour, Warna) or values matching color names
-  if (variant.optionValues) {
-    for (const [groupName, val] of Object.entries(variant.optionValues)) {
-      if (!val || typeof val !== 'string') continue;
-      const cleanVal = val.trim().toLowerCase();
-      // Direct match with color ID or name
-      const direct = workspaceColors.find(
-        (c) => c.id === val.trim() || c.name.trim().toLowerCase() === cleanVal
-      );
-      if (direct) return direct;
-
-      // If group name implies color
-      if (/color|colour|warna/i.test(groupName)) {
-        const matched = workspaceColors.find(
-          (c) =>
-            c.name.trim().toLowerCase() === cleanVal ||
-            cleanVal.includes(c.name.trim().toLowerCase()) ||
-            c.name.trim().toLowerCase().includes(cleanVal)
-        );
-        if (matched) return matched;
-      }
-    }
-  }
-
-  // 2. Check variant label (e.g. "Pink", "Base V1 · Pink", "Pink Glossy")
-  if (variant.label && typeof variant.label === 'string') {
-    const cleanLabel = variant.label.trim().toLowerCase();
-    // Exact name match first
-    const exact = workspaceColors.find((c) => c.name.trim().toLowerCase() === cleanLabel);
-    if (exact) return exact;
-
-    // Word boundary or delimiter match
-    for (const c of workspaceColors) {
-      const cName = c.name.trim().toLowerCase();
-      if (!cName) continue;
-      const escaped = escapeRegExp(cName);
-      const re = new RegExp(`(^|[·\\s\\(\\)\\[\\]\\-_,;:])${escaped}($|[·\\s\\(\\)\\[\\]\\-_,;:])`, 'i');
-      if (re.test(variant.label)) {
-        return c;
-      }
-    }
-  }
-
-  return null;
+  const res = resolveVariantColorConstraint(variant, workspaceColors);
+  return res.status === 'matched' ? res.color : null;
 }
 
 export interface DraftCatalogPlatePreview {
@@ -315,19 +421,206 @@ export interface ColorFilteredPlannableItemsResult {
   displayMode: 'single_input' | 'variation_grid' | 'incompatible_color';
 }
 
+export function buildNonColorOptionComboKey(
+  optionValues: Record<string, string>,
+  nonColorOptions: readonly ProductOptionDefinition[]
+): string {
+  return `${NON_COLOR_COMBO_PREFIX}${nonColorOptions
+    .map((o) => `${encodeURIComponent(o.name)}=${encodeURIComponent((optionValues[o.name] || '').trim())}`)
+    .join('&')}`;
+}
+
+export function parseNonColorOptionComboKey(
+  itemId: string | null | undefined
+): Record<string, string> | null {
+  if (!itemId || !itemId.startsWith(NON_COLOR_COMBO_PREFIX)) return null;
+  const raw = itemId.slice(NON_COLOR_COMBO_PREFIX.length);
+  if (!raw) return {};
+  const result: Record<string, string> = {};
+  for (const part of raw.split('&')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const k = decodeURIComponent(part.slice(0, eqIdx));
+    const v = decodeURIComponent(part.slice(eqIdx + 1));
+    if (k && v) {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
+export interface PlannerProductInputModel {
+  hasPhysicalColorOption: boolean;
+  isColorDeduplicated: boolean;
+  hasAmbiguousColorMapping: boolean;
+  colorOptionName?: string;
+  configuredColors: { rawValue: string; colorId: string | null; hex?: string }[];
+  effectiveOptions: ProductOptionDefinition[];
+  displayMode: 'single_input' | 'variation_grid';
+  items: PlannableProductItem[];
+}
+
 /**
- * Resolves plannable items for a product in the context of the active physical filament color.
- *
- * CRITICAL RULE (Section 4):
- * - If product has a physical Color option group:
- *   - Uses the top-level Filament Color dropdown as authoritative.
- *   - Resolves the matching variant for that physical color.
- *   - Never renders a redundant second color grid.
- *   - If Color is the only option, renders a single quantity input for that color.
- *   - If Color + other options (Size, Design), renders quantities for that color only.
- *   - If selected filament color is incompatible with product variations, reports incompatible.
- * - If product has NO physical color option (e.g. Keycap Letter with Letter A–Z):
- *   - All variations share the selected physical filament color.
+ * Builds the color-agnostic quantity entry model for a Product Studio product
+ * when Filament Color is chosen per-plate in the Plate Preview stage.
+ * - Avoids duplicated color quantity grids when a product's Color option maps unambiguously to physical workspace colors and non-color combinations are uniform across colors.
+ * - Never collapses or guesses when color mapping is ambiguous or combinations are asymmetric.
+ */
+export function buildPlannerProductInputModel(
+  product: CatalogProduct,
+  workspaceColors: readonly ColorOption[]
+): PlannerProductInputModel {
+  const allItems = getPlannableProductItems(product);
+  const colorOpt = findProductColorOption(product, workspaceColors);
+
+  if (!colorOpt) {
+    const isSingleBase = allItems.length === 1 && allItems[0].id === 'base';
+    return {
+      hasPhysicalColorOption: false,
+      isColorDeduplicated: false,
+      hasAmbiguousColorMapping: false,
+      configuredColors: [],
+      effectiveOptions: product.options || [],
+      displayMode: isSingleBase ? 'single_input' : 'variation_grid',
+      items: allItems,
+    };
+  }
+
+  const configuredColors = colorOpt.values.map((rawVal) => {
+    const match = matchWorkspaceColorValue(rawVal, workspaceColors);
+    return {
+      rawValue: rawVal,
+      colorId: match.color ? match.color.id : null,
+      hex: match.color?.hex,
+    };
+  });
+
+  const allColorsMapUnambiguously =
+    configuredColors.length > 0 && configuredColors.every((c) => c.colorId !== null);
+
+  const nonColorOptions = (product.options || [])
+    .filter((o) => o.id !== colorOpt.id)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  // Check if non-color combinations are uniform across all color values so deduplicating won't generate invalid combos
+  let combosUniformAcrossColors = true;
+  const nonColorComboMap = new Map<
+    string,
+    { label: string; optionValues: Record<string, string>; sortOrder: number; colorCount: number }
+  >();
+
+  if (nonColorOptions.length > 0) {
+    const seenPerComboColor = new Map<string, Set<string>>();
+    for (const item of allItems) {
+      const ov = item.optionValues || {};
+      const colorVal = (ov[colorOpt.name] || '').trim().toLowerCase();
+      if (!colorVal) {
+        combosUniformAcrossColors = false;
+        break;
+      }
+      const nonColorOv: Record<string, string> = {};
+      const labelParts: string[] = [];
+      for (const nOpt of nonColorOptions) {
+        const val = (ov[nOpt.name] || '').trim();
+        if (!val) {
+          combosUniformAcrossColors = false;
+          break;
+        }
+        nonColorOv[nOpt.name] = val;
+        labelParts.push(val);
+      }
+      if (!combosUniformAcrossColors) break;
+
+      const comboKey = buildNonColorOptionComboKey(nonColorOv, nonColorOptions);
+      if (!seenPerComboColor.has(comboKey)) {
+        seenPerComboColor.set(comboKey, new Set());
+        nonColorComboMap.set(comboKey, {
+          label: labelParts.join(' · '),
+          optionValues: nonColorOv,
+          sortOrder: item.sortOrder,
+          colorCount: 0,
+        });
+      }
+      seenPerComboColor.get(comboKey)!.add(colorVal);
+    }
+
+    if (combosUniformAcrossColors) {
+      const expectedColorCount = new Set(
+        colorOpt.values.map((v) => v.trim().toLowerCase())
+      ).size;
+      for (const [comboKey, colorSet] of seenPerComboColor.entries()) {
+        if (colorSet.size !== expectedColorCount) {
+          combosUniformAcrossColors = false;
+          break;
+        }
+        const entry = nonColorComboMap.get(comboKey);
+        if (entry) entry.colorCount = colorSet.size;
+      }
+    }
+  } else {
+    // Only Color option: verify each color option has a valid item (no missing/broken mapping)
+    combosUniformAcrossColors = allItems.length >= colorOpt.values.length;
+  }
+
+  if (allColorsMapUnambiguously && combosUniformAcrossColors) {
+    if (nonColorOptions.length === 0) {
+      return {
+        hasPhysicalColorOption: true,
+        isColorDeduplicated: true,
+        hasAmbiguousColorMapping: false,
+        colorOptionName: colorOpt.name,
+        configuredColors,
+        effectiveOptions: [],
+        displayMode: 'single_input',
+        items: [
+          {
+            id: COLOR_AGNOSTIC_BASE_ITEM_ID,
+            label: product.name,
+            sortOrder: 0,
+          },
+        ],
+      };
+    }
+
+    const dedupedItems: PlannableProductItem[] = Array.from(nonColorComboMap.entries()).map(
+      ([comboKey, info]) => ({
+        id: comboKey,
+        label: info.label,
+        optionValues: info.optionValues,
+        sortOrder: info.sortOrder,
+      })
+    );
+
+    return {
+      hasPhysicalColorOption: true,
+      isColorDeduplicated: true,
+      hasAmbiguousColorMapping: false,
+      colorOptionName: colorOpt.name,
+      configuredColors,
+      effectiveOptions: nonColorOptions,
+      displayMode: 'variation_grid',
+      items: dedupedItems,
+    };
+  }
+
+  return {
+    hasPhysicalColorOption: true,
+    isColorDeduplicated: false,
+    hasAmbiguousColorMapping: !allColorsMapUnambiguously,
+    colorOptionName: colorOpt.name,
+    configuredColors,
+    effectiveOptions: product.options || [],
+    displayMode:
+      allItems.length === 1 && allItems[0].id === 'base'
+        ? 'single_input'
+        : 'variation_grid',
+    items: allItems,
+  };
+}
+
+/**
+ * Resolves plannable items for a product in the context of an explicit physical filament color.
+ * Preserved for direct color-scoped callers and backwards-compatible unit tests.
  */
 export function getPlannableItemsForSelectedFilamentColor(
   product: CatalogProduct,
@@ -337,7 +630,6 @@ export function getPlannableItemsForSelectedFilamentColor(
   const allItems = getPlannableProductItems(product);
   const colorOpt = findProductColorOption(product, workspaceColors);
 
-  // If no physical color option exists on this product (e.g. Keycap Letter with only Letter A–Z):
   if (!colorOpt) {
     const isSingleBase = allItems.length === 1 && allItems[0].id === 'base';
     return {
@@ -349,12 +641,8 @@ export function getPlannableItemsForSelectedFilamentColor(
     };
   }
 
-  // The product HAS a Color option group (e.g. Clicker Base with Pink, Blue, Purple, Mulberry)
   const availableColors = colorOpt.values.map((v) => {
-    const cleanV = v.trim().toLowerCase();
-    const matched = workspaceColors.find(
-      (c) => c.name.trim().toLowerCase() === cleanV || c.id === v.trim()
-    );
+    const matched = matchWorkspaceColorValue(v, workspaceColors).color;
     return {
       name: v,
       hex: matched?.hex,
@@ -365,14 +653,7 @@ export function getPlannableItemsForSelectedFilamentColor(
   const selNameClean = selectedColor.name.trim().toLowerCase();
   const matchingValue = colorOpt.values.find((v) => {
     const valClean = v.trim().toLowerCase();
-    return (
-      valClean === selNameClean ||
-      valClean === selectedColor.id.trim().toLowerCase() ||
-      (selectedColor.id &&
-        (v.trim() === selectedColor.id ||
-          valClean.includes(selNameClean) ||
-          selNameClean.includes(valClean)))
-    );
+    return valClean === selNameClean || (selectedColor.id && v.trim() === selectedColor.id);
   });
 
   if (!matchingValue) {
@@ -393,11 +674,7 @@ export function getPlannableItemsForSelectedFilamentColor(
         matchingValue.trim().toLowerCase()
       );
     }
-    const cleanLabel = item.label.trim().toLowerCase();
-    return (
-      cleanLabel === matchingValue.trim().toLowerCase() ||
-      cleanLabel.includes(matchingValue.trim().toLowerCase())
-    );
+    return false;
   });
 
   const otherOptions = (product.options || []).filter((o) => o.id !== colorOpt.id);
@@ -646,42 +923,89 @@ export function resolveCatalogSnapshotsFromSelections(params: {
       (plannableItems.length > 1 || (plannableItems.length === 1 && plannableItems[0].id !== 'base'));
 
     let matchedVar: PlannableProductItem | undefined;
+    const isColorAgnosticSel = sel.variantId === COLOR_AGNOSTIC_BASE_ITEM_ID;
+    const nonColorComboOptionValues = parseNonColorOptionComboKey(sel.variantId);
+
     if (hasConfiguredVariants) {
-      if (!sel.variantId) {
-        return {
-          error: `Select a variation for "${product.name}" before generating plates.`,
-        };
+      if (isColorAgnosticSel) {
+        // Color-only product deduplicated during quantity entry; concrete color variant resolves upon per-plate color selection (or immediately if params.color is supplied)
+        const colorOpt = findProductColorOption(product, params.workspaceColors || []);
+        if (colorOpt && params.color) {
+          const targetVar = plannableItems.find(
+            (v) =>
+              v.optionValues?.[colorOpt.name]?.trim().toLowerCase() ===
+              params.color!.name.trim().toLowerCase()
+          );
+          if (!targetVar) {
+            return {
+              error: `"${product.name}" does not support physical filament color "${params.color.name}".`,
+            };
+          }
+          matchedVar = targetVar;
+          variantId = targetVar.id;
+          variantLabel = targetVar.label;
+        } else {
+          variantId = COLOR_AGNOSTIC_BASE_ITEM_ID;
+          variantLabel = null;
+        }
+      } else if (nonColorComboOptionValues) {
+        const colorOpt = findProductColorOption(product, params.workspaceColors || []);
+        if (colorOpt && params.color) {
+          const targetVar = plannableItems.find((v) => {
+            if (!v.optionValues) return false;
+            const cVal = (v.optionValues[colorOpt.name] || '').trim().toLowerCase();
+            if (cVal !== params.color!.name.trim().toLowerCase()) return false;
+            return Object.entries(nonColorComboOptionValues).every(
+              ([k, val]) => (v.optionValues?.[k] || '').trim() === val.trim()
+            );
+          });
+          if (!targetVar) {
+            return {
+              error: `Variation "${Object.values(nonColorComboOptionValues).join(' · ')}" on "${product.name}" is not available in "${params.color.name}".`,
+            };
+          }
+          matchedVar = targetVar;
+          variantId = targetVar.id;
+          variantLabel = targetVar.label;
+        } else {
+          variantId = sel.variantId;
+          variantLabel = Object.values(nonColorComboOptionValues).join(' · ') || null;
+        }
+      } else {
+        if (!sel.variantId) {
+          return {
+            error: `Select a variation for "${product.name}" before generating plates.`,
+          };
+        }
+        matchedVar = plannableItems.find((v) => v.id === sel.variantId);
+        if (!matchedVar) {
+          return {
+            error: `Selected variation for "${product.name}" was not found.`,
+          };
+        }
+        variantId = matchedVar.id;
+        variantLabel = matchedVar.label;
       }
-      matchedVar = plannableItems.find((v) => v.id === sel.variantId);
-      if (!matchedVar) {
-        return {
-          error: `Selected variation for "${product.name}" was not found.`,
-        };
-      }
-      variantId = matchedVar.id;
-      variantLabel = matchedVar.label;
     }
 
     // Resolve snapshot color:
-    // 1. If variant matches a workspace color dynamically, use that matched color
-    // 2. Otherwise fallback to params.color (the planner's active filament color)
-    // 3. Otherwise 'unassigned'
-    let itemColorId = '';
-    let itemColorName = '';
-    if (matchedVar && params.workspaceColors && params.workspaceColors.length > 0) {
-      const matched = matchWorkspaceColorForVariant(matchedVar, params.workspaceColors);
-      if (matched) {
-        itemColorId = matched.id;
-        itemColorName = matched.name;
+    // - If params.color is omitted/null (per-plate color workflow), initialize draft items as unassigned
+    //   so operators explicitly choose Filament Color per plate in Preview (never auto-assigned to color-0!).
+    // - If params.color is supplied (legacy/direct callers), resolve explicit variant color or fallback to params.color.
+    let itemColorId = 'unassigned';
+    let itemColorName = 'Unassigned Color';
+    if (params.color) {
+      let resolvedColorId = '';
+      let resolvedColorName = '';
+      if (matchedVar && params.workspaceColors && params.workspaceColors.length > 0) {
+        const matched = matchWorkspaceColorForVariant(matchedVar, params.workspaceColors);
+        if (matched) {
+          resolvedColorId = matched.id;
+          resolvedColorName = matched.name;
+        }
       }
-    }
-    if (!itemColorId && params.color) {
-      itemColorId = params.color.id;
-      itemColorName = params.color.name;
-    }
-    if (!itemColorId) {
-      itemColorId = 'unassigned';
-      itemColorName = 'Unassigned Color';
+      itemColorId = resolvedColorId || params.color.id;
+      itemColorName = resolvedColorName || params.color.name;
     }
 
     const key = buildCatalogSelectionKey(product.id, variantId);
@@ -794,11 +1118,24 @@ export function generateAutomaticCatalogPlatePreviews(params: {
 
   // Partition snapshots strictly by (productId, colorId) so different products and different physical colors NEVER share a plate!
   // MANDATORY PRODUCTION INVARIANT: ONE PLATE = ONE PRODUCT ID + ONE PHYSICAL FILAMENT COLOR.
+  // Note: When params.color is omitted/null (per-plate preview workflow), group by (productId, 'unassigned' or variant color key)
+  // and leave generated draft plate colorId as null ("Select Filament Color") so no color is auto-assigned.
   const groupsByProductAndColor = new Map<string, JobCatalogItemSnapshot[]>();
+  const productById = new Map(params.products.map((p) => [p.id, p]));
   for (const s of resolved.snapshots) {
     const pKey = (s.productId || 'unknown').trim();
-    const cKey = (s.colorId || 'unassigned').trim();
-    const comboKey = `${pKey}:::${cKey}`;
+    let partitionColorKey = (s.colorId || 'unassigned').trim();
+    if (!params.color && params.workspaceColors && s.variantId && s.variantId !== COLOR_AGNOSTIC_BASE_ITEM_ID && !s.variantId.startsWith(NON_COLOR_COMBO_PREFIX)) {
+      const prod = productById.get(pKey);
+      const v = prod ? getPlannableProductItems(prod).find((it) => it.id === s.variantId) : undefined;
+      if (v) {
+        const constraint = resolveVariantColorConstraint(v, params.workspaceColors);
+        if (constraint.status === 'matched' && constraint.color) {
+          partitionColorKey = `locked:${constraint.color.id}`;
+        }
+      }
+    }
+    const comboKey = `${pKey}:::${partitionColorKey}`;
     if (!groupsByProductAndColor.has(comboKey)) {
       groupsByProductAndColor.set(comboKey, []);
     }
@@ -810,7 +1147,6 @@ export function generateAutomaticCatalogPlatePreviews(params: {
   let fullPlateCount = 0;
   let remainderUnits = 0;
 
-  // Track next plate numbers across the project so plate numbers are unique and sequential
   const usedPlateNumbers = new Set(
     params.existingJobs
       .filter((j) => j.projectId === params.project.id)
@@ -841,20 +1177,27 @@ export function generateAutomaticCatalogPlatePreviews(params: {
     const matchedProduct = params.products.find((p) => p.id === prodKey);
     const prodName = itemsForGroup[0]?.productName || matchedProduct?.name || 'Product';
 
-    // Resolve color metadata for this group
+    // Only pre-populate plate color when params.color was explicitly provided by caller.
+    // When params.color is omitted/null, initialize unassigned (colorId: null -> "Select Filament Color").
     const matchedColor =
-      (params.workspaceColors || []).find((c) => c.id === colorKey) ||
-      (params.color && params.color.id === colorKey ? params.color : null);
-    const groupColorId = matchedColor
-      ? matchedColor.id
-      : colorKey !== 'unassigned'
-      ? colorKey
+      params.color && colorKey !== 'unassigned' && !colorKey.startsWith('locked:')
+        ? (params.workspaceColors || []).find((c) => c.id === colorKey) ||
+          (params.color.id === colorKey ? params.color : null)
+        : null;
+    const groupColorId = params.color
+      ? matchedColor
+        ? matchedColor.id
+        : colorKey !== 'unassigned'
+        ? colorKey
+        : null
       : null;
-    const groupColorName = matchedColor
-      ? matchedColor.name
-      : colorKey !== 'unassigned'
-      ? colorKey
-      : 'Unassigned Color';
+    const groupColorName = params.color
+      ? matchedColor
+        ? matchedColor.name
+        : colorKey !== 'unassigned'
+        ? colorKey
+        : ''
+      : '';
 
     const pool = itemsForGroup.map((it) => ({ ...it }));
 
@@ -881,7 +1224,6 @@ export function generateAutomaticCatalogPlatePreviews(params: {
 
       if (plateItems.length === 0) return;
 
-      // Sort plate items cleanly by variant label (natural alphanumeric / A–Z order)
       plateItems.sort((a, b) => {
         const vA = a.variantLabel || '';
         const vB = b.variantLabel || '';
@@ -928,6 +1270,257 @@ export function generateAutomaticCatalogPlatePreviews(params: {
     totalUnits,
     fullPlateCount,
     remainderUnits,
+  };
+}
+
+/**
+ * Assigns (or clears) a physical filament color on a single staged draft plate preview,
+ * synchronizing `plate.colorId`, `plate.colorName`, AND all `plate.items[i].colorId` / `colorName`
+ * so changing Plate 1 from color-0 to color-1 never triggers false stale-item color conflicts.
+ * Also resolves concrete color-dependent variant IDs when a product's Color option was deduplicated.
+ */
+export function assignColorToDraftCatalogPlate(
+  plate: DraftCatalogPlatePreview,
+  color: ColorOption | null,
+  product?: CatalogProduct | null,
+  workspaceColors: readonly ColorOption[] = []
+): DraftCatalogPlatePreview {
+  const nextColorId = color ? color.id : null;
+  const nextColorName = color ? color.name : '';
+  const itemColorId = color ? color.id : 'unassigned';
+  const itemColorName = color ? color.name : 'Unassigned Color';
+
+  const plannableItems = product ? getPlannableProductItems(product) : [];
+  const colorOpt = product ? findProductColorOption(product, workspaceColors) : null;
+  const inputModel = product ? buildPlannerProductInputModel(product, workspaceColors) : null;
+
+  const updatedItems: JobCatalogItemSnapshot[] = plate.items.map((item) => {
+    let nextVariantId = item.variantId;
+    let nextVariantLabel = item.variantLabel;
+
+    if (product && colorOpt && inputModel?.isColorDeduplicated) {
+      if (!color) {
+        // Reverting to unassigned: preserve non-color option descriptor cleanly
+        const currentVar = item.variantId
+          ? plannableItems.find((v) => v.id === item.variantId)
+          : null;
+        if (currentVar && currentVar.optionValues) {
+          const nonColorOptions = (product.options || [])
+            .filter((o) => o.id !== colorOpt.id)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          if (nonColorOptions.length === 0) {
+            nextVariantId = COLOR_AGNOSTIC_BASE_ITEM_ID;
+            nextVariantLabel = null;
+          } else {
+            nextVariantId = buildNonColorOptionComboKey(currentVar.optionValues, nonColorOptions);
+            nextVariantLabel = nonColorOptions.map((o) => currentVar.optionValues![o.name]).join(' · ');
+          }
+        }
+      } else {
+        // Resolve concrete variant matching selected physical color + any non-color options
+        let nonColorValues: Record<string, string> | null = parseNonColorOptionComboKey(item.variantId);
+        if (!nonColorValues && item.variantId && item.variantId !== COLOR_AGNOSTIC_BASE_ITEM_ID) {
+          const currentVar = plannableItems.find((v) => v.id === item.variantId);
+          if (currentVar?.optionValues) {
+            nonColorValues = {};
+            for (const [k, v] of Object.entries(currentVar.optionValues)) {
+              if (k !== colorOpt.name) {
+                nonColorValues[k] = v;
+              }
+            }
+          }
+        }
+
+        const matchedVariant = plannableItems.find((v) => {
+          if (!v.optionValues) return false;
+          const vColorVal = (v.optionValues[colorOpt.name] || '').trim().toLowerCase();
+          if (vColorVal !== color.name.trim().toLowerCase()) return false;
+          if (!nonColorValues) return true;
+          return Object.entries(nonColorValues).every(
+            ([k, val]) => (v.optionValues?.[k] || '').trim() === val.trim()
+          );
+        });
+
+        if (matchedVariant) {
+          nextVariantId = matchedVariant.id;
+          nextVariantLabel = matchedVariant.label;
+        }
+      }
+    }
+
+    return {
+      ...item,
+      variantId: nextVariantId,
+      variantLabel: nextVariantLabel,
+      colorId: itemColorId,
+      colorName: itemColorName,
+    };
+  });
+
+  return {
+    ...plate,
+    colorId: nextColorId,
+    colorName: nextColorName,
+    items: updatedItems,
+  };
+}
+
+export interface StagedPlateValidationResult {
+  valid: boolean;
+  requiresColorSelection: boolean;
+  blockingErrors: string[];
+  colorSelectionError: string | null;
+}
+
+/**
+ * Validates a single staged catalog plate preview thoroughly before Print Queue confirmation.
+ * Returns both immediate structural/constraint errors and missing color selection status.
+ */
+export function validateStagedCatalogPlate(
+  plate: DraftCatalogPlatePreview,
+  context: {
+    category: ProductCategory;
+    product?: CatalogProduct | null;
+    workspaceColors: readonly ColorOption[];
+  }
+): StagedPlateValidationResult {
+  const blockingErrors: string[] = [];
+  let colorSelectionError: string | null = null;
+  let requiresColorSelection = false;
+
+  const totalUnits = countCatalogItems(plate.items);
+  if (totalUnits <= 0) {
+    blockingErrors.push(`Plate ${plate.plateNumber} has 0 units. Enter at least 1 unit.`);
+  }
+
+  if (plate.capacity !== null && plate.capacity >= 1 && totalUnits > plate.capacity) {
+    blockingErrors.push(
+      `Plate ${plate.plateNumber} (${totalUnits} pcs) exceeds capacity of ${plate.capacity} pcs.`
+    );
+  }
+
+  if (plate.categoryId !== context.category.id) {
+    blockingErrors.push(
+      `Plate ${plate.plateNumber} belongs to category "${plate.categoryId}", expected "${context.category.id}".`
+    );
+  }
+
+  const assignedColorId = (plate.colorId || '').trim();
+  const matchedWorkspaceColor =
+    assignedColorId && assignedColorId !== 'unassigned'
+      ? context.workspaceColors.find((c) => c.id === assignedColorId) || null
+      : null;
+
+  if (!assignedColorId || assignedColorId === 'unassigned') {
+    requiresColorSelection = true;
+    colorSelectionError = `Select a Filament Color for Plate ${plate.plateNumber} before confirming.`;
+  } else if (!matchedWorkspaceColor) {
+    blockingErrors.push(
+      `Plate ${plate.plateNumber} references unknown Filament Color "${assignedColorId}".`
+    );
+  }
+
+  // Strict single-product, single-category, single-color homogeneity check across plate items
+  const strictCheck = validateStrictSingleProductPlateItems(
+    plate.items,
+    plate.productId || context.product?.id || undefined,
+    assignedColorId && assignedColorId !== 'unassigned' ? assignedColorId : undefined,
+    context.category.id
+  );
+  if (!strictCheck.valid && strictCheck.error) {
+    blockingErrors.push(strictCheck.error);
+  }
+
+  // Verify product-level and variant-level physical color constraints (never silently substitute!)
+  if (matchedWorkspaceColor && context.product) {
+    const plannableItems = getPlannableProductItems(context.product);
+    const colorOpt = findProductColorOption(context.product, context.workspaceColors);
+
+    for (const item of plate.items) {
+      if (Math.floor(Number(item.quantity || 0)) <= 0) continue;
+
+      if (
+        item.variantId === COLOR_AGNOSTIC_BASE_ITEM_ID ||
+        (item.variantId && item.variantId.startsWith(NON_COLOR_COMBO_PREFIX))
+      ) {
+        if (colorOpt) {
+          const nonColorValues = parseNonColorOptionComboKey(item.variantId);
+          const hasMatchingVariant = plannableItems.some((v) => {
+            if (!v.optionValues) return false;
+            const cVal = (v.optionValues[colorOpt.name] || '').trim().toLowerCase();
+            if (cVal !== matchedWorkspaceColor.name.trim().toLowerCase()) return false;
+            if (!nonColorValues) return true;
+            return Object.entries(nonColorValues).every(
+              ([k, val]) => (v.optionValues?.[k] || '').trim() === val.trim()
+            );
+          });
+          if (!hasMatchingVariant) {
+            blockingErrors.push(
+              `"${context.product.name}" does not have a valid "${matchedWorkspaceColor.name}" variation for "${item.variantLabel || context.product.name}" (available: ${colorOpt.values.join(', ')}).`
+            );
+          }
+        }
+      } else if (item.variantId) {
+        const concreteVar = plannableItems.find((v) => v.id === item.variantId);
+        if (concreteVar) {
+          const colorConstraint = resolveVariantColorConstraint(
+            concreteVar,
+            context.workspaceColors
+          );
+          if (
+            colorConstraint.status === 'matched' &&
+            colorConstraint.color &&
+            colorConstraint.color.id !== matchedWorkspaceColor.id
+          ) {
+            blockingErrors.push(
+              `Variation "${concreteVar.label}" requires physical filament color "${colorConstraint.color.name}" and cannot be printed in "${matchedWorkspaceColor.name}".`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const uniqueErrors = Array.from(new Set(blockingErrors));
+  return {
+    valid: uniqueErrors.length === 0 && !requiresColorSelection,
+    requiresColorSelection,
+    blockingErrors: uniqueErrors,
+    colorSelectionError,
+  };
+}
+
+/**
+ * Validates an entire staged batch before Queue Confirmation.
+ * Never approves partial batches when any single plate is invalid.
+ */
+export function validateStagedCatalogPlatesBatch(
+  plates: readonly DraftCatalogPlatePreview[],
+  context: {
+    category: ProductCategory;
+    product?: CatalogProduct | null;
+    workspaceColors: readonly ColorOption[];
+  }
+): {
+  allValid: boolean;
+  byTempId: Record<string, StagedPlateValidationResult>;
+  invalidPlateNumbers: number[];
+} {
+  const byTempId: Record<string, StagedPlateValidationResult> = {};
+  const invalidPlateNumbers: number[] = [];
+
+  for (const plate of plates) {
+    const res = validateStagedCatalogPlate(plate, context);
+    byTempId[plate.tempId] = res;
+    if (!res.valid) {
+      invalidPlateNumbers.push(plate.plateNumber);
+    }
+  }
+
+  return {
+    allValid: plates.length > 0 && invalidPlateNumbers.length === 0,
+    byTempId,
+    invalidPlateNumbers,
   };
 }
 
@@ -1082,6 +1675,7 @@ export function commitCatalogPlatesToWorkspace(
     projectId: string;
     colorId?: string | null;
     category: ProductCategory;
+    products?: readonly CatalogProduct[];
     confirmedPlates: readonly DraftCatalogPlatePreview[];
     nowMs?: number;
   }
@@ -1127,62 +1721,76 @@ export function commitCatalogPlatesToWorkspace(
       };
     }
 
-    const mixCheck = validateSameCategoryPlateItems(draft.items, params.category.id);
-    if (!mixCheck.valid) {
-      return { error: `Plate ${draft.plateNumber}: ${mixCheck.error}` };
+    const rawColorId = (draft.colorId || params.colorId || '').trim();
+    if (!rawColorId || rawColorId === 'unassigned') {
+      return {
+        error: `Plate ${draft.plateNumber} requires a physical Filament Color before saving to Print Queue.`,
+      };
     }
 
-    const singleProdCheck = validateStrictSingleProductPlateItems(
-      draft.items,
-      draft.productId || undefined,
-      draft.colorId || undefined,
-      params.category.id
+    const plateColor =
+      workspace.colors.find((c) => c.id === rawColorId) ||
+      (defaultColor && defaultColor.id === rawColorId ? defaultColor : null);
+    if (!plateColor) {
+      return {
+        error: `Plate ${draft.plateNumber}: Selected Filament Color "${rawColorId}" was not found in workspace colors.`,
+      };
+    }
+
+    const matchedProduct =
+      params.products?.find((p) => p.id === (draft.productId || draft.items[0]?.productId)) ||
+      null;
+
+    // Validate all invariants on this plate individually (including color constraints)
+    const stagedValidation = validateStagedCatalogPlate(
+      { ...draft, colorId: plateColor.id, colorName: plateColor.name },
+      {
+        category: params.category,
+        product: matchedProduct,
+        workspaceColors: workspace.colors,
+      }
     );
-    if (!singleProdCheck.valid) {
-      return { error: `Plate ${draft.plateNumber}: ${singleProdCheck.error}` };
+    if (!stagedValidation.valid) {
+      const msg =
+        stagedValidation.blockingErrors[0] ||
+        stagedValidation.colorSelectionError ||
+        `Plate ${draft.plateNumber} failed validation.`;
+      return { error: `Plate ${draft.plateNumber}: ${msg}` };
     }
 
     const unitTotal = countCatalogItems(draft.items);
-    if (unitTotal <= 0) {
-      return {
-        error: `Plate ${draft.plateNumber} has 0 items. Enter at least 1 unit before confirming.`,
-      };
-    }
+    const effectiveColorId = plateColor.id;
+    const effectiveColorName = plateColor.name;
+    assignedColorIdsToAdd.add(plateColor.id);
 
-    if (draft.capacity !== null && draft.capacity >= 1 && unitTotal > draft.capacity) {
-      return {
-        error: `Plate ${draft.plateNumber} (${unitTotal} pcs) exceeds configured category capacity of ${draft.capacity} pcs.`,
-      };
-    }
-
-    // Determine plate's authoritative filament color:
-    // 1. draft.colorId if explicitly set on staged plate
-    // 2. defaultColor?.id if provided in params
-    // 3. 'unassigned' if no color assigned
-    const targetColorId = draft.colorId || params.colorId;
-    const plateColor = workspace.colors.find((c) => c.id === targetColorId) || defaultColor;
-    const effectiveColorId = plateColor ? plateColor.id : (targetColorId && targetColorId !== 'unassigned' ? targetColorId : 'unassigned');
-    const effectiveColorName = plateColor ? plateColor.name : 'Unassigned Color';
-
-    if (plateColor) {
-      assignedColorIdsToAdd.add(plateColor.id);
-    }
+    // Ensure concrete variant resolution if placeholder was still present and matchedProduct is available
+    const syncedDraft = matchedProduct
+      ? assignColorToDraftCatalogPlate(draft, plateColor, matchedProduct, workspace.colors)
+      : draft;
 
     // Snapshot immutable fields cleanly (zero undefined)
-    const immutableSnapshots: JobCatalogItemSnapshot[] = draft.items
+    const immutableSnapshots: JobCatalogItemSnapshot[] = syncedDraft.items
       .filter((item) => Math.floor(Number(item.quantity || 0)) > 0)
-      .map((item) => ({
-        productId: item.productId.trim(),
-        productName: item.productName.trim(),
-        sku: item.sku.trim().toUpperCase(),
-        categoryId: params.category.id,
-        categoryName: params.category.name.trim(),
-        variantId: item.variantId ? item.variantId.trim() : null,
-        variantLabel: item.variantLabel ? item.variantLabel.trim() : null,
-        colorId: effectiveColorId,
-        colorName: effectiveColorName,
-        quantity: Math.floor(Number(item.quantity)),
-      }));
+      .map((item) => {
+        const cleanVarId =
+          item.variantId &&
+          item.variantId !== COLOR_AGNOSTIC_BASE_ITEM_ID &&
+          !item.variantId.startsWith(NON_COLOR_COMBO_PREFIX)
+            ? item.variantId.trim()
+            : null;
+        return {
+          productId: item.productId.trim(),
+          productName: item.productName.trim(),
+          sku: item.sku.trim().toUpperCase(),
+          categoryId: params.category.id,
+          categoryName: params.category.name.trim(),
+          variantId: cleanVarId,
+          variantLabel: item.variantLabel ? item.variantLabel.trim() : null,
+          colorId: effectiveColorId,
+          colorName: effectiveColorName,
+          quantity: Math.floor(Number(item.quantity)),
+        };
+      });
 
     const effectivePlateCapacity =
       draft.capacity !== null && draft.capacity >= 1 ? Math.floor(draft.capacity) : unitTotal;
@@ -1288,7 +1896,7 @@ export function commitCatalogPlatesToWorkspace(
 export function generateIndependentKeycapBatchPreviews(params: {
   existingJobs: readonly ProductionJob[];
   projectId: string;
-  colorId: string;
+  colorId?: string;
   mode: 'alphabet_only' | 'charm_only';
   batchLetters?: LettersMap;
   batchCharms?: CharmsMap;

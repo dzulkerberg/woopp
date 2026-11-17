@@ -15,14 +15,15 @@ import {
   ProductionProject,
 } from '../types';
 import {
+  assignColorToDraftCatalogPlate,
   buildCatalogSelectionKey,
+  buildPlannerProductInputModel,
   CatalogPlannerSelectionInput,
   DraftCatalogPlatePreview,
   generateAutomaticCatalogPlatePreviews,
-  getPlannableItemsForSelectedFilamentColor,
   getPlannableProductItems,
   validateCategoryForPlanning,
-  validateStrictSingleProductPlateItems,
+  validateStagedCatalogPlatesBatch,
 } from '../utils/catalogPlannerEngine';
 import { DurationHMInput } from './DurationHMInput';
 import { DynamicOptionQuantityGrid } from './DynamicOptionQuantityGrid';
@@ -34,14 +35,14 @@ export interface CatalogCategoryPlannerSectionProps {
   categoryProducts: readonly CatalogProduct[];
   plateSetting: CategoryPlateSetting | null;
   currentProject: ProductionProject;
-  selectedColor: ColorOption;
   workspaceColors?: readonly ColorOption[];
   existingJobs: readonly ProductionJob[];
   quantitiesByKey: Record<string, number>;
   highlightedProductId: string | null;
   allCategories?: readonly ProductCategory[];
+  selectedWorkflowValue?: string;
+  onSelectWorkflow?: (workflowValue: string) => void;
   onSelectCategory?: (categoryId: string) => void;
-  onSelectColor?: (colorId: string) => void;
   onChangeQuantity: (selectionKey: string, nextQty: number) => void;
   onSaveCategoryPlateSetting: (
     setting: Omit<CategoryPlateSetting, 'ownerId' | 'updatedAt'>
@@ -50,7 +51,7 @@ export interface CatalogCategoryPlannerSectionProps {
     category: ProductCategory,
     confirmedPlates: DraftCatalogPlatePreview[],
     onSuccess: () => void
-  ) => void;
+  ) => Promise<void> | void;
   onOpenProductStudio: () => void;
   onAlert: (msg: string, title?: string) => void;
   resetSignal: number;
@@ -61,12 +62,11 @@ export interface CatalogCategoryPlannerSectionProps {
  *
  * MANDATORY PRODUCTION INVARIANT:
  * ONE PLATE = ONE PRODUCT ID + ONE PHYSICAL FILAMENT COLOR.
- * - Variations of the SAME product can share a plate up to configured capacity.
- * - Different products NEVER share a plate.
- * - Different physical colors NEVER share a plate.
  *
  * WORKFLOW:
- * Select Category -> Select Product -> Select Filament Color -> Enter Quantities -> Generate Preview -> Confirm to Queue.
+ * Select Project -> Select Category -> Select Product -> Enter Variation Quantities
+ * -> Generate Plate Preview -> Select Filament Color for EACH Plate
+ * -> Verify Physical Bed Fit -> Confirm & Save to Print Queue.
  */
 export const CatalogCategoryPlannerSection: React.FC<
   CatalogCategoryPlannerSectionProps
@@ -75,14 +75,14 @@ export const CatalogCategoryPlannerSection: React.FC<
   categoryProducts,
   plateSetting,
   currentProject,
-  selectedColor,
   workspaceColors = [],
   existingJobs,
   quantitiesByKey,
   highlightedProductId,
   allCategories = [],
+  selectedWorkflowValue,
+  onSelectWorkflow,
   onSelectCategory,
-  onSelectColor,
   onChangeQuantity,
   onSaveCategoryPlateSetting,
   onConfirmCatalogPlates,
@@ -90,7 +90,7 @@ export const CatalogCategoryPlannerSection: React.FC<
   onAlert,
   resetSignal,
 }) => {
-  // Active products in the selected category
+  // Active products strictly within the selected category
   const activeCategoryProducts = useMemo(
     () =>
       categoryProducts
@@ -110,7 +110,7 @@ export const CatalogCategoryPlannerSection: React.FC<
     return activeCategoryProducts[0]?.id || '';
   });
 
-  // Sync selected product when category or highlightedProductId changes
+  // Sync selected product when category or highlightedProductId changes (never leave orphan selection)
   useEffect(() => {
     if (
       highlightedProductId &&
@@ -119,11 +119,8 @@ export const CatalogCategoryPlannerSection: React.FC<
       setSelectedProductId(highlightedProductId);
       return;
     }
-    if (
-      !activeCategoryProducts.some((p) => p.id === selectedProductId) &&
-      activeCategoryProducts.length > 0
-    ) {
-      setSelectedProductId(activeCategoryProducts[0].id);
+    if (!activeCategoryProducts.some((p) => p.id === selectedProductId)) {
+      setSelectedProductId(activeCategoryProducts[0]?.id || '');
     }
   }, [category.id, highlightedProductId, activeCategoryProducts, selectedProductId]);
 
@@ -146,10 +143,12 @@ export const CatalogCategoryPlannerSection: React.FC<
   );
   const [isSavingRule, setIsSavingRule] = useState<boolean>(false);
 
-  // Staged Plate Previews
+  // Staged Plate Previews & confirmation/validation state
   const [stagedCatalogPlates, setStagedCatalogPlates] = useState<
     DraftCatalogPlatePreview[] | null
   >(null);
+  const [hasAttemptedConfirm, setHasAttemptedConfirm] = useState<boolean>(false);
+  const [isConfirming, setIsConfirming] = useState<boolean>(false);
 
   // Sync saved rule when category updates
   useEffect(() => {
@@ -160,6 +159,7 @@ export const CatalogCategoryPlannerSection: React.FC<
     );
     setDefaultMinutes(plateSetting?.defaultEstimatedMinutes || 180);
     setStagedCatalogPlates(null);
+    setHasAttemptedConfirm(false);
   }, [
     category.id,
     plateSetting?.plateCapacity,
@@ -170,6 +170,7 @@ export const CatalogCategoryPlannerSection: React.FC<
   useEffect(() => {
     if (resetSignal === 0) return;
     setStagedCatalogPlates(null);
+    setHasAttemptedConfirm(false);
   }, [resetSignal]);
 
   const parsedConfiguredCapacity: number | null = useMemo(() => {
@@ -179,47 +180,49 @@ export const CatalogCategoryPlannerSection: React.FC<
     return Number.isFinite(n) && n >= 1 ? n : null;
   }, [capacityInput]);
 
-  // Color-filtered items and compatibility check for the selected product (Section 4)
-  const colorFilteredState = useMemo(() => {
+  // Color-agnostic quantity input model (no top-level filament color filter)
+  const inputModel = useMemo(() => {
     if (!selectedProduct) return null;
-    return getPlannableItemsForSelectedFilamentColor(
-      selectedProduct,
-      selectedColor,
-      workspaceColors
-    );
-  }, [selectedProduct, selectedColor, workspaceColors]);
+    return buildPlannerProductInputModel(selectedProduct, workspaceColors);
+  }, [selectedProduct, workspaceColors]);
 
-  // Compute total entered quantity for the current selected product and filament color
+  // Compute total entered quantity for the current selected product
   const currentProductTotal = useMemo(() => {
-    if (!selectedProduct || !colorFilteredState || !colorFilteredState.isColorCompatible) {
-      return 0;
-    }
+    if (!selectedProduct || !inputModel) return 0;
     let sum = 0;
-    for (const item of colorFilteredState.items) {
+    for (const item of inputModel.items) {
       const key = buildCatalogSelectionKey(
         selectedProduct.id,
-        item.id !== 'base' ? item.id : null,
-        selectedColor.id
+        item.id !== 'base' ? item.id : null
       );
       sum += Math.floor(Number(quantitiesByKey[key] || 0));
     }
     return sum;
-  }, [selectedProduct, colorFilteredState, selectedColor.id, quantitiesByKey]);
+  }, [selectedProduct, inputModel, quantitiesByKey]);
 
-  // Reset ONLY current editable planning quantities for this product and filament color
+  const batchValidation = useMemo(() => {
+    if (!stagedCatalogPlates || stagedCatalogPlates.length === 0) return null;
+    return validateStagedCatalogPlatesBatch(stagedCatalogPlates, {
+      category,
+      product: selectedProduct,
+      workspaceColors,
+    });
+  }, [stagedCatalogPlates, category, selectedProduct, workspaceColors]);
+
+  // Reset ONLY current editable planning quantities for this product
   const handleResetCurrentProduct = () => {
-    if (!selectedProduct || !colorFilteredState) return;
-    for (const item of colorFilteredState.items) {
+    if (!selectedProduct || !inputModel) return;
+    for (const item of inputModel.items) {
       const key = buildCatalogSelectionKey(
         selectedProduct.id,
-        item.id !== 'base' ? item.id : null,
-        selectedColor.id
+        item.id !== 'base' ? item.id : null
       );
       if ((quantitiesByKey[key] ?? 0) > 0) {
         onChangeQuantity(key, 0);
       }
     }
     setStagedCatalogPlates(null);
+    setHasAttemptedConfirm(false);
   };
 
   const handleSaveRuleClick = async () => {
@@ -246,15 +249,8 @@ export const CatalogCategoryPlannerSection: React.FC<
   };
 
   const handlePreviewAutomatic = (includePartial: boolean) => {
-    if (!selectedProduct) {
+    if (!selectedProduct || !inputModel) {
       onAlert('Select a product first.');
-      return;
-    }
-    if (!colorFilteredState || !colorFilteredState.isColorCompatible) {
-      onAlert(
-        `Selected filament color "${selectedColor.name}" is not compatible with "${selectedProduct.name}". Choose one of the available variation colors first.`,
-        'Color Incompatibility'
-      );
       return;
     }
 
@@ -266,13 +262,12 @@ export const CatalogCategoryPlannerSection: React.FC<
       return;
     }
 
-    // Build selections for ONLY this selected product and color!
+    // Build selections strictly for this selected product (no filament color required!)
     const selections: CatalogPlannerSelectionInput[] = [];
-    for (const item of colorFilteredState.items) {
+    for (const item of inputModel.items) {
       const key = buildCatalogSelectionKey(
         selectedProduct.id,
-        item.id !== 'base' ? item.id : null,
-        selectedColor.id
+        item.id !== 'base' ? item.id : null
       );
       const qty = Math.floor(Number(quantitiesByKey[key] || 0));
       if (qty > 0) {
@@ -295,10 +290,10 @@ export const CatalogCategoryPlannerSection: React.FC<
     const res = generateAutomaticCatalogPlatePreviews({
       existingJobs,
       project: currentProject,
-      color: selectedColor,
+      color: null, // Always start draft plates unassigned ("Select Filament Color")
       workspaceColors,
       category,
-      products: [selectedProduct], // Strictly isolated to this single product!
+      products: [selectedProduct],
       selections,
       plateSetting: {
         allocationMode: 'automatic_capacity',
@@ -315,30 +310,36 @@ export const CatalogCategoryPlannerSection: React.FC<
 
     if (res.previews.length === 0) {
       onAlert(
-        `Total selected quantity (${currentProductTotal} pcs) is less than 1 full plate (${parsedConfiguredCapacity} pcs). Use "Preview Full + Partial Plate" to include the partial plate.`,
+        `Total selected quantity (${currentProductTotal} pcs) is less than 1 full plate (${parsedConfiguredCapacity} pcs). Use "Generate Plate Preview" to include the partial plate.`,
         'No Full Plates'
       );
       return;
     }
 
-    // Strict validation check on all generated previews
-    for (const p of res.previews) {
-      const singleCheck = validateStrictSingleProductPlateItems(
-        p.items,
-        selectedProduct.id,
-        selectedColor.id,
-        category.id
-      );
-      if (!singleCheck.valid) {
-        onAlert(
-          singleCheck.error || 'Strict plate validation failed.',
-          'Strict Plate Isolation'
-        );
-        return;
-      }
-    }
-
     setStagedCatalogPlates(res.previews);
+    setHasAttemptedConfirm(false);
+  };
+
+  const handleAssignPlateColor = (tempId: string, nextColorIdRaw: string) => {
+    const nextColorId = nextColorIdRaw.trim();
+    const matchedColor = nextColorId
+      ? workspaceColors.find((c) => c.id === nextColorId) || null
+      : null;
+
+    setStagedCatalogPlates((prev) =>
+      prev
+        ? prev.map((p) =>
+            p.tempId === tempId
+              ? assignColorToDraftCatalogPlate(
+                  p,
+                  matchedColor,
+                  selectedProduct,
+                  workspaceColors
+                )
+              : p
+          )
+        : null
+    );
   };
 
   const handleAdjustStagedItemQty = (
@@ -346,53 +347,39 @@ export const CatalogCategoryPlannerSection: React.FC<
     itemIndex: number,
     rawVal: string
   ) => {
-    if (!stagedCatalogPlates) return;
     const nextQty = Math.max(0, Math.floor(Number(rawVal) || 0));
-    setStagedCatalogPlates(
-      stagedCatalogPlates.map((plate) => {
-        if (plate.tempId !== tempId) return plate;
-        const nextItems = plate.items.map((it, idx) =>
-          idx === itemIndex ? { ...it, quantity: nextQty } : it
-        );
-        return {
-          ...plate,
-          items: nextItems,
-        };
-      })
+    setStagedCatalogPlates((prev) =>
+      prev
+        ? prev.map((plate) => {
+            if (plate.tempId !== tempId) return plate;
+            const nextItems = plate.items.map((it, idx) =>
+              idx === itemIndex ? { ...it, quantity: nextQty } : it
+            );
+            return {
+              ...plate,
+              items: nextItems,
+            };
+          })
+        : null
     );
   };
 
-  const handleConfirmClick = () => {
-    if (!stagedCatalogPlates || stagedCatalogPlates.length === 0) return;
+  const handleConfirmClick = async () => {
+    if (!stagedCatalogPlates || stagedCatalogPlates.length === 0 || isConfirming) {
+      return;
+    }
 
-    for (const plate of stagedCatalogPlates) {
-      const singleProdCheck = validateStrictSingleProductPlateItems(
-        plate.items,
-        selectedProduct?.id,
-        plate.colorId || selectedColor.id,
-        category.id
-      );
-      if (!singleProdCheck.valid) {
-        onAlert(
-          singleProdCheck.error || 'Strict plate validation failed.',
-          'Plate Isolation Validation'
-        );
-        return;
-      }
-      const total = countCatalogItems(plate.items);
-      if (total <= 0) {
-        onAlert(
-          `Plate ${plate.plateNumber} has 0 units. Adjust quantities before confirming.`
-        );
-        return;
-      }
-      if (plate.capacity !== null && total > plate.capacity) {
-        onAlert(
-          `Plate ${plate.plateNumber} (${total} pcs) exceeds configured capacity (${plate.capacity} pcs).`,
-          'Plate Capacity Exceeded'
-        );
-        return;
-      }
+    setHasAttemptedConfirm(true);
+
+    const validation = validateStagedCatalogPlatesBatch(stagedCatalogPlates, {
+      category,
+      product: selectedProduct,
+      workspaceColors,
+    });
+
+    if (!validation.allValid) {
+      // Block partial/silent confirmation; inline per-plate errors + banner explain exact fixes needed
+      return;
     }
 
     const cleanedPlates = stagedCatalogPlates.map((p) => ({
@@ -400,20 +387,24 @@ export const CatalogCategoryPlannerSection: React.FC<
       items: p.items.filter((it) => Math.floor(Number(it.quantity || 0)) > 0),
     }));
 
-    onConfirmCatalogPlates(category, cleanedPlates, () => {
-      setStagedCatalogPlates(null);
-      // Clear planned quantities for this product and color after successful commit
-      if (selectedProduct && colorFilteredState) {
-        for (const item of colorFilteredState.items) {
-          const key = buildCatalogSelectionKey(
-            selectedProduct.id,
-            item.id !== 'base' ? item.id : null,
-            selectedColor.id
-          );
-          onChangeQuantity(key, 0);
+    setIsConfirming(true);
+    try {
+      await onConfirmCatalogPlates(category, cleanedPlates, () => {
+        setStagedCatalogPlates(null);
+        setHasAttemptedConfirm(false);
+        if (selectedProduct && inputModel) {
+          for (const item of inputModel.items) {
+            const key = buildCatalogSelectionKey(
+              selectedProduct.id,
+              item.id !== 'base' ? item.id : null
+            );
+            onChangeQuantity(key, 0);
+          }
         }
-      }
-    });
+      });
+    } finally {
+      setIsConfirming(false);
+    }
   };
 
   const categoryCheck = validateCategoryForPlanning(category);
@@ -437,7 +428,7 @@ export const CatalogCategoryPlannerSection: React.FC<
 
   return (
     <div className="space-y-6">
-      {/* 2-Step Dropdown Selector: Step 1 (Category) & Step 2 (Product) */}
+      {/* Authoritative Single Category & Product Selector */}
       <section className="bg-surface border border-line rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-line">
           <div>
@@ -445,7 +436,7 @@ export const CatalogCategoryPlannerSection: React.FC<
               Auto Plate Planner · Product &amp; Option Selection
             </h2>
             <p className="text-xs text-muted mt-0.5">
-              Select a category and product to configure print quantities. Plates are strictly isolated: <b className="text-ink">ONE PLATE = ONE PRODUCT + ONE FILAMENT COLOR</b>.
+              Select a category and product to enter quantities, then assign a physical Filament Color to each generated plate in Preview. <b className="text-ink">ONE PLATE = ONE PRODUCT + ONE FILAMENT COLOR</b>.
             </p>
           </div>
           {onOpenProductStudio && (
@@ -461,7 +452,7 @@ export const CatalogCategoryPlannerSection: React.FC<
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Step 1: Category Dropdown */}
+          {/* Step 1: Single Authoritative Category Dropdown */}
           <div>
             <label
               htmlFor="planner-category-select"
@@ -469,32 +460,63 @@ export const CatalogCategoryPlannerSection: React.FC<
             >
               1. Category
             </label>
-            <select
-              id="planner-category-select"
-              value={category.id}
-              onChange={(e) => {
-                onSelectCategory?.(e.target.value);
-                setStagedCatalogPlates(null);
-              }}
-              className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none"
-            >
-              {allCategories.length > 0 ? (
-                allCategories.map((c) => {
-                  const count = categoryProducts.filter(
-                    (p) => p.categoryId === c.id && p.status === 'active'
-                  ).length;
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({count} active {count === 1 ? 'product' : 'products'})
-                    </option>
-                  );
-                })
-              ) : (
-                <option value={category.id}>
-                  {category.name} ({activeCategoryProducts.length} active products)
-                </option>
-              )}
-            </select>
+            {onSelectWorkflow && selectedWorkflowValue ? (
+              <select
+                id="planner-category-select"
+                value={selectedWorkflowValue}
+                onChange={(e) => {
+                  onSelectWorkflow(e.target.value);
+                  setStagedCatalogPlates(null);
+                  setHasAttemptedConfirm(false);
+                }}
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none"
+              >
+                <optgroup label="Product Studio Categories">
+                  {(allCategories.length > 0 ? allCategories : [category]).map((c) => {
+                    const count = categoryProducts.filter(
+                      (p) => p.categoryId === c.id && p.status === 'active'
+                    ).length;
+                    return (
+                      <option key={c.id} value={`catalog:${c.id}`}>
+                        {c.name} ({count} active {count === 1 ? 'product' : 'products'})
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                <optgroup label="Built-in Keycap Workflows">
+                  <option value="builtin:alphabet">Alphabet Keycaps (A–Z)</option>
+                  <option value="builtin:charm">Charm Keycaps (♥ ★ ✿ # @)</option>
+                </optgroup>
+              </select>
+            ) : (
+              <select
+                id="planner-category-select"
+                value={category.id}
+                onChange={(e) => {
+                  onSelectCategory?.(e.target.value);
+                  setStagedCatalogPlates(null);
+                  setHasAttemptedConfirm(false);
+                }}
+                className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none"
+              >
+                {allCategories.length > 0 ? (
+                  allCategories.map((c) => {
+                    const count = categoryProducts.filter(
+                      (p) => p.categoryId === c.id && p.status === 'active'
+                    ).length;
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({count} active {count === 1 ? 'product' : 'products'})
+                      </option>
+                    );
+                  })
+                ) : (
+                  <option value={category.id}>
+                    {category.name} ({activeCategoryProducts.length} active products)
+                  </option>
+                )}
+              </select>
+            )}
           </div>
 
           {/* Step 2: Product Dropdown (Filtered strictly by selected category) */}
@@ -512,6 +534,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                 onChange={(e) => {
                   setSelectedProductId(e.target.value);
                   setStagedCatalogPlates(null);
+                  setHasAttemptedConfirm(false);
                 }}
                 className="w-full px-3 py-2 rounded-lg border border-line bg-input text-sm text-ink focus:border-brand focus:outline-none font-medium"
               >
@@ -557,7 +580,7 @@ export const CatalogCategoryPlannerSection: React.FC<
             Add Products in Product Studio
           </button>
         </section>
-      ) : selectedProduct ? (
+      ) : selectedProduct && inputModel ? (
         /* Selected Product Planning Workspace */
         <div className="space-y-5">
           {/* Product Summary Header & Category Capacity Setting */}
@@ -589,7 +612,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                     <span>·</span>
                     <span>Price: <b className="text-ink">{formatMyrPrice(selectedProduct.priceMyr)}</b></span>
                     <span>·</span>
-                    <span>Filament: <b className="text-ink flex-inline items-center gap-1">{selectedColor.name}</b></span>
+                    <span>Filament Color: <b className="text-ink">Assigned per plate in Preview</b></span>
                   </div>
                 </div>
               </div>
@@ -637,6 +660,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                     onChange={(e) => {
                       setCapacityInput(e.target.value);
                       setStagedCatalogPlates(null);
+                      setHasAttemptedConfirm(false);
                     }}
                     className="w-36 px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs font-mono-data text-ink focus:border-brand focus:outline-none"
                   />
@@ -652,6 +676,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                     onChangeMinutes={(mins) => {
                       setDefaultMinutes(mins);
                       setStagedCatalogPlates(null);
+                      setHasAttemptedConfirm(false);
                     }}
                     ariaLabelPrefix={`${category.name} plate duration`}
                   />
@@ -679,7 +704,7 @@ export const CatalogCategoryPlannerSection: React.FC<
             )}
           </section>
 
-          {/* Dynamic Variation Quantity Inputs (Strictly for this selected product) */}
+          {/* Dynamic Variation Quantity Inputs (Color-agnostic until Plate Preview) */}
           <section className="bg-surface border border-line rounded-xl p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -687,57 +712,36 @@ export const CatalogCategoryPlannerSection: React.FC<
                   Product Options &amp; Quantities
                 </h4>
                 <p className="text-xs text-muted mt-0.5">
-                  Filament Color: <b className="text-ink">{selectedColor.name}</b> · Enter non-negative integers. Quantities are stored independently per product and color.
+                  Enter variation quantities first. No filament color is required yet — you will select the physical Filament Color for each plate in Preview.
                 </p>
               </div>
             </div>
 
-            {/* Case A: Incompatible Physical Color (Section 4) */}
-            {colorFilteredState && colorFilteredState.displayMode === 'incompatible_color' && (
-              <div className="p-4 rounded-xl border border-warning-border bg-warning-soft text-xs text-warning-text space-y-2.5">
-                <div className="flex items-center gap-2 font-semibold">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>
-                    Selected filament color &ldquo;{selectedColor.name}&rdquo; is not configured as an available variation for {selectedProduct.name}.
-                  </span>
-                </div>
-                <p className="text-ink-secondary">
-                  To plan plates for this product, select one of its configured variation colors:
-                </p>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  {colorFilteredState.availableColors.map((c) => (
-                    <button
-                      key={c.name}
-                      type="button"
-                      onClick={() => onSelectColor?.(c.colorId || c.name)}
-                      className="px-2.5 py-1 rounded-lg border border-line bg-surface hover:bg-elevated text-xs font-medium text-ink flex items-center gap-1.5 transition-colors"
-                    >
-                      {c.hex && (
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0 border border-line"
-                          style={{ backgroundColor: c.hex }}
-                        />
-                      )}
-                      <span>Switch to {c.name}</span>
-                    </button>
-                  ))}
-                </div>
+            {inputModel.hasAmbiguousColorMapping && (
+              <div className="p-3 rounded-lg border border-warning-border bg-warning-soft text-xs text-warning-text flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Some <b className="font-semibold">{inputModel.colorOptionName || 'Color'}</b> option values on this product do not exactly match Workspace Filament Colors. All saved variations are shown explicitly below without guessing — select the corresponding physical Filament Color per plate in Preview.
+                </span>
               </div>
             )}
 
-            {/* Case B: Single Quantity Input (Base product or Color-only product matching selected filament) */}
-            {colorFilteredState && colorFilteredState.displayMode === 'single_input' && (
+            {/* Case A: Single Quantity Input (Standard base product OR single-Color product deduplicated across physical colors) */}
+            {inputModel.displayMode === 'single_input' && (
               <div className="p-4 rounded-xl border border-line bg-recessed flex flex-wrap items-center justify-between gap-4">
-                <div>
+                <div className="space-y-1">
                   <div className="text-xs font-semibold text-ink">
-                    {colorFilteredState.hasColorOption
-                      ? `${selectedProduct.name} · ${selectedColor.name} Variation`
-                      : `${selectedProduct.name} Standard Unit`}
+                    {selectedProduct.name} · Batch Quantity
                   </div>
-                  <p className="text-[11px] text-muted mt-0.5">
-                    Physical manufacturing filament color:{' '}
-                    <b className="text-ink">{selectedColor.name}</b>
-                  </p>
+                  {inputModel.isColorDeduplicated && inputModel.configuredColors.length > 0 ? (
+                    <p className="text-[11px] text-muted">
+                      Available physical colors ({inputModel.configuredColors.map((c) => c.rawValue).join(', ')}) — select filament color individually per generated plate below.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted">
+                      Physical filament color is selected individually for each generated plate in Preview.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -757,10 +761,9 @@ export const CatalogCategoryPlannerSection: React.FC<
                       quantitiesByKey[
                         buildCatalogSelectionKey(
                           selectedProduct.id,
-                          colorFilteredState.items[0]?.id !== 'base'
-                            ? colorFilteredState.items[0]?.id
-                            : null,
-                          selectedColor.id
+                          inputModel.items[0]?.id !== 'base'
+                            ? inputModel.items[0]?.id
+                            : null
                         )
                       ] ?? 0
                     }
@@ -769,14 +772,14 @@ export const CatalogCategoryPlannerSection: React.FC<
                       onChangeQuantity(
                         buildCatalogSelectionKey(
                           selectedProduct.id,
-                          colorFilteredState.items[0]?.id !== 'base'
-                            ? colorFilteredState.items[0]?.id
-                            : null,
-                          selectedColor.id
+                          inputModel.items[0]?.id !== 'base'
+                            ? inputModel.items[0]?.id
+                            : null
                         ),
                         val
                       );
                       setStagedCatalogPlates(null);
+                      setHasAttemptedConfirm(false);
                     }}
                     className="w-28 px-2.5 py-1.5 text-right rounded-lg border border-line bg-input text-sm font-mono-data font-bold text-ink focus:border-brand focus:outline-none"
                   />
@@ -784,26 +787,33 @@ export const CatalogCategoryPlannerSection: React.FC<
               </div>
             )}
 
-            {/* Case C: Multi-Option Variation Grid (Alphabet A–Z, Designs, Sizes) */}
-            {colorFilteredState && colorFilteredState.displayMode === 'variation_grid' && (
-              <DynamicOptionQuantityGrid
-                product={selectedProduct}
-                items={colorFilteredState.items}
-                quantitiesByKey={quantitiesByKey}
-                colorId={selectedColor.id}
-                hasMultipleGroups={Boolean(
-                  selectedProduct.options &&
-                    selectedProduct.options.length > (colorFilteredState.hasColorOption ? 2 : 1)
+            {/* Case B: Multi-Option Variation Grid (Alphabet A–Z, Designs, Sizes, or Explicit Variants) */}
+            {inputModel.displayMode === 'variation_grid' && (
+              <div className="space-y-2.5">
+                {inputModel.isColorDeduplicated && inputModel.configuredColors.length > 0 && (
+                  <div className="text-[11px] text-muted">
+                    Available product colors: <span className="font-medium text-ink-secondary">{inputModel.configuredColors.map((c) => c.rawValue).join(', ')}</span> — assign each plate&apos;s Filament Color in Preview.
+                  </div>
                 )}
-                onChangeQuantity={onChangeQuantity}
-                onDirty={() => setStagedCatalogPlates(null)}
-              />
+                <DynamicOptionQuantityGrid
+                  product={selectedProduct}
+                  items={inputModel.items}
+                  quantitiesByKey={quantitiesByKey}
+                  hasMultipleGroups={inputModel.effectiveOptions.length > 1}
+                  secondaryGroupOption={inputModel.effectiveOptions[1] || null}
+                  onChangeQuantity={onChangeQuantity}
+                  onDirty={() => {
+                    setStagedCatalogPlates(null);
+                    setHasAttemptedConfirm(false);
+                  }}
+                />
+              </div>
             )}
 
             {/* Action Bar: Total Summary & Generate Plate Preview */}
             <div className="pt-3 border-t border-line flex flex-wrap items-center justify-between gap-3">
               <div className="text-xs text-ink-secondary font-mono-data">
-                Target for <b className="font-sans text-ink">{selectedProduct.name}</b> ({selectedColor.name}):{' '}
+                Target for <b className="font-sans text-ink">{selectedProduct.name}</b>:{' '}
                 <b className="text-brand-text font-bold">{currentProductTotal} pcs</b>
                 {parsedConfiguredCapacity !== null && currentProductTotal > 0 && (
                   <span>
@@ -831,8 +841,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                   type="button"
                   disabled={
                     currentProductTotal === 0 ||
-                    parsedConfiguredCapacity === null ||
-                    (colorFilteredState?.displayMode === 'incompatible_color')
+                    parsedConfiguredCapacity === null
                   }
                   onClick={() => handlePreviewAutomatic(true)}
                   className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-40 text-white text-xs font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
@@ -843,7 +852,7 @@ export const CatalogCategoryPlannerSection: React.FC<
             </div>
           </section>
 
-          {/* Staged Plate Preview & Bambu Studio Fit Verification (Section 10) */}
+          {/* Staged Plate Preview: Independent Per-Plate Filament Color + Bambu Studio Fit Verification */}
           {stagedCatalogPlates && stagedCatalogPlates.length > 0 && (
             <section className="bg-surface border-2 border-brand rounded-xl p-6 space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -852,46 +861,80 @@ export const CatalogCategoryPlannerSection: React.FC<
                     Review &amp; Confirm Plates ({stagedCatalogPlates.length})
                   </h3>
                   <p className="text-xs text-muted mt-0.5">
-                    Single-Product Strict Isolation: All plates contain ONLY <b className="text-ink">{selectedProduct.name}</b> in <b className="text-ink">{selectedColor.name}</b>.
+                    Select a physical <b className="text-ink">Filament Color</b> individually for each plate of <b className="text-ink">{selectedProduct.name}</b> and verify Bambu Studio fit before saving.
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2.5">
                   <button
                     type="button"
-                    onClick={() => setStagedCatalogPlates(null)}
-                    className="px-3.5 py-2 rounded-lg border border-line bg-elevated text-xs font-medium text-ink hover:bg-recessed transition-colors"
+                    disabled={isConfirming}
+                    onClick={() => {
+                      setStagedCatalogPlates(null);
+                      setHasAttemptedConfirm(false);
+                    }}
+                    className="px-3.5 py-2 rounded-lg border border-line bg-elevated text-xs font-medium text-ink hover:bg-recessed disabled:opacity-40 transition-colors"
                   >
                     Discard Preview
                   </button>
                   <button
                     type="button"
-                    onClick={handleConfirmClick}
-                    className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+                    disabled={isConfirming}
+                    onClick={() => void handleConfirmClick()}
+                    className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    Confirm &amp; Save to Print Queue
+                    {isConfirming ? 'Saving...' : 'Confirm & Save to Print Queue'}
                   </button>
                 </div>
               </div>
 
+              {/* Batch Validation Summary Banner */}
+              {hasAttemptedConfirm && batchValidation && !batchValidation.allValid && (
+                <div
+                  role="alert"
+                  className="p-3.5 rounded-xl border border-status-error bg-error-soft text-xs text-error-text flex items-start gap-2.5"
+                >
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold">
+                      Cannot confirm batch: Fix validation issues on Plate{' '}
+                      {batchValidation.invalidPlateNumbers.join(', Plate ')} before saving to Print Queue.
+                    </div>
+                    <div className="text-[11px] opacity-90 mt-0.5">
+                      Every plate must have a valid physical Filament Color, positive quantity within capacity, and zero product/color conflicts.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stagedCatalogPlates.map((plate) => {
                   const totalUnits = countCatalogItems(plate.items);
-                  const overCap =
-                    plate.capacity !== null && totalUnits > plate.capacity;
-                  const plateColorObj = (workspaceColors || []).find((c) => c.id === plate.colorId);
+                  const plateColorObj = (workspaceColors || []).find(
+                    (c) => c.id === plate.colorId
+                  );
+                  const valRes = batchValidation?.byTempId[plate.tempId];
+                  const immediateBlockingErrors = valRes?.blockingErrors || [];
+                  const inlineErrors = [
+                    ...immediateBlockingErrors,
+                    ...(hasAttemptedConfirm && valRes?.colorSelectionError
+                      ? [valRes.colorSelectionError]
+                      : []),
+                  ];
+                  const hasCardError = inlineErrors.length > 0;
 
                   return (
                     <div
                       key={plate.tempId}
-                      className={`rounded-xl border p-4 space-y-3 ${
-                        overCap
+                      data-testid={`staged-plate-card-${plate.plateNumber}`}
+                      className={`rounded-xl border p-4 space-y-3 transition-colors ${
+                        hasCardError
                           ? 'border-status-error bg-error-soft'
                           : 'border-line bg-elevated'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div>
+                        <div className="min-w-0">
                           <span className="text-sm font-semibold text-ink">
                             Plate {plate.plateNumber}
                           </span>
@@ -899,58 +942,50 @@ export const CatalogCategoryPlannerSection: React.FC<
                             · {plate.productName || selectedProduct.name}
                           </span>
                         </div>
-                        <span className="text-xs font-mono-data font-semibold text-ink">
+                        <span className="text-xs font-mono-data font-semibold text-ink shrink-0">
                           {plate.capacity !== null
                             ? `${totalUnits} / ${plate.capacity} pcs`
                             : `${totalUnits} pcs`}
                         </span>
                       </div>
 
-                      {/* Authoritative Plate Printing Filament Color */}
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-muted font-medium">Filament Color:</span>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {plateColorObj ? (
-                            <span
-                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-line shadow-xs"
-                              style={{ backgroundColor: plateColorObj.hex }}
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <span
-                              className="w-2.5 h-2.5 rounded-full shrink-0 border border-dashed border-line bg-recessed"
-                              aria-hidden="true"
-                            />
-                          )}
-                          <select
-                            aria-label={`Filament color for Plate ${plate.plateNumber}`}
-                            value={plate.colorId || ''}
-                            onChange={(e) => {
-                              const nextCid = e.target.value || null;
-                              const matchedC = (workspaceColors || []).find((c) => c.id === nextCid);
-                              setStagedCatalogPlates((prev) =>
-                                prev
-                                  ? prev.map((p) =>
-                                      p.tempId === plate.tempId
-                                        ? {
-                                            ...p,
-                                            colorId: nextCid,
-                                            colorName: matchedC ? matchedC.name : 'Unassigned Color',
-                                          }
-                                        : p
-                                    )
-                                  : null
-                              );
-                            }}
-                            className="px-2 py-1 rounded-lg border border-line bg-input text-xs font-semibold text-ink focus:border-brand focus:outline-none"
-                          >
-                            <option value="">Unassigned Color</option>
-                            {(workspaceColors || []).map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
+                      {/* Authoritative Per-Plate Filament Color Selector */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted font-medium">Filament Color *</span>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {plateColorObj ? (
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0 border border-line shadow-xs"
+                                style={{ backgroundColor: plateColorObj.hex }}
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0 border border-dashed border-line bg-recessed"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <select
+                              aria-label={`Filament color for Plate ${plate.plateNumber}`}
+                              value={plate.colorId || ''}
+                              onChange={(e) =>
+                                handleAssignPlateColor(plate.tempId, e.target.value)
+                              }
+                              className={`px-2 py-1 rounded-lg border bg-input text-xs font-semibold focus:border-brand focus:outline-none ${
+                                hasAttemptedConfirm && valRes?.requiresColorSelection
+                                  ? 'border-status-error text-error-text'
+                                  : 'border-line text-ink'
+                              }`}
+                            >
+                              <option value="">Select Filament Color</option>
+                              {(workspaceColors || []).map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       </div>
 
@@ -978,7 +1013,7 @@ export const CatalogCategoryPlannerSection: React.FC<
                       <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                         {plate.items.map((item, idx) => (
                           <div
-                            key={`${item.productId}:${item.variantId || 'base'}`}
+                            key={`${item.productId}:${item.variantId || 'base'}:${idx}`}
                             className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-input border border-line text-xs"
                           >
                             <div className="min-w-0">
@@ -1007,6 +1042,18 @@ export const CatalogCategoryPlannerSection: React.FC<
                           </div>
                         ))}
                       </div>
+
+                      {/* Inline Per-Plate Validation Errors */}
+                      {inlineErrors.length > 0 && (
+                        <div
+                          role="alert"
+                          className="p-2 rounded-lg border border-status-error bg-surface/80 text-[11px] font-medium text-error-text space-y-1"
+                        >
+                          {inlineErrors.map((errMsg, errIdx) => (
+                            <div key={errIdx}>{errMsg}</div>
+                          ))}
+                        </div>
+                      )}
 
                       <label className="flex items-center gap-1.5 pt-2 border-t border-line text-[11px] text-ink-secondary cursor-pointer">
                         <input

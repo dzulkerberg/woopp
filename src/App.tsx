@@ -16,6 +16,8 @@ import {
 } from './firebase';
 import {
   ABC,
+  compactCharmsMap,
+  compactLettersMap,
   countCatalogItems,
   countCharms,
   countLetters,
@@ -26,6 +28,8 @@ import {
   migrateFromLegacyV1,
   normalizeAlphabetMap,
   normalizeWorkspaceV5,
+  sumAlphabetMaps,
+  sumCharmsMaps,
 } from './constants';
 import {
   AdminActorContext,
@@ -56,6 +60,7 @@ import {
   cancelPrintingJob,
   clearProjectColorCarryForward,
   commitGeneratedPlatesToWorkspace,
+  computeColorPlanningState,
   createActivityLogEntry,
   deletePrintPlate,
   DraftPlatePreview,
@@ -756,53 +761,116 @@ export const App: React.FC = () => {
 
   const handleCommitGeneratedPlates = async (params: {
     projectId: string;
-    colorId: string;
+    colorId?: string;
     plateCapacity: number;
     mode: PlateGenerationMode;
     targetLetters: LettersMap;
     targetCharms: CharmsMap;
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
-    confirmedPlates: DraftPlatePreview[];
+    confirmedPlates: (DraftPlatePreview & { colorId?: string | null })[];
     preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
   }) => {
     const latestWs = latestWorkspaceRef.current;
     const project = latestWs.projects.find((p) => p.id === params.projectId);
-    const color = latestWs.colors.find((c) => c.id === params.colorId);
-    if (!project || !color) return;
+    if (!project) return;
 
-    const result = commitGeneratedPlatesToWorkspace(latestWs, {
-      projectId: params.projectId,
-      colorId: params.colorId,
-      plateCapacity: params.plateCapacity,
-      mode: params.mode,
-      targetLetters: params.targetLetters,
-      targetCharms: params.targetCharms,
-      carryForwardLetters: params.carryForwardLetters,
-      carryForwardCharms: params.carryForwardCharms,
-      confirmedPlates: params.confirmedPlates,
-      preserveQueuedPlates: params.preserveQueuedPlates,
-      nowMs: getAuthoritativeNowMs(),
-    });
+    const nowMs = getAuthoritativeNowMs();
 
-    if (result.error || !result.nextWorkspace || !result.createdJobs) {
-      showAlert(
-        result.error || 'Could not generate plates for this project.',
-        'Plate Generation Blocked'
-      );
+    // Group confirmed plates by their authoritative per-plate colorId (falling back to params.colorId)
+    const platesByColor = new Map<string, DraftPlatePreview[]>();
+    for (const plate of params.confirmedPlates) {
+      const cid = (plate.colorId || params.colorId || '').trim();
+      if (!cid || !latestWs.colors.some((c) => c.id === cid)) {
+        showAlert(
+          `Plate ${plate.plateNumber} requires a valid physical Filament Color before saving to Print Queue.`,
+          'Filament Color Required'
+        );
+        return;
+      }
+      if (!platesByColor.has(cid)) platesByColor.set(cid, []);
+      platesByColor.get(cid)!.push(plate);
+    }
+
+    if (platesByColor.size === 0 && params.colorId) {
+      platesByColor.set(params.colorId, []);
+    }
+
+    if (platesByColor.size === 0) {
+      showAlert('No plates or filament color selected to save.', 'Plate Generation Blocked');
       return;
+    }
+
+    let workingWs = latestWs;
+    const allCreatedJobs: ProductionJob[] = [];
+    const distinctColorNames: string[] = [];
+
+    let groupIndex = 0;
+    for (const [cid, groupPlates] of platesByColor.entries()) {
+      const color = workingWs.colors.find((c) => c.id === cid);
+      if (!color) return;
+      distinctColorNames.push(color.name);
+
+      const stateForColor = computeColorPlanningState(workingWs.jobs, project, cid);
+      const groupLettersSum = sumAlphabetMaps(groupPlates.map((p) => p.letters));
+      const groupCharmsSum = sumCharmsMaps(groupPlates.map((p) => p.charms));
+      const useExplicitParams = platesByColor.size === 1 && Boolean(params.colorId === cid);
+
+      const res = commitGeneratedPlatesToWorkspace(workingWs, {
+        projectId: params.projectId,
+        colorId: cid,
+        plateCapacity: params.plateCapacity,
+        mode: params.mode,
+        targetLetters: useExplicitParams
+          ? params.targetLetters
+          : compactLettersMap(
+              sumAlphabetMaps([
+                stateForColor.validAllocatedLetters,
+                params.mode === 'alphabet_only' ? groupLettersSum : {},
+              ])
+            ),
+        targetCharms: useExplicitParams
+          ? params.targetCharms
+          : compactCharmsMap(
+              sumCharmsMaps([
+                stateForColor.validAllocatedCharms,
+                params.mode === 'charm_only' ? groupCharmsSum : {},
+              ])
+            ),
+        carryForwardLetters: useExplicitParams
+          ? params.carryForwardLetters
+          : stateForColor.carryForwardLetters,
+        carryForwardCharms: useExplicitParams
+          ? params.carryForwardCharms
+          : stateForColor.carryForwardCharms,
+        confirmedPlates: groupPlates,
+        preserveQueuedPlates: params.preserveQueuedPlates,
+        nowMs: nowMs + groupIndex,
+      });
+
+      if (res.error || !res.nextWorkspace || !res.createdJobs) {
+        showAlert(
+          res.error || 'Could not generate plates for this project.',
+          'Plate Generation Blocked'
+        );
+        return;
+      }
+
+      workingWs = res.nextWorkspace;
+      allCreatedJobs.push(...res.createdJobs);
+      groupIndex += 1;
     }
 
     const carryCount =
       countLetters(params.carryForwardLetters) + countCharms(params.carryForwardCharms);
 
-    const saved = await persistWorkspace(result.nextWorkspace);
+    const saved = await persistWorkspace(workingWs);
 
     if (saved) {
       params.onSuccess?.();
       showAlert(
-        `Saved ${result.createdJobs.length} plate(s) for ${project.name} (${color.name}).${
+        `Saved ${allCreatedJobs.length} plate(s) for ${project.name} (${distinctColorNames.join(', ')}).${
           carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
         }`,
         'Plates Added to Queue'
@@ -851,20 +919,20 @@ export const App: React.FC = () => {
   const handleCommitCatalogPlates = useCallback(
     async (params: {
       projectId: string;
-      colorId: string;
+      colorId?: string | null;
       category: ProductCategory;
       confirmedPlates: DraftCatalogPlatePreview[];
       onSuccess?: () => void;
     }) => {
       const latestWs = latestWorkspaceRef.current;
       const project = latestWs.projects.find((p) => p.id === params.projectId);
-      const color = latestWs.colors.find((c) => c.id === params.colorId);
-      if (!project || !color) return;
+      if (!project) return;
 
       const result = commitCatalogPlatesToWorkspace(latestWs, {
         projectId: params.projectId,
-        colorId: params.colorId,
+        colorId: params.colorId ?? null,
         category: params.category,
+        products: catalogSnapshot.products,
         confirmedPlates: params.confirmedPlates,
         nowMs: getAuthoritativeNowMs(),
       });
@@ -891,7 +959,7 @@ export const App: React.FC = () => {
         );
       }
     },
-    [getAuthoritativeNowMs, persistWorkspace, showAlert]
+    [catalogSnapshot.products, getAuthoritativeNowMs, persistWorkspace, showAlert]
   );
 
   const handleClearCarryForward = useCallback(

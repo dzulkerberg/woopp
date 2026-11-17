@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CatalogProduct } from '../types';
+import { CatalogProduct, ProductOptionDefinition } from '../types';
 import {
   buildCatalogSelectionKey,
   isAlphabetProductItems,
@@ -11,6 +11,7 @@ export interface DynamicOptionQuantityGridProps {
   items: PlannableProductItem[];
   quantitiesByKey: Record<string, number>;
   hasMultipleGroups: boolean;
+  secondaryGroupOption?: ProductOptionDefinition | null;
   colorId?: string;
   onChangeQuantity: (selectionKey: string, nextQty: number) => void;
   onDirty: () => void;
@@ -26,21 +27,29 @@ export interface DynamicOptionQuantityGridProps {
  * - Standardized, balanced card height, padding, and layout across all products.
  * - Input fields comfortably display 4-digit numbers with clear typography and browser spinner controls.
  * - Full text wrapping for longer labels without clipping or horizontal overflow.
- * - Multi-group option selector tabs (e.g. Color, Finish, Style) with live subtotals.
+ * - Multi-group option selector tabs (e.g. Finish, Style) with live subtotals.
  */
 export const DynamicOptionQuantityGrid: React.FC<DynamicOptionQuantityGridProps> = ({
   product,
   items,
   quantitiesByKey,
   hasMultipleGroups,
+  secondaryGroupOption,
   colorId,
   onChangeQuantity,
   onDirty,
 }) => {
   const isAlphabet = useMemo(() => isAlphabetProductItems(items), [items]);
 
-  // Secondary option group handling (e.g., Letter + Color)
-  const secondaryGroup = hasMultipleGroups && product.options ? product.options[1] : null;
+  // Secondary option group handling (only when >= 2 active non-deduplicated option groups exist)
+  const secondaryGroup =
+    hasMultipleGroups
+      ? secondaryGroupOption !== undefined
+        ? secondaryGroupOption
+        : product.options
+        ? product.options[1] || null
+        : null
+      : null;
   const [activeSecondaryValue, setActiveSecondaryValue] = useState<string>(
     secondaryGroup && secondaryGroup.values.length > 0 ? secondaryGroup.values[0] : ''
   );
