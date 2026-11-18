@@ -85,6 +85,7 @@ export function createActivityLogEntry(params: {
 export interface DraftPlatePreview {
   tempId: string;
   plateNumber: number;
+  plateCode?: string | null;
   capacity: number;
   letters: LettersMap;
   charms: CharmsMap;
@@ -2743,6 +2744,7 @@ export function commitGeneratedPlatesToWorkspace(
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
     confirmedPlates: DraftPlatePreview[];
+    batchId?: string | null;
     requestedBatchLetters?: LettersMap;
     requestedBatchCharms?: CharmsMap;
     preserveQueuedPlates?: boolean;
@@ -2777,7 +2779,10 @@ export function commitGeneratedPlatesToWorkspace(
   const safeCap = Math.max(1, Math.floor(params.plateCapacity || 138));
   const preserveQueued = Boolean(params.preserveQueuedPlates);
 
-  const batchId = `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+  const suppliedBatchId =
+    typeof params.batchId === 'string' ? params.batchId.trim() : '';
+  const batchId =
+    suppliedBatchId || `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
   const sessionId = batchId;
 
   const keptJobs = workspace.jobs.filter((j) => {
@@ -2802,6 +2807,9 @@ export function commitGeneratedPlatesToWorkspace(
       projectId: params.projectId,
       colorId: params.colorId,
       plateNumber: draft.plateNumber,
+      ...(typeof draft.plateCode === 'string' && draft.plateCode.trim().length > 0
+        ? { plateCode: draft.plateCode.trim().toUpperCase() }
+        : {}),
       plateCapacity: safeCap,
       letters: compactedLetters,
       plateMode: inferPlateMode(compactedLetters, compactedCharms),

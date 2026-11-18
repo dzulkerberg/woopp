@@ -1,13 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Printer } from 'lucide-react';
-import { ProductionProject, ProductionWorkspaceV5 } from '../types';
+import { AlertTriangle, ArrowLeft, Download, Loader2, Printer } from 'lucide-react';
+import { compactLettersMap, countLetters } from '../constants';
+import { useMaster3mfTemplate } from '../services/useMaster3mfTemplate';
+import {
+  Bambu3mfExportProgressEvent,
+  Master3mfTemplateAsset,
+  ProductionProject,
+  ProductionWorkspaceV5,
+} from '../types';
 import { DEFAULT_TIMEZONE, formatDateDDMMYYYY } from '../utils/dateFormat';
+import { normalizePlateCode } from '../utils/plateIdGenerator';
+import { exportBatchPlates3mfAction } from '../utils/platePreviewHelper';
+import { extractLettersMapFromCatalogItems } from '../utils/plateStlLayout';
 import {
   auditProductionJobRelationships,
   BatchProductionSummary,
   buildProjectProductionSummary,
 } from '../utils/projectProductionSummary';
+import { ToastVariant } from './ToastStack';
 
 export interface ProjectProductionSummaryModalProps {
   workspace: ProductionWorkspaceV5;
@@ -17,6 +28,9 @@ export interface ProjectProductionSummaryModalProps {
   initialPrintScope?: 'single' | 'all_completed';
   initialSelectedBatchId?: string;
   onPrint?: () => void;
+  ownerId?: string | null;
+  onToast?: (variant: ToastVariant, message: string) => void;
+  getMaster3mfAssetOverride?: () => Promise<Master3mfTemplateAsset | null>;
 }
 
 export const ProjectProductionSummaryModal: React.FC<
@@ -29,10 +43,20 @@ export const ProjectProductionSummaryModal: React.FC<
   initialPrintScope = 'single',
   initialSelectedBatchId,
   onPrint,
+  ownerId = null,
+  onToast,
+  getMaster3mfAssetOverride,
 }) => {
   const effectiveNowMs = nowMs ?? Date.now();
   const timezone = workspace.settings?.timezone || DEFAULT_TIMEZONE;
   const printDateLabel = formatDateDDMMYYYY(effectiveNowMs, timezone);
+  const { getMaster3mfAsset } = useMaster3mfTemplate(
+    (ownerId || workspace.ownerId || 'local-operator').trim()
+  );
+  const resolveMaster3mfAsset = getMaster3mfAssetOverride || getMaster3mfAsset;
+  const [isExportingBatch3mf, setIsExportingBatch3mf] = useState(false);
+  const [batch3mfProgress, setBatch3mfProgress] =
+    useState<Bambu3mfExportProgressEvent | null>(null);
 
   const summary = useMemo(
     () =>
@@ -109,6 +133,73 @@ export const ProjectProductionSummaryModal: React.FC<
     triggerPrint();
   };
 
+  const activeBatchExportPlates = useMemo(() => {
+    if (!activeBatch) return [];
+    const jobById = new Map(workspace.jobs.map((j) => [j.id, j]));
+    const colorById = new Map(workspace.colors.map((c) => [c.id, c]));
+    return activeBatch.plates
+      .map((bp) => {
+        const job = jobById.get(bp.jobId);
+        if (!job) return null;
+        const directLetters = compactLettersMap(job.letters);
+        const extractedLetters =
+          countLetters(directLetters) > 0
+            ? directLetters
+            : compactLettersMap(
+                extractLettersMapFromCatalogItems(job.catalogItems || []).letters
+              );
+        if (countLetters(extractedLetters) <= 0) return null;
+        const code = normalizePlateCode(job.plateCode);
+        if (!code) return null;
+        const col = colorById.get(job.colorId);
+        return {
+          plateNumber: job.plateNumber,
+          plateCode: code,
+          capacity: job.plateCapacity || countLetters(extractedLetters),
+          letters: extractedLetters,
+          colorId: col?.id || job.colorId || null,
+          colorName: col?.name || activeBatch.colorName || null,
+          colorHex: col?.hex || null,
+          productName:
+            job.catalogItems?.[0]?.productName ||
+            activeBatch.productName ||
+            project.productType,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [activeBatch, workspace.jobs, workspace.colors, project.productType]);
+
+  const handleExportSavedBatch3mf = async () => {
+    if (
+      !activeBatch ||
+      activeBatchExportPlates.length === 0 ||
+      isExportingBatch3mf
+    ) {
+      return;
+    }
+    setIsExportingBatch3mf(true);
+    setBatch3mfProgress({
+      phase: 'loading_master',
+      completedPlates: 0,
+      totalPlates: activeBatchExportPlates.length,
+      percent: 5,
+      message: `Preparing ${activeBatch.batchLabel} multi-plate .3MF export...`,
+    });
+    try {
+      await exportBatchPlates3mfAction({
+        batchId: activeBatch.batchId,
+        plates: activeBatchExportPlates,
+        projectName: project.name,
+        getMaster3mfAsset: resolveMaster3mfAsset,
+        onProgress: (ev) => setBatch3mfProgress(ev),
+        onToast,
+      });
+    } finally {
+      setIsExportingBatch3mf(false);
+      setBatch3mfProgress(null);
+    }
+  };
+
   const batchesToPrint: BatchProductionSummary[] =
     printScope === 'all_completed'
       ? summary.completedBatches
@@ -148,6 +239,26 @@ export const ProjectProductionSummaryModal: React.FC<
 
             {summary.batches.length > 0 && (
               <div className="flex flex-wrap items-center gap-2.5">
+                {activeBatch && activeBatchExportPlates.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="export-saved-batch-3mf"
+                    disabled={isExportingBatch3mf}
+                    onClick={() => void handleExportSavedBatch3mf()}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white disabled:opacity-45 text-brand-text text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+                  >
+                    {isExportingBatch3mf ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {isExportingBatch3mf
+                        ? 'Exporting .3MF...'
+                        : 'Export All Plates (.3MF)'}
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={!activeBatch || activeBatch.completedPlateCount === 0}
@@ -175,6 +286,31 @@ export const ProjectProductionSummaryModal: React.FC<
               </div>
             )}
           </div>
+
+          {isExportingBatch3mf && batch3mfProgress && (
+            <div
+              data-testid="saved-batch-3mf-export-progress"
+              className="p-3 rounded-xl border border-brand-border bg-brand-soft/60 space-y-1.5"
+            >
+              <div className="flex items-center justify-between gap-2 text-xs text-ink">
+                <span className="font-medium flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-text shrink-0" />
+                  <span>{batch3mfProgress.message}</span>
+                </span>
+                <span className="font-mono-data font-bold text-brand-text">
+                  {batch3mfProgress.percent}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-recessed overflow-hidden">
+                <div
+                  className="h-full bg-brand transition-all duration-200"
+                  style={{
+                    width: `${Math.min(100, Math.max(5, batch3mfProgress.percent))}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* 4-Metric Project Batch Rollup */}
           <div className="rounded-xl border border-line bg-recessed grid grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-line">

@@ -175,6 +175,7 @@ export interface ProductionJob {
   projectId: string;
   colorId: string;
   plateNumber: number;
+  plateCode?: string | null; // Immutable globally unique 5-char Plate ID (displayed as WP-{plateCode})
   plateCapacity: number;
   letters: LettersMap;
   // Additive Charm Keycap quantities on this plate (missing treated as 0)
@@ -445,5 +446,186 @@ export interface PlannerPreselection {
   productId: string;
   variantId?: string | null;
   requestedAtMs: number;
+}
+
+// ============================================================================
+// WOOPP 6.0 — Fast STL Export Engine & Admin STL Model Library Types
+// ============================================================================
+
+export interface StlMeshBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  estimatedLetterStartZMm: number | null;
+}
+
+export interface StlModelAssetRecord {
+  letter: string; // 'A'..'Z'
+  fileName: string;
+  byteLength: number;
+  triangleCount: number;
+  format: 'binary' | 'ascii';
+  sha256: string;
+  bounds: StlMeshBounds;
+  isValid: boolean;
+  uploadedAt: string;
+  uploadedBy: string | null;
+}
+
+export interface StlModelAssetEntry {
+  record: StlModelAssetRecord;
+  buffer: ArrayBuffer;
+}
+
+export interface PlateLetterPlacement {
+  index: number;
+  letter: string;
+  row: number;
+  col: number;
+  xMm: number;
+  yMm: number;
+  slotWidthMm: number;
+  slotDepthMm: number;
+}
+
+export interface StlBedProfile {
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  maxHeightMm: number;
+  slotPitchXMm: number;
+  slotPitchYMm: number;
+}
+
+export interface StlExportValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface BatchExportManifestPlateEntry {
+  plateNumber: number;
+  plateCode?: string | null;
+  fileName: string;
+  keycapCount: number;
+  triangleCount: number;
+  letterBreakdown: LettersMap;
+  bounds: StlMeshBounds;
+}
+
+export interface BatchExportManifest {
+  schemaVersion: number;
+  batchId: string;
+  productionDate: string;
+  projectId: string;
+  projectName: string;
+  productName: string;
+  baseColour: {
+    id: string | null;
+    name: string;
+    hex: string | null;
+  };
+  letterColour: string;
+  plateNumbers: number[];
+  plateCount: number;
+  totalKeycapCount: number;
+  letterBreakdown: LettersMap;
+  modelRevision: string;
+  bedProfile: {
+    name: string;
+    widthMm: number;
+    depthMm: number;
+    maxHeightMm: number;
+  };
+  plates: BatchExportManifestPlateEntry[];
+  notices: string[];
+}
+
+export interface PlateStlExportInputPlate {
+  plateNumber: number;
+  plateCode?: string | null;
+  capacity: number;
+  letters: LettersMap;
+  placements?: PlateLetterPlacement[];
+  colorId?: string | null;
+  colorName?: string | null;
+  colorHex?: string | null;
+  productName?: string | null;
+}
+
+export interface StlExportProgressEvent {
+  phase: 'loading_assets' | 'parsing_meshes' | 'validating' | 'building_stl' | 'packaging_zip' | 'complete';
+  completedPlates: number;
+  totalPlates: number;
+  currentPlateNumber?: number;
+  percent: number;
+  message: string;
+}
+
+// ============================================================================
+// WOOPP 6.0 — Bambu Studio Master 3MF Template & Multi-Plate .3MF Export Types
+// ============================================================================
+
+export interface Master3mfDetectedKeycapPart {
+  partId: string;
+  name: string;
+  subtype: string;
+  extruder: number | null;
+  triangleCount: number;
+}
+
+export interface Master3mfDetectedKeycap {
+  letter: string; // 'A'..'Z'
+  objectId: string;
+  objectName: string;
+  defaultExtruder: number | null;
+  parts: Master3mfDetectedKeycapPart[];
+  totalTriangles: number;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+}
+
+export interface Master3mfTemplateRecord {
+  templateId: string;
+  fileName: string;
+  byteLength: number;
+  sha256: string;
+  uploadedAt: string;
+  uploadedBy: string | null;
+  detectedLetters: string[];
+  keycapsByLetter: Record<string, Master3mfDetectedKeycap>;
+  multiMaterialPartCount: number;
+  filamentCount: number;
+  filamentColors: string[];
+  primeTowerEnabled: boolean;
+  projectSettingsKeysCount: number;
+  isValid: boolean;
+}
+
+export interface Master3mfTemplateAsset {
+  record: Master3mfTemplateRecord;
+  buffer: ArrayBuffer;
+}
+
+export interface Bambu3mfExportProgressEvent {
+  phase:
+    | 'loading_master'
+    | 'parsing_master'
+    | 'validating'
+    | 'building_plates'
+    | 'packaging_3mf'
+    | 'complete';
+  completedPlates: number;
+  totalPlates: number;
+  currentPlateNumber?: number;
+  percent: number;
+  message: string;
 }
 

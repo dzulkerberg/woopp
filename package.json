@@ -12,10 +12,13 @@
     "test:emulator": "firebase emulators:exec --only firestore --project demo-woopp-6 \"vitest run --config vitest.emulator.config.ts\""
   },
   "dependencies": {
+    "@types/three": "^0.187.0",
     "firebase": "^13.1.0",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.64.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "three": "^0.187.0"
   },
   "devDependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",

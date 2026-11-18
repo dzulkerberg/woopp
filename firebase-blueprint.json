@@ -347,6 +347,45 @@
         "defaultEstimatedMinutes",
         "updatedAt"
       ]
+    },
+    "PlateIdReservation": {
+      "title": "Global Immutable Plate ID Reservation",
+      "description": "Atomic global uniqueness registry for 5-character CSPRNG Plate IDs (excluding O, 0, I, 1) stored at plateIds/{plateCode}.",
+      "type": "object",
+      "properties": {
+        "plateCode": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}$",
+          "description": "Immutable 5-character Plate ID"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the reserving operator"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Project ID associated with the plate"
+        },
+        "batchId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional Production Batch ID (or null)"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UTC ISO reservation timestamp"
+        }
+      },
+      "required": ["plateCode", "ownerId", "projectId", "batchId", "createdAt"]
     }
   },
   "firestore": {
@@ -373,6 +412,10 @@
     "/users/{userId}/catalogPlateSettings/{categoryId}": {
       "schema": { "$ref": "#/entities/CategoryPlateSetting" },
       "description": "Auto Plate Planner capacity and manual plate composition settings per Product Studio category."
+    },
+    "/plateIds/{plateCode}": {
+      "schema": { "$ref": "#/entities/PlateIdReservation" },
+      "description": "Global atomic uniqueness lock for immutable 5-character WOOPP Plate IDs (WP-{PLATE_ID})."
     }
   }
 }

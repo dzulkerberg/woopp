@@ -1,13 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, RotateCcw, Trash2, XCircle } from 'lucide-react';
+import { Archive, Download, Loader2, RotateCcw, Trash2, XCircle } from 'lucide-react';
 import {
   ACTIVE_KANBAN_STAGES,
+  compactLettersMap,
+  countLetters,
   countPlateKeycaps,
   KANBAN_STAGES,
 } from '../constants';
+import { useMaster3mfTemplate } from '../services/useMaster3mfTemplate';
 import {
   EtaRecalibrationInput,
   KanbanStage,
+  Master3mfTemplateAsset,
   ProductionJob,
   ProductionWorkspaceV5,
   QueueLifecycleTab,
@@ -26,6 +30,9 @@ import {
   ETA_NEEDS_RECALIBRATION_LABEL,
   ETA_REACHED_LABEL,
 } from '../utils/productionCountdown';
+import { normalizePlateCode } from '../utils/plateIdGenerator';
+import { exportSinglePlate3mfAction } from '../utils/platePreviewHelper';
+import { extractLettersMapFromCatalogItems } from '../utils/plateStlLayout';
 import {
   canArchivePlate,
   canDeletePlate,
@@ -45,6 +52,7 @@ import {
   BulkQueueActionKind,
   PlateLifecycleMenu,
 } from './QueueLifecycleModals';
+import { ToastVariant } from './ToastStack';
 
 interface KanbanQueueViewProps {
   workspace: ProductionWorkspaceV5;
@@ -88,6 +96,9 @@ interface KanbanQueueViewProps {
   onArchivePlate: (job: ProductionJob) => void;
   onRestorePlate: (job: ProductionJob) => void;
   onRequestBulkAction: (action: BulkQueueActionKind, jobs: ProductionJob[]) => void;
+  ownerId?: string | null;
+  onToast?: (variant: ToastVariant, message: string) => void;
+  getMaster3mfAssetOverride?: () => Promise<Master3mfTemplateAsset | null>;
 }
 
 const ARCHIVED_STAGES: KanbanStage[] = [
@@ -115,7 +126,14 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
   onArchivePlate,
   onRestorePlate,
   onRequestBulkAction,
+  ownerId = null,
+  onToast,
+  getMaster3mfAssetOverride,
 }) => {
+  const { getMaster3mfAsset } = useMaster3mfTemplate(
+    (ownerId || workspace.ownerId || 'local-operator').trim()
+  );
+  const resolveMaster3mfAsset = getMaster3mfAssetOverride || getMaster3mfAsset;
   const [lifecycleTab, setLifecycleTab] = useState<QueueLifecycleTab>(
     initialLifecycleTab
   );
@@ -710,6 +728,8 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         onRequestCancelPrinting={onRequestCancelPrinting}
                         onArchivePlate={onArchivePlate}
                         onRestorePlate={onRestorePlate}
+                        getMaster3mfAsset={resolveMaster3mfAsset}
+                        onToast={onToast}
                       />
                     ))}
                   </div>
@@ -788,6 +808,11 @@ export const KanbanQueueView: React.FC<KanbanQueueViewProps> = ({
                         <span className="font-semibold font-mono-data whitespace-nowrap">
                           Plate {job.plateNumber} ({qty}/{job.plateCapacity})
                         </span>
+                        {normalizePlateCode(job.plateCode) && (
+                          <span className="text-[11px] font-mono-data text-muted whitespace-nowrap">
+                            · WP-{normalizePlateCode(job.plateCode)}
+                          </span>
+                        )}
                         {job.archived && (
                           <span className="text-[10px] font-medium text-muted">
                             · Archived
@@ -1049,6 +1074,8 @@ interface KanbanJobCardProps {
   onRequestCancelPrinting: (job: ProductionJob) => void;
   onArchivePlate: (job: ProductionJob) => void;
   onRestorePlate: (job: ProductionJob) => void;
+  getMaster3mfAsset?: () => Promise<Master3mfTemplateAsset | null>;
+  onToast?: (variant: ToastVariant, message: string) => void;
 }
 
 const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
@@ -1066,8 +1093,11 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   onRequestCancelPrinting,
   onArchivePlate,
   onRestorePlate,
+  getMaster3mfAsset,
+  onToast,
 }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [isExporting3mf, setIsExporting3mf] = useState(false);
   const project = workspace.projects.find((p) => p.id === job.projectId);
   const color = workspace.colors.find((c) => c.id === job.colorId);
   const machine = job.machineId
@@ -1076,6 +1106,41 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
   const qty = countPlateKeycaps(job);
   const slot = schedule.slotsByJobId[job.id];
   const { timezone } = schedule;
+
+  const savedLetters = useMemo(() => {
+    const direct = compactLettersMap(job.letters);
+    if (countLetters(direct) > 0) return direct;
+    return compactLettersMap(
+      extractLettersMapFromCatalogItems(job.catalogItems || []).letters
+    );
+  }, [job.letters, job.catalogItems]);
+
+  const savedPlateCode = normalizePlateCode(job.plateCode);
+
+  const handleExportSavedPlate3mf = async () => {
+    if (!savedPlateCode || countLetters(savedLetters) <= 0 || isExporting3mf) return;
+    setIsExporting3mf(true);
+    try {
+      await exportSinglePlate3mfAction({
+        plateNumber: job.plateNumber,
+        plateCode: savedPlateCode,
+        capacity: job.plateCapacity || countLetters(savedLetters),
+        letters: savedLetters,
+        colorId: color?.id || job.colorId || null,
+        colorName: color?.name || null,
+        colorHex: color?.hex || null,
+        productName:
+          job.catalogItems?.[0]?.productName ||
+          project?.productType ||
+          'Alphabet Keycaps',
+        projectName: project?.name,
+        getMaster3mfAsset,
+        onToast,
+      });
+    } finally {
+      setIsExporting3mf(false);
+    }
+  };
 
   const [pausedMinsDraft, setPausedMinsDraft] = useState<number>(() =>
     Math.max(
@@ -1106,6 +1171,11 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             <span className="text-sm font-semibold text-ink">
               Plate {job.plateNumber}
             </span>
+            {normalizePlateCode(job.plateCode) && (
+              <span className="text-[10px] font-mono-data text-muted whitespace-nowrap">
+                · WP-{normalizePlateCode(job.plateCode)}
+              </span>
+            )}
             {job.archived && (
               <span className="text-[10px] font-medium text-muted">
                 · Archived
@@ -1445,19 +1515,37 @@ const KanbanJobCard: React.FC<KanbanJobCardProps> = ({
             : `Bambu Est: ${formatDurationHoursMinutes(job.estimatedMinutes)}`}
           {job.failedCount > 0 ? ` · Fails: ${job.failedCount}` : ''}
         </span>
-        {(job.stage === 'Completed' || !job.archived) && (
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="text-brand-text font-medium hover:underline shrink-0"
-          >
-            {expanded
-              ? 'Hide'
-              : job.stage === 'Completed'
-              ? 'Details & Breakdown'
-              : 'Timing & Notes'}
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {savedPlateCode && countLetters(savedLetters) > 0 && (
+            <button
+              type="button"
+              disabled={isExporting3mf}
+              data-testid={`queue-export-3mf-${job.id}`}
+              onClick={() => void handleExportSavedPlate3mf()}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-line bg-elevated hover:bg-recessed text-[11px] font-semibold text-ink disabled:opacity-45 transition-colors cursor-pointer"
+            >
+              {isExporting3mf ? (
+                <Loader2 className="w-3 h-3 animate-spin text-brand-text" />
+              ) : (
+                <Download className="w-3 h-3 text-brand-text" />
+              )}
+              <span>{isExporting3mf ? 'Exporting...' : 'Export 3MF'}</span>
+            </button>
+          )}
+          {(job.stage === 'Completed' || !job.archived) && (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="text-brand-text font-medium hover:underline shrink-0"
+            >
+              {expanded
+                ? 'Hide'
+                : job.stage === 'Completed'
+                ? 'Details & Breakdown'
+                : 'Timing & Notes'}
+            </button>
+          )}
+        </div>
       </div>
 
       {expanded && (job.stage === 'Completed' || !job.archived) && (

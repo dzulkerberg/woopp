@@ -293,6 +293,7 @@ export function matchWorkspaceColorForVariant(
 export interface DraftCatalogPlatePreview {
   tempId: string;
   plateNumber: number;
+  plateCode?: string | null;
   categoryId: string;
   categoryName: string;
   productId?: string | null; // Authoritative product ID (MANDATORY INVARIANT: ONE PLATE = ONE PRODUCT ID)
@@ -1805,6 +1806,7 @@ export function commitCatalogPlatesToWorkspace(
     category: ProductCategory;
     products?: readonly CatalogProduct[];
     confirmedPlates: readonly DraftCatalogPlatePreview[];
+    batchId?: string | null;
     requestedQuantity?: number;
     requestedVariations?: readonly ProductionBatchVariationSnapshot[];
     nowMs?: number;
@@ -1901,7 +1903,10 @@ export function commitCatalogPlatesToWorkspace(
   const nowMs = params.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const timezone = workspace.settings?.timezone || DEFAULT_TIMEZONE;
-  const batchId = `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+  const suppliedBatchId =
+    typeof params.batchId === 'string' ? params.batchId.trim() : '';
+  const batchId =
+    suppliedBatchId || `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
 
   const createdJobs: ProductionJob[] = [];
   const requestedVariationsMap = new Map<string, ProductionBatchVariationSnapshot>();
@@ -1998,6 +2003,9 @@ export function commitCatalogPlatesToWorkspace(
       projectId: project.id,
       colorId: batchColor.id,
       plateNumber: draft.plateNumber,
+      ...(typeof draft.plateCode === 'string' && draft.plateCode.trim().length > 0
+        ? { plateCode: draft.plateCode.trim().toUpperCase() }
+        : {}),
       plateCapacity: effectivePlateCapacity,
       letters: companionLetters,
       plateMode: 'catalog_category',

@@ -23,6 +23,7 @@ import {
   SalesChannel,
 } from './types';
 import { DEFAULT_TIMEZONE, formatDateTimeDDMMYYYY } from './utils/dateFormat';
+import { normalizePlateCode } from './utils/plateIdGenerator';
 import { hydrateJobCountdownFields } from './utils/productionCountdown';
 
 export const STORAGE_KEY_V5 = 'woopp-print-tracker-v5';
@@ -1070,6 +1071,12 @@ export function normalizeWorkspaceV5(
             ...j,
             letters: j.letters || {},
           };
+          const cleanPlateCode = normalizePlateCode(j.plateCode);
+          if (cleanPlateCode) {
+            normalizedJob.plateCode = cleanPlateCode;
+          } else {
+            delete normalizedJob.plateCode;
+          }
           if (j.charms && typeof j.charms === 'object') {
             const compacted = compactCharmsMap(j.charms);
             if (Object.keys(compacted).length > 0) {

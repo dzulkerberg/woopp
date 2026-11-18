@@ -1,11 +1,18 @@
 import React, { useRef, useState } from 'react';
 import { DEFAULT_COLOR_PALETTE } from '../constants';
+import { useMaster3mfTemplate } from '../services/useMaster3mfTemplate';
+import { useStlModelLibrary } from '../services/useStlModelLibrary';
 import { ColorOption, ProductionWorkspaceV5 } from '../types';
 import { DEFAULT_TIMEZONE, SUPPORTED_TIMEZONES } from '../utils/dateFormat';
 import { LegacyLocalDataSummary } from '../utils/legacyLocalBackup';
+import { Master3mfTemplatePanel } from './Master3mfTemplatePanel';
+import { StlModelLibraryPanel } from './StlModelLibraryPanel';
 
 interface SettingsViewProps {
   workspace: ProductionWorkspaceV5;
+  isAdmin?: boolean;
+  ownerId?: string | null;
+  actorEmail?: string | null;
   onUpdateWorkspaceDefaults: (params: {
     defaultPlateCapacity: number;
     defaultProductType: string;
@@ -24,6 +31,9 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   workspace,
+  isAdmin = true,
+  ownerId = null,
+  actorEmail = null,
   onUpdateWorkspaceDefaults,
   onAddColor,
   onRenameColor,
@@ -44,7 +54,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   );
   const [newColorName, setNewColorName] = useState('');
   const [newColorHex, setNewColorHex] = useState(DEFAULT_COLOR_PALETTE[0]);
+  const [isMaster3mfOpen, setIsMaster3mfOpen] = useState<boolean>(false);
+  const [isStlLibraryOpen, setIsStlLibraryOpen] = useState<boolean>(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const master3mf = useMaster3mfTemplate(
+    ownerId || workspace.ownerId,
+    actorEmail
+  );
+  const stlLibrary = useStlModelLibrary(
+    ownerId || workspace.ownerId,
+    actorEmail
+  );
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -285,6 +305,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
       </section>
+
+      {/* Admin-Only Immutable Bambu Studio Master 3MF Template */}
+      <Master3mfTemplatePanel
+        isAdmin={isAdmin}
+        templateRecord={master3mf.templateRecord}
+        loading={master3mf.loading}
+        busy={master3mf.busy}
+        error={master3mf.error}
+        isOpen={isMaster3mfOpen}
+        onToggleOpen={() => setIsMaster3mfOpen((o) => !o)}
+        onUploadMaster3mf={master3mf.uploadMaster3mfFile}
+        onRemoveMaster3mf={master3mf.removeMaster3mf}
+      />
+
+      {/* Admin-Only Persistent STL Model Library (A–Z) */}
+      <StlModelLibraryPanel
+        isAdmin={isAdmin}
+        recordsByLetter={stlLibrary.recordsByLetter}
+        uploadedCount={stlLibrary.uploadedCount}
+        modelRevision={stlLibrary.modelRevision}
+        loading={stlLibrary.loading}
+        busy={stlLibrary.busy}
+        error={stlLibrary.error}
+        isOpen={isStlLibraryOpen}
+        onToggleOpen={() => setIsStlLibraryOpen((o) => !o)}
+        onUploadSingleLetter={stlLibrary.uploadSingleLetterFile}
+        onUploadBulkFiles={stlLibrary.uploadBulkFiles}
+        onRemoveLetter={stlLibrary.removeLetterModel}
+      />
     </div>
   );
 };

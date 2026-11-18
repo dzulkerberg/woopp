@@ -19,23 +19,28 @@ import {
 import { formatDateDDMMYYYY } from '../utils/dateFormat';
 import { DateInputDDMMYYYY } from './DateInputDDMMYYYY';
 import { ProjectProductionSummaryModal } from './ProjectProductionSummaryModal';
+import { ToastVariant } from './ToastStack';
 
 interface ProjectsViewProps {
   workspace: ProductionWorkspaceV5;
   selectedProjectId: string;
+  ownerId?: string | null;
   onSelectProject: (projectId: string) => void;
   onSaveProject: (project: ProductionProject, isNew: boolean) => void;
   onUpdateProjectStatus: (projectId: string, status: ProjectStatus) => void;
   onNavigate: (nav: NavSection) => void;
+  onToast?: (variant: ToastVariant, message: string) => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
   workspace,
   selectedProjectId,
+  ownerId = null,
   onSelectProject,
   onSaveProject,
   onUpdateProjectStatus,
   onNavigate,
+  onToast,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'Active' | 'Completed' | 'Archived' | 'ALL'>('Active');
   const [editingProject, setEditingProject] = useState<ProductionProject | null>(null);
@@ -153,6 +158,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       <ProjectProductionSummaryModal
         workspace={workspace}
         project={summaryProject}
+        ownerId={ownerId}
+        onToast={onToast}
         onClose={() => setSummaryProjectId(null)}
       />
     );

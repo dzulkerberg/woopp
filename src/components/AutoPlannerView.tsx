@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, RotateCcw, Store } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, RotateCcw, Store } from 'lucide-react';
 import {
   ABC,
   CHARM_BY_ID,
@@ -20,12 +20,14 @@ import {
 } from '../constants';
 import {
   AlphabetPreset,
+  Bambu3mfExportProgressEvent,
   CatalogProduct,
   CategoryPlateSetting,
   CharmId,
   CharmsMap,
   ColorOption,
   LettersMap,
+  Master3mfTemplateAsset,
   PlannerPreselection,
   PlateGenerationMode,
   ProductCategory,
@@ -43,8 +45,20 @@ import {
   DraftPlatePreview,
   inferPlateMode,
 } from '../utils/productionEngine';
+import { useMaster3mfTemplate } from '../services/useMaster3mfTemplate';
+import {
+  PlateIdRegistryAdapter,
+  reservePlateCodesForPreviewPlates,
+} from '../services/plateIdService';
+import { useStlModelLibrary } from '../services/useStlModelLibrary';
+import { generateStableBatchId, normalizePlateCode } from '../utils/plateIdGenerator';
+import {
+  exportBatchPlates3mfAction,
+  exportSinglePlate3mfAction,
+} from '../utils/platePreviewHelper';
 import { CatalogCategoryPlannerSection } from './CatalogCategoryPlannerSection';
 import { DurationHMInput } from './DurationHMInput';
+import { ToastVariant } from './ToastStack';
 
 type PlannerWorkflowId = 'builtin:alphabet' | 'builtin:charm' | `catalog:${string}`;
 
@@ -70,6 +84,7 @@ export interface AutoPlannerViewProps {
     requestedBatchLetters?: LettersMap;
     requestedBatchCharms?: CharmsMap;
     confirmedPlates: BuiltInStagedPlate[];
+    batchId?: string | null;
     splitByColor?: boolean;
     preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
@@ -93,6 +108,7 @@ export interface AutoPlannerViewProps {
     colorId?: string | null;
     category: ProductCategory;
     confirmedPlates: DraftCatalogPlatePreview[];
+    batchId?: string | null;
     splitByColor?: boolean;
     requestedQuantity?: number;
     requestedVariations?: ProductionBatchVariationSnapshot[];
@@ -100,6 +116,12 @@ export interface AutoPlannerViewProps {
   }) => Promise<void | boolean> | void;
   onOpenProductStudio?: () => void;
   onAlert: (msg: string, title?: string) => void;
+  onToast?: (variant: ToastVariant, message: string) => void;
+  plateIdRegistry?: PlateIdRegistryAdapter;
+  getMaster3mfAssetOverride?: () => Promise<Master3mfTemplateAsset | null>;
+  isAdmin?: boolean;
+  ownerId?: string | null;
+  actorEmail?: string | null;
 }
 
 export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
@@ -119,6 +141,11 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
   onCommitCatalogPlates,
   onOpenProductStudio,
   onAlert,
+  onToast,
+  plateIdRegistry,
+  getMaster3mfAssetOverride,
+  ownerId = null,
+  actorEmail = null,
 }) => {
   const activeProjects = workspace.projects.filter((p) => p.status !== 'Archived');
   const currentProject =
@@ -173,11 +200,28 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
 
   // Staging area for manual adjustment & per-plate filament color before confirming Built-in plates
   const [stagedPlates, setStagedPlates] = useState<BuiltInStagedPlate[] | null>(null);
+  const [stagedBatchId, setStagedBatchId] = useState<string | null>(null);
   const [remainderMode, setRemainderMode] = useState<'carry_forward' | 'partial_plate'>(
     'carry_forward'
   );
   const [hasAttemptedBuiltInConfirm, setHasAttemptedBuiltInConfirm] = useState<boolean>(false);
   const [isBuiltInConfirming, setIsBuiltInConfirming] = useState<boolean>(false);
+
+  const [exportingPlateTempIds, setExportingPlateTempIds] = useState<Record<string, boolean>>({});
+  const [isBatchExporting3mf, setIsBatchExporting3mf] = useState<boolean>(false);
+  const [batch3mfProgress, setBatch3mfProgress] =
+    useState<Bambu3mfExportProgressEvent | null>(null);
+  const previewReservationPromiseRef = useRef<Promise<Record<string, string>> | null>(null);
+  const stlLibrary = useStlModelLibrary(
+    ownerId || workspace.ownerId,
+    actorEmail
+  );
+  const master3mf = useMaster3mfTemplate(
+    ownerId || workspace.ownerId,
+    actorEmail
+  );
+  const resolveMaster3mfAsset =
+    getMaster3mfAssetOverride || master3mf.getMaster3mfAsset;
 
   const prevProjectIdRef = useRef<string>('');
 
@@ -188,6 +232,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     setSelectedWorkflow(`catalog:${plannerPreselection.categoryId}`);
     setHighlightedProductId(plannerPreselection.productId || null);
     setStagedPlates(null);
+    setStagedBatchId(null);
     setHasAttemptedBuiltInConfirm(false);
     onConsumePreselection?.();
   }, [plannerPreselection, onConsumePreselection]);
@@ -200,6 +245,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
       setPlateCapacity(currentProject.plateCapacity || DEFAULT_PLATE_CAPACITY);
       setCarryIncludedColorId(null);
       setStagedPlates(null);
+      setStagedBatchId(null);
       setHasAttemptedBuiltInConfirm(false);
     }
   }, [currentProject]);
@@ -331,6 +377,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     setCarryIncludedColorId(null);
     setHighlightedProductId(null);
     setStagedPlates(null);
+    setStagedBatchId(null);
     setHasAttemptedBuiltInConfirm(false);
     setResetSignal((n) => n + 1);
   };
@@ -339,6 +386,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     const val = Math.max(0, Math.floor(Number(rawVal) || 0));
     setDraftLetters((prev) => ({ ...prev, [letter]: val }));
     setStagedPlates(null);
+    setStagedBatchId(null);
     setHasAttemptedBuiltInConfirm(false);
   };
 
@@ -346,6 +394,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     const safeVal = Math.max(0, Math.floor(Number.isFinite(nextVal) ? nextVal : 0));
     setDraftCharms((prev) => ({ ...prev, [charmId]: safeVal }));
     setStagedPlates(null);
+    setStagedBatchId(null);
     setHasAttemptedBuiltInConfirm(false);
   };
 
@@ -487,10 +536,181 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     setHasAttemptedBuiltInConfirm(false);
     if (previewList.length === 0 && mode === 'carry_forward') {
       setStagedPlates([]);
+      setStagedBatchId(null);
       return;
     }
 
+    const nextBatchId = generateStableBatchId();
+    setStagedBatchId(nextBatchId);
     setStagedPlates(previewList);
+
+    const effectiveOwnerId = (ownerId || workspace.ownerId || 'local-operator').trim();
+    const reservePromise = reservePlateCodesForPreviewPlates({
+      plates: previewList,
+      ownerId: effectiveOwnerId,
+      projectId: currentProject.id,
+      batchId: nextBatchId,
+      existingJobs: workspace.jobs,
+      registry: plateIdRegistry,
+    })
+      .then((reservedPlates) => {
+        const codeByTempId: Record<string, string> = {};
+        for (const rp of reservedPlates) {
+          codeByTempId[rp.tempId] = rp.plateCode;
+        }
+        setStagedPlates((prev) =>
+          prev
+            ? prev.map((p) =>
+                codeByTempId[p.tempId] ? { ...p, plateCode: codeByTempId[p.tempId] } : p
+              )
+            : null
+        );
+        return codeByTempId;
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        onToast?.('error', `Unable to reserve Plate IDs: ${msg}`);
+        return {} as Record<string, string>;
+      });
+
+    previewReservationPromiseRef.current = reservePromise;
+  };
+
+  const ensureSingleBuiltInPlateCode = async (
+    plate: BuiltInStagedPlate
+  ): Promise<string> => {
+    const existing = normalizePlateCode(plate.plateCode);
+    if (existing) return existing;
+    if (previewReservationPromiseRef.current) {
+      const codeMap = await previewReservationPromiseRef.current;
+      const fromInFlight = normalizePlateCode(codeMap[plate.tempId]);
+      if (fromInFlight) return fromInFlight;
+    }
+    const effectiveOwnerId = (ownerId || workspace.ownerId || 'local-operator').trim();
+    const [reserved] = await reservePlateCodesForPreviewPlates({
+      plates: [plate],
+      ownerId: effectiveOwnerId,
+      projectId: currentProject.id,
+      batchId: stagedBatchId || undefined,
+      existingJobs: workspace.jobs,
+      registry: plateIdRegistry,
+    });
+    setStagedPlates((prev) =>
+      prev
+        ? prev.map((p) =>
+            p.tempId === plate.tempId ? { ...p, plateCode: reserved.plateCode } : p
+          )
+        : null
+    );
+    return reserved.plateCode;
+  };
+
+  const handleExportBuiltInPlate3mf = async (plate: BuiltInStagedPlate) => {
+    if (exportingPlateTempIds[plate.tempId] || isBatchExporting3mf) return;
+    setExportingPlateTempIds((prev) => ({ ...prev, [plate.tempId]: true }));
+    try {
+      const matchedColor = workspace.colors.find((c) => c.id === plate.colorId);
+      await exportSinglePlate3mfAction({
+        plateNumber: plate.plateNumber,
+        plateCode: plate.plateCode,
+        capacity: plate.capacity,
+        letters: plate.letters,
+        colorId: matchedColor?.id || plate.colorId || null,
+        colorName: matchedColor?.name || null,
+        colorHex: matchedColor?.hex || null,
+        productName: currentProject.productType || 'Alphabet Keycaps A–Z',
+        projectName: currentProject.name,
+        getMaster3mfAsset: resolveMaster3mfAsset,
+        ensurePlateCode: () => ensureSingleBuiltInPlateCode(plate),
+        onToast,
+      });
+    } finally {
+      setExportingPlateTempIds((prev) => {
+        const next = { ...prev };
+        delete next[plate.tempId];
+        return next;
+      });
+    }
+  };
+
+  const handleExportBuiltInBatch3mf = async () => {
+    if (!stagedPlates || stagedPlates.length === 0 || isBatchExporting3mf) return;
+    setIsBatchExporting3mf(true);
+    setBatch3mfProgress({
+      phase: 'loading_master',
+      completedPlates: 0,
+      totalPlates: stagedPlates.length,
+      percent: 5,
+      message: 'Preparing multi-plate Bambu Studio .3MF export...',
+    });
+
+    try {
+      const effectiveBatchId = stagedBatchId || generateStableBatchId();
+      if (!stagedBatchId) {
+        setStagedBatchId(effectiveBatchId);
+      }
+
+      await exportBatchPlates3mfAction({
+        batchId: effectiveBatchId,
+        plates: stagedPlates.map((p) => {
+          const matchedColor = workspace.colors.find((c) => c.id === p.colorId);
+          return {
+            tempId: p.tempId,
+            plateNumber: p.plateNumber,
+            plateCode: p.plateCode,
+            capacity: p.capacity,
+            letters: p.letters,
+            colorId: matchedColor?.id || p.colorId || null,
+            colorName: matchedColor?.name || null,
+            colorHex: matchedColor?.hex || null,
+            productName: currentProject.productType || 'Alphabet Keycaps A–Z',
+          };
+        }),
+        projectName: currentProject.name,
+        getMaster3mfAsset: resolveMaster3mfAsset,
+        ensureAllPlateCodes: async () => {
+          const codeMap: Record<string, string> = previewReservationPromiseRef.current
+            ? { ...(await previewReservationPromiseRef.current) }
+            : {};
+          const missing = stagedPlates.filter(
+            (p) => !normalizePlateCode(p.plateCode) && !normalizePlateCode(codeMap[p.tempId])
+          );
+          if (missing.length > 0) {
+            const effectiveOwnerId = (
+              ownerId ||
+              workspace.ownerId ||
+              'local-operator'
+            ).trim();
+            const reserved = await reservePlateCodesForPreviewPlates({
+              plates: missing,
+              ownerId: effectiveOwnerId,
+              projectId: currentProject.id,
+              batchId: effectiveBatchId,
+              existingJobs: workspace.jobs,
+              registry: plateIdRegistry,
+            });
+            for (const rp of reserved) {
+              codeMap[rp.tempId] = rp.plateCode;
+            }
+          }
+          setStagedPlates((prev) =>
+            prev
+              ? prev.map((p) =>
+                  codeMap[p.tempId] && !normalizePlateCode(p.plateCode)
+                    ? { ...p, plateCode: codeMap[p.tempId] }
+                    : p
+                )
+              : null
+          );
+          return codeMap;
+        },
+        onProgress: (ev) => setBatch3mfProgress(ev),
+        onToast,
+      });
+    } finally {
+      setIsBatchExporting3mf(false);
+      setBatch3mfProgress(null);
+    }
   };
 
   const handleAssignBuiltInPlateColor = (tempId: string, colorIdRaw: string) => {
@@ -791,6 +1011,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           requestedBatchCharms:
             builtInMode === 'charm_only' ? compactCharmsMap(draftCharms) : undefined,
           confirmedPlates: stagedPlates,
+          batchId: splitByColor ? undefined : stagedBatchId,
           splitByColor,
           preserveQueuedPlates: true,
           onSuccess: () => {
@@ -801,6 +1022,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             }
             setCarryIncludedColorId(null);
             setStagedPlates(null);
+            setStagedBatchId(null);
             setBuiltInBulkColorId('');
             setHasAttemptedBuiltInConfirm(false);
           },
@@ -1105,6 +1327,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               projectId: currentProject.id,
               category,
               confirmedPlates,
+              batchId: options?.batchId ?? null,
               splitByColor: options?.splitByColor,
               requestedQuantity: options?.requestedQuantity,
               requestedVariations: options?.requestedVariations,
@@ -1133,7 +1356,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           }
           onOpenProductStudio={onOpenProductStudio || (() => undefined)}
           onAlert={onAlert}
+          onToast={onToast}
+          ownerId={ownerId || workspace.ownerId}
+          plateIdRegistry={plateIdRegistry}
           resetSignal={resetSignal}
+          stlRecordsByLetter={stlLibrary.recordsByLetter}
+          getStlAssetsByLetters={stlLibrary.getAssetsByLetters}
+          getMaster3mfAsset={resolveMaster3mfAsset}
         />
       )}
 
@@ -1491,20 +1720,51 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
         <section className="bg-surface border-2 border-brand rounded-xl p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold text-ink">
-                Review &amp; Confirm Batch ({stagedPlates.length}{' '}
-                {stagedPlates.length === 1 ? 'plate' : 'plates'})
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-ink">
+                  Review &amp; Confirm Batch ({stagedPlates.length}{' '}
+                  {stagedPlates.length === 1 ? 'plate' : 'plates'})
+                </h3>
+                {stagedBatchId && (
+                  <span
+                    data-testid="staged-batch-id-label"
+                    className="text-[11px] font-mono-data text-muted"
+                  >
+                    · {stagedBatchId}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted mt-0.5">
                 One batch requires <b className="text-ink">1 Product + 1 Filament Color</b> (max {plateCapacity} pcs/plate). Apply one Filament Color across all plates below or split mixed colors explicitly.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
+              {builtInMode === 'alphabet_only' && stagedPlates.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="export-all-plates-3mf"
+                  disabled={isBatchExporting3mf || isBuiltInConfirming}
+                  onClick={() => void handleExportBuiltInBatch3mf()}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text disabled:opacity-50 whitespace-nowrap transition-colors cursor-pointer"
+                >
+                  {isBatchExporting3mf ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isBatchExporting3mf
+                      ? 'Exporting .3MF...'
+                      : 'Export All Plates (.3MF)'}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
-                disabled={isBuiltInConfirming}
+                disabled={isBuiltInConfirming || isBatchExporting3mf}
                 onClick={() => {
                   setStagedPlates(null);
+                  setStagedBatchId(null);
                   setBuiltInBulkColorId('');
                   setHasAttemptedBuiltInConfirm(false);
                 }}
@@ -1514,7 +1774,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isBuiltInConfirming || hasBuiltInColorConflict}
+                disabled={isBuiltInConfirming || hasBuiltInColorConflict || isBatchExporting3mf}
                 onClick={() => void handleConfirmAndSavePlates(false)}
                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white whitespace-nowrap transition-colors"
               >
@@ -1522,6 +1782,29 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
               </button>
             </div>
           </div>
+
+          {isBatchExporting3mf && batch3mfProgress && (
+            <div
+              data-testid="batch-3mf-export-progress"
+              className="p-3 rounded-xl border border-brand-border bg-brand-soft/60 space-y-1.5"
+            >
+              <div className="flex items-center justify-between gap-2 text-xs text-ink">
+                <span className="font-medium flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-text shrink-0" />
+                  <span>{batch3mfProgress.message}</span>
+                </span>
+                <span className="font-mono-data font-bold text-brand-text">
+                  {batch3mfProgress.percent}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-recessed overflow-hidden">
+                <div
+                  className="h-full bg-brand transition-all duration-200"
+                  style={{ width: `${Math.min(100, Math.max(5, batch3mfProgress.percent))}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {stagedPlates.length > 1 && (
             <div className="p-3 rounded-xl border border-line bg-recessed flex flex-wrap items-center justify-between gap-3">
@@ -1655,6 +1938,9 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                       (!plate.colorId || !workspace.colors.some((c) => c.id === plate.colorId))
                     }
                     visibleErrors={visibleErrors}
+                    isExporting3mf={
+                      Boolean(exportingPlateTempIds[plate.tempId]) || isBatchExporting3mf
+                    }
                     onSelectColor={handleAssignBuiltInPlateColor}
                     onAdjustLetter={handleAdjustStagedPlateLetter}
                     onAdjustCharm={handleAdjustStagedPlateCharm}
@@ -1662,6 +1948,7 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
                     onAddCharm={handleAddCharmToStagedPlate}
                     onToggleVerified={handleToggleStagedSlicerVerified}
                     onChangeDuration={handleAdjustStagedDuration}
+                    onExport3mf={() => void handleExportBuiltInPlate3mf(plate)}
                   />
                 );
               })}
@@ -1681,6 +1968,7 @@ interface StagedPlateEditorCardProps {
   overCap: boolean;
   missingColorError: boolean;
   visibleErrors: string[];
+  isExporting3mf?: boolean;
   onSelectColor: (tempId: string, colorId: string) => void;
   onAdjustLetter: (tempId: string, letter: string, val: string) => void;
   onAdjustCharm: (tempId: string, charmId: CharmId, val: string) => void;
@@ -1688,6 +1976,7 @@ interface StagedPlateEditorCardProps {
   onAddCharm: (tempId: string, charmId: CharmId) => void;
   onToggleVerified: (tempId: string) => void;
   onChangeDuration: (tempId: string, minutes: number) => void;
+  onExport3mf?: () => void;
 }
 
 const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
@@ -1698,6 +1987,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
   overCap,
   missingColorError,
   visibleErrors,
+  isExporting3mf = false,
   onSelectColor,
   onAdjustLetter,
   onAdjustCharm,
@@ -1705,6 +1995,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
   onAddCharm,
   onToggleVerified,
   onChangeDuration,
+  onExport3mf,
 }) => {
   const [letterToAdd, setLetterToAdd] = useState('A');
   const [charmToAdd, setCharmToAdd] = useState<CharmId>('CHARM_LOVE');
@@ -1721,6 +2012,7 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
   const modeBadgeLabel = builtInMode === 'charm_only' ? 'Charm' : 'Alphabet';
   const plateColorObj = workspaceColors.find((c) => c.id === plate.colorId);
   const hasCardError = overCap || visibleErrors.length > 0;
+  const cleanPlateCode = normalizePlateCode(plate.plateCode);
 
   return (
     <div
@@ -1732,12 +2024,18 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
       }`}
     >
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-ink">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-ink whitespace-nowrap">
             Plate {plate.plateNumber}
           </span>
-          <span className="text-[10px] font-semibold text-brand-text">
+          <span className="text-[10px] font-semibold text-brand-text whitespace-nowrap">
             · {modeBadgeLabel}
+          </span>
+          <span
+            data-testid={`staged-plate-code-${plate.plateNumber}`}
+            className="text-[11px] font-mono-data text-muted whitespace-nowrap"
+          >
+            {cleanPlateCode ? `WP-${cleanPlateCode}` : 'WP-·····'}
           </span>
         </div>
         <span
@@ -1931,14 +2229,32 @@ const StagedPlateEditorCard: React.FC<StagedPlateEditorCardProps> = ({
           )}
         </div>
 
-        <label className="flex items-center gap-1.5 text-[11px] text-ink-secondary cursor-pointer">
-          <input
-            type="checkbox"
-            checked={plate.slicerVerified}
-            onChange={() => onToggleVerified(plate.tempId)}
-          />
-          <span>Physical bed fit verified in Bambu Studio</span>
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <label className="flex items-center gap-1.5 text-[11px] text-ink-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={plate.slicerVerified}
+              onChange={() => onToggleVerified(plate.tempId)}
+            />
+            <span>Physical bed fit verified in Bambu Studio</span>
+          </label>
+          {builtInMode === 'alphabet_only' && onExport3mf && (
+            <button
+              type="button"
+              disabled={isExporting3mf || countLetters(plate.letters) === 0}
+              onClick={onExport3mf}
+              data-testid={`export-3mf-plate-${plate.plateNumber}`}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line bg-surface hover:bg-recessed text-[11px] font-semibold text-ink disabled:opacity-45 whitespace-nowrap transition-colors cursor-pointer"
+            >
+              {isExporting3mf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-text" />
+              ) : (
+                <Download className="w-3.5 h-3.5 text-brand-text" />
+              )}
+              <span>{isExporting3mf ? 'Exporting...' : 'Export 3MF'}</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

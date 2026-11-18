@@ -31,6 +31,11 @@ service cloud.firestore {
         sku.matches('^WOOPP-[A-Z0-9]{8}$');
     }
 
+    function isValidPlateCode(code) {
+      return code is string &&
+        code.matches('^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{5}$');
+    }
+
     // Strict HTTPS external image URL validation (Google RE2 linear-time bounded regex):
     // - Rejects data: base64 URIs, http://, blob:, relative paths, whitespace, hostless URLs, and >2048 chars.
     // - Bounded domain labels ({1,63}, max 7 labels) + optional port + bounded path/query ({0,980}{0,980})
@@ -635,6 +640,31 @@ service cloud.firestore {
         isValidIsoTimestampString(data.updatedAt);
     }
 
+    // Globally Unique Plate ID Reservation Blueprint (zero PII)
+    function isValidPlateIdReservation(data, uid, code) {
+      return data.keys().hasAll([
+          'plateCode',
+          'ownerId',
+          'projectId',
+          'batchId',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'plateCode',
+          'ownerId',
+          'projectId',
+          'batchId',
+          'createdAt'
+        ]) &&
+        isValidPlateCode(data.plateCode) &&
+        data.plateCode == code &&
+        isValidId(data.ownerId) &&
+        data.ownerId == uid &&
+        isValidId(data.projectId) &&
+        (data.batchId == null || isValidId(data.batchId)) &&
+        isValidIsoTimestampString(data.createdAt);
+    }
+
     // -------------------------------------------------------------------------
     // Preserved Production Document Paths
     // -------------------------------------------------------------------------
@@ -778,6 +808,21 @@ service cloud.firestore {
           'updatedAt'
         ]);
       allow delete: if false;
+    }
+
+    // Globally Unique Immutable Plate ID Registry: plateIds/{plateCode}
+    match /plateIds/{plateCode} {
+      allow get: if request.auth != null &&
+        isNonAnonToken(request.auth.token) &&
+        isValidPlateCode(plateCode);
+      allow list: if false;
+      allow create: if resource == null &&
+        request.auth != null &&
+        isNonAnonToken(request.auth.token) &&
+        isValidId(request.auth.uid) &&
+        isValidPlateCode(plateCode) &&
+        isValidPlateIdReservation(incoming(), request.auth.uid, plateCode);
+      allow update, delete: if false;
     }
   }
 }

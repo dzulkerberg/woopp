@@ -2757,4 +2757,114 @@ describe('WOOPP 6.0 Hardened Firestore Security Rules & Query Compliance Suite',
     expect(formSource).not.toMatch(/defaultEstimatedMinutes/i);
     expect(vi).toBeDefined();
   });
+
+  it('12. enforces global uniqueness, 5-char unambiguous format, zero PII, no listing, and immutability on /plateIds/{plateCode}', () => {
+    const validReservation = {
+      plateCode: 'K7M2Q',
+      ownerId: OWNER_UID,
+      projectId: 'proj-01',
+      batchId: 'batch-123',
+      createdAt: NOW_ISO,
+    };
+
+    // Valid reservation create succeeds
+    const created = evaluateSingleRequest(compiledRules, {
+      op: 'create',
+      path: '/plateIds/K7M2Q',
+      auth: OWNER_AUTH,
+      requestData: validReservation,
+      preStore: {},
+    });
+    expect(created.allowed, created.denialReason).toBe(true);
+    const storeWithPlate = {
+      '/plateIds/K7M2Q': validReservation,
+    };
+
+    // Single-doc get succeeds for signed-in non-anon operator checking uniqueness
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'get',
+        path: '/plateIds/K7M2Q',
+        auth: OWNER_AUTH,
+        preStore: storeWithPlate,
+      }).allowed
+    ).toBe(true);
+
+    // Collection list/enumeration is strictly denied
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'list',
+        path: '/plateIds/K7M2Q',
+        auth: OWNER_AUTH,
+        preStore: storeWithPlate,
+      }).allowed
+    ).toBe(false);
+
+    // Duplicate create on an already-reserved plateCode is strictly blocked (even across users/projects)
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'create',
+        path: '/plateIds/K7M2Q',
+        auth: OTHER_AUTH,
+        requestData: {
+          ...validReservation,
+          ownerId: OTHER_UID,
+          projectId: 'proj-other',
+        },
+        preStore: storeWithPlate,
+      }).allowed
+    ).toBe(false);
+
+    // Immutable: update & delete strictly blocked
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'update',
+        path: '/plateIds/K7M2Q',
+        auth: OWNER_AUTH,
+        requestData: { ...validReservation, batchId: 'batch-edited' },
+        preStore: storeWithPlate,
+      }).allowed
+    ).toBe(false);
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'delete',
+        path: '/plateIds/K7M2Q',
+        auth: OWNER_AUTH,
+        preStore: storeWithPlate,
+      }).allowed
+    ).toBe(false);
+
+    // Reject visually ambiguous characters O, 0, I, 1, lowercase, and wrong lengths
+    for (const badCode of ['K7O2Q', 'K702Q', 'K7I2Q', 'K712Q', 'k7m2q', 'ABCD', 'ABCDEF']) {
+      expect(
+        evaluateSingleRequest(compiledRules, {
+          op: 'create',
+          path: `/plateIds/${badCode}`,
+          auth: OWNER_AUTH,
+          requestData: { ...validReservation, plateCode: badCode },
+          preStore: {},
+        }).allowed
+      ).toBe(false);
+    }
+
+    // Reject extra fields / PII or spoofed ownerId
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'create',
+        path: '/plateIds/R4T9P',
+        auth: OWNER_AUTH,
+        requestData: { ...validReservation, plateCode: 'R4T9P', email: 'test@example.com' },
+        preStore: {},
+      }).allowed
+    ).toBe(false);
+    expect(
+      evaluateSingleRequest(compiledRules, {
+        op: 'create',
+        path: '/plateIds/R4T9P',
+        auth: OTHER_AUTH,
+        requestData: { ...validReservation, plateCode: 'R4T9P', ownerId: OWNER_UID },
+        preStore: {},
+      }).allowed
+    ).toBe(false);
+  });
 });

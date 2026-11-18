@@ -6,6 +6,7 @@ import {
   resolveCompletedTimestampLabel,
 } from '../utils/completedPlateUtils';
 import { MALAYSIA_TIMEZONE } from '../utils/dateFormat';
+import { normalizePlateCode } from '../utils/plateIdGenerator';
 
 const COMPACT_CHIP_LIMIT = 8;
 
@@ -159,6 +160,11 @@ export const CompletedPlateExpandedDetails: React.FC<CompletedPlateExpandedDetai
           <span className="text-muted">Plate</span>
           <span className="font-mono-data font-semibold text-ink">
             Plate {job.plateNumber}
+            {normalizePlateCode(job.plateCode) && (
+              <span className="text-muted font-normal ml-1.5">
+                · WP-{normalizePlateCode(job.plateCode)}
+              </span>
+            )}
           </span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">

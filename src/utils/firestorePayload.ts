@@ -13,6 +13,7 @@ import {
   PRIORITIES,
   SALES_CHANNELS,
 } from '../constants';
+import { normalizePlateCode } from './plateIdGenerator';
 import {
   ActivityLogEntry,
   AlphabetPreset,
@@ -953,6 +954,21 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
       joinPath(path, 'completedIso')
     ),
   };
+
+  if (job.plateCode !== undefined) {
+    if (job.plateCode === null) {
+      normalized.plateCode = null;
+    } else {
+      const cleanPlateCode = normalizePlateCode(job.plateCode);
+      if (!cleanPlateCode) {
+        throw new FirestorePayloadValidationError(
+          joinPath(path, 'plateCode'),
+          `Invalid Plate ID "${String(job.plateCode)}"; expected 5 uppercase alphanumeric chars excluding O, 0, I, 1.`
+        );
+      }
+      normalized.plateCode = cleanPlateCode;
+    }
+  }
 
   if (job.charms !== undefined) {
     const cleanedCharms = validateCharmsMap(job.charms, joinPath(path, 'charms'));

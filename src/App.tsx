@@ -104,6 +104,7 @@ import { InventoryView } from './components/InventoryView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { SettingsView } from './components/SettingsView';
 import { DialogModal, ModalConfig } from './components/DialogModal';
+import { ToastMessage, ToastStack, ToastVariant } from './components/ToastStack';
 import {
   BulkQueueActionKind,
   BulkQueueActionModal,
@@ -111,6 +112,11 @@ import {
   DeletePlateConfirmModal,
 } from './components/QueueLifecycleModals';
 import { ProductStudioView } from './components/product-studio/ProductStudioView';
+import {
+  backfillMissingJobPlateCodes,
+  ensureJobsHavePlateCodes,
+} from './services/plateIdService';
+import { isValidPlateCode } from './utils/plateIdGenerator';
 import {
   ProductStudioRealtimeSnapshot,
   saveCategoryPlateSettingToFirestore,
@@ -170,6 +176,22 @@ export const App: React.FC = () => {
   const [isLifecycleSaving, setIsLifecycleSaving] = useState<boolean>(false);
   const [busyJobIds, setBusyJobIds] = useState<Set<string>>(() => new Set());
   const busyJobIdsRef = useRef<Set<string>>(new Set());
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const plateCodeBackfillDoneUidRef = useRef<string | null>(null);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const addToast = useCallback((variant: ToastVariant, message: string) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((prev) => [...prev.slice(-4), { id, variant, message }]);
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 6500);
+    }
+  }, []);
 
   const v5Ref = useRef<DocumentReference | null>(null);
   const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -669,6 +691,47 @@ export const App: React.FC = () => {
     };
   }, [connectionAttempt]);
 
+  // One-time non-destructive Plate ID backfill for pre-existing saved jobs lacking a valid 5-char plateCode
+  useEffect(() => {
+    if (!ready || !user) {
+      if (!user) {
+        plateCodeBackfillDoneUidRef.current = null;
+      }
+      return;
+    }
+    if (plateCodeBackfillDoneUidRef.current === user.uid) {
+      return;
+    }
+    const currentWs = latestWorkspaceRef.current;
+    const needsBackfill = currentWs.jobs.some((j) => !isValidPlateCode(j.plateCode));
+    plateCodeBackfillDoneUidRef.current = user.uid;
+    if (!needsBackfill) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await backfillMissingJobPlateCodes(currentWs, user.uid);
+        if (cancelled || !res.changed) return;
+        await persistWorkspace({
+          ...latestWorkspaceRef.current,
+          jobs: latestWorkspaceRef.current.jobs.map((existingJob) => {
+            if (isValidPlateCode(existingJob.plateCode)) return existingJob;
+            const matched = res.workspace.jobs.find((b) => b.id === existingJob.id);
+            return matched ? { ...existingJob, plateCode: matched.plateCode } : existingJob;
+          }),
+        });
+      } catch (err) {
+        console.warn('[WOOPP Plate ID Backfill]', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, user, persistWorkspace]);
+
   const handleSignOut = async () => {
     await signOut(auth);
   };
@@ -773,6 +836,7 @@ export const App: React.FC = () => {
     requestedBatchLetters?: LettersMap;
     requestedBatchCharms?: CharmsMap;
     confirmedPlates: (DraftPlatePreview & { colorId?: string | null })[];
+    batchId?: string | null;
     splitByColor?: boolean;
     preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
@@ -866,6 +930,7 @@ export const App: React.FC = () => {
         requestedBatchCharms:
           platesByColor.size === 1 ? params.requestedBatchCharms : undefined,
         confirmedPlates: groupPlates,
+        batchId: platesByColor.size === 1 ? params.batchId : undefined,
         preserveQueuedPlates: params.preserveQueuedPlates,
         nowMs: nowMs + groupIndex * 100,
       });
@@ -881,6 +946,16 @@ export const App: React.FC = () => {
       workingWs = res.nextWorkspace;
       allCreatedJobs.push(...res.createdJobs);
       groupIndex += 1;
+    }
+
+    if (user && allCreatedJobs.some((j) => !isValidPlateCode(j.plateCode))) {
+      const guaranteed = await ensureJobsHavePlateCodes({
+        jobs: workingWs.jobs,
+        ownerId: user.uid,
+      });
+      if (guaranteed.assignedCount > 0) {
+        workingWs = { ...workingWs, jobs: guaranteed.jobs };
+      }
     }
 
     const carryCount =
@@ -948,6 +1023,7 @@ export const App: React.FC = () => {
       category: ProductCategory;
       confirmedPlates: DraftCatalogPlatePreview[];
       splitByColor?: boolean;
+      batchId?: string | null;
       requestedQuantity?: number;
       requestedVariations?: readonly ProductionBatchVariationSnapshot[];
       onSuccess?: () => void;
@@ -971,6 +1047,7 @@ export const App: React.FC = () => {
             category: params.category,
             products: catalogSnapshot.products,
             confirmedPlates: params.confirmedPlates,
+            batchId: params.batchId ?? null,
             requestedQuantity: params.requestedQuantity,
             requestedVariations: params.requestedVariations,
             nowMs,
@@ -989,7 +1066,18 @@ export const App: React.FC = () => {
         0
       );
 
-      const saved = await persistWorkspace(result.nextWorkspace);
+      let nextWsToSave = result.nextWorkspace;
+      if (user && result.createdJobs.some((j) => !isValidPlateCode(j.plateCode))) {
+        const guaranteed = await ensureJobsHavePlateCodes({
+          jobs: nextWsToSave.jobs,
+          ownerId: user.uid,
+        });
+        if (guaranteed.assignedCount > 0) {
+          nextWsToSave = { ...nextWsToSave, jobs: guaranteed.jobs };
+        }
+      }
+
+      const saved = await persistWorkspace(nextWsToSave);
       if (saved) {
         params.onSuccess?.();
         const batchSummaryText =
@@ -1004,7 +1092,7 @@ export const App: React.FC = () => {
       }
       return false;
     },
-    [catalogSnapshot.products, getAuthoritativeNowMs, persistWorkspace, showAlert]
+    [catalogSnapshot.products, getAuthoritativeNowMs, persistWorkspace, showAlert, user]
   );
 
   const handleClearCarryForward = useCallback(
@@ -2049,10 +2137,12 @@ export const App: React.FC = () => {
             <ProjectsView
               workspace={workspace}
               selectedProjectId={selectedProjectId}
+              ownerId={user.uid}
               onSelectProject={setSelectedProjectId}
               onSaveProject={handleSaveProject}
               onUpdateProjectStatus={handleUpdateProjectStatus}
               onNavigate={handleNavigate}
+              onToast={addToast}
             />
           )}
 
@@ -2075,6 +2165,9 @@ export const App: React.FC = () => {
             <AutoPlannerView
               workspace={workspace}
               selectedProjectId={selectedProjectId}
+              isAdmin={isAdmin}
+              ownerId={user.uid}
+              actorEmail={user.email}
               onSelectProject={setSelectedProjectId}
               onSavePreset={handleSavePreset}
               onDeletePreset={handleDeletePreset}
@@ -2089,6 +2182,7 @@ export const App: React.FC = () => {
               onCommitCatalogPlates={handleCommitCatalogPlates}
               onOpenProductStudio={() => handleNavigate('product-studio')}
               onAlert={showAlert}
+              onToast={addToast}
             />
           )}
 
@@ -2099,6 +2193,7 @@ export const App: React.FC = () => {
               selectedProjectId={selectedProjectId}
               isAdmin={isAdmin}
               busyJobIds={busyJobIds}
+              ownerId={user.uid}
               onSelectProject={setSelectedProjectId}
               onTransitionStage={handleTransitionStage}
               onPauseOrResume={handlePauseOrResume}
@@ -2110,6 +2205,7 @@ export const App: React.FC = () => {
               onArchivePlate={handleArchivePlate}
               onRestorePlate={handleRestorePlate}
               onRequestBulkAction={handleRequestBulkAction}
+              onToast={addToast}
             />
           )}
 
@@ -2144,6 +2240,9 @@ export const App: React.FC = () => {
           {activeNav === 'settings' && (
             <SettingsView
               workspace={workspace}
+              isAdmin={isAdmin}
+              ownerId={user.uid}
+              actorEmail={user.email}
               onUpdateWorkspaceDefaults={handleUpdateWorkspaceDefaults}
               onAddColor={handleAddColor}
               onRenameColor={handleRenameColor}
@@ -2210,6 +2309,7 @@ export const App: React.FC = () => {
       />
 
       <DialogModal modal={modal} />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 };
