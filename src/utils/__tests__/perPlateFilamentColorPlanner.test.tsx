@@ -18,10 +18,12 @@ import {
   ProductionWorkspaceV5,
 } from '../../types';
 import {
+  applyColorToAllCatalogPlates,
   assignColorToDraftCatalogPlate,
   buildCatalogSelectionKey,
   buildPlannerProductInputModel,
   COLOR_AGNOSTIC_BASE_ITEM_ID,
+  commitCatalogPlatesSplitByColor,
   commitCatalogPlatesToWorkspace,
   DraftCatalogPlatePreview,
   generateAutomaticCatalogPlatePreviews,
@@ -368,7 +370,7 @@ describe('WOOPP 6.0 — Per-Plate Filament Color Selection & Single Category Sel
     }
   });
 
-  it('5. Assigning different colors across 4 plates (Matcha Pink, Lemon Yellow, Black, Purple) succeeds cleanly with zero Color Mixing Blocked errors', () => {
+  it('5. Detects mixed colors across staged plates, blocks silent single-batch commit, and supports Apply Color to All Plates or explicit Split by Color', () => {
     const ws = makeTestWorkspace();
     const cat = makeCategories()[0];
     const baseV1 = makeBaseV1StandardProduct();
@@ -391,15 +393,24 @@ describe('WOOPP 6.0 — Per-Plate Filament Color Selection & Single Category Sel
       return assignColorToDraftCatalogPlate(plate, col, baseV1, ws.colors);
     });
 
+    // Mixed colors across draft plates flag explicit batch color conflict
     const validation = validateStagedCatalogPlatesBatch(assignedPlates, {
       category: cat,
       product: baseV1,
       workspaceColors: ws.colors,
     });
-    expect(validation.allValid).toBe(true);
     expect(validation.invalidPlateNumbers).toEqual([]);
+    expect(validation.hasColorConflict).toBe(true);
+    expect(validation.allValid).toBe(false);
+    expect(validation.distinctColorIds).toEqual([
+      'color-matcha-pink',
+      'color-lemon-yellow',
+      'color-black',
+      'color-purple',
+    ]);
 
-    const commitRes = commitCatalogPlatesToWorkspace(ws, {
+    // Default single-batch confirm MUST block silently splitting mixed colors
+    const blockedSingleCommit = commitCatalogPlatesToWorkspace(ws, {
       projectId: ws.projects[0].id,
       colorId: null,
       category: cat,
@@ -407,10 +418,53 @@ describe('WOOPP 6.0 — Per-Plate Filament Color Selection & Single Category Sel
       confirmedPlates: assignedPlates,
       nowMs: 1700000100000,
     });
+    expect(blockedSingleCommit.error).toMatch(/Batch color conflict/i);
+    expect(blockedSingleCommit.createdJobs).toBeUndefined();
 
-    expect(commitRes.error).toBeUndefined();
-    expect(commitRes.createdJobs).toHaveLength(4);
-    expect(commitRes.createdJobs!.map((j) => j.colorId)).toEqual([
+    // Resolution A: Apply Color to All Plates produces 1 homogeneous single-color batch
+    const purple = ws.colors.find((c) => c.name === 'Purple')!;
+    const unifiedPlates = applyColorToAllCatalogPlates(
+      assignedPlates,
+      purple,
+      baseV1,
+      ws.colors
+    );
+    const unifiedVal = validateStagedCatalogPlatesBatch(unifiedPlates, {
+      category: cat,
+      product: baseV1,
+      workspaceColors: ws.colors,
+    });
+    expect(unifiedVal.hasColorConflict).toBe(false);
+    expect(unifiedVal.allValid).toBe(true);
+
+    const unifiedCommit = commitCatalogPlatesToWorkspace(ws, {
+      projectId: ws.projects[0].id,
+      colorId: null,
+      category: cat,
+      products: [baseV1],
+      confirmedPlates: unifiedPlates,
+      nowMs: 1700000100000,
+    });
+    expect(unifiedCommit.error).toBeUndefined();
+    expect(unifiedCommit.createdJobs).toHaveLength(4);
+    expect(new Set(unifiedCommit.createdJobs!.map((j) => j.batchId)).size).toBe(1);
+    expect(unifiedCommit.createdJobs!.every((j) => j.colorId === 'color-purple')).toBe(
+      true
+    );
+
+    // Resolution B: Explicit Split & Confirm as Separate Batches by Color creates 4 isolated batches
+    const splitCommit = commitCatalogPlatesSplitByColor(ws, {
+      projectId: ws.projects[0].id,
+      category: cat,
+      products: [baseV1],
+      confirmedPlates: assignedPlates,
+      nowMs: 1700000200000,
+    });
+    expect(splitCommit.error).toBeUndefined();
+    expect(splitCommit.createdJobs).toHaveLength(4);
+    expect(splitCommit.batchIds).toHaveLength(4);
+    expect(new Set(splitCommit.batchIds).size).toBe(4);
+    expect(splitCommit.createdJobs!.map((j) => j.colorId)).toEqual([
       'color-matcha-pink',
       'color-lemon-yellow',
       'color-black',
@@ -826,7 +880,7 @@ describe('WOOPP 6.0 — Per-Plate Filament Color Selection & Single Category Sel
       slicerVerified: true,
     }));
 
-    const commitRes = commitCatalogPlatesToWorkspace(ws, {
+    const commitRes = commitCatalogPlatesSplitByColor(ws, {
       projectId: ws.projects[0].id,
       category: cat,
       products: [baseV1],

@@ -46,6 +46,7 @@ import {
   PlateGenerationMode,
   PrinterMachine,
   ProductCategory,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -116,6 +117,7 @@ import {
   subscribeToProductStudioCatalog,
 } from './services/productStudioService';
 import {
+  commitCatalogPlatesSplitByColor,
   commitCatalogPlatesToWorkspace,
   DraftCatalogPlatePreview,
 } from './utils/catalogPlannerEngine';
@@ -768,13 +770,16 @@ export const App: React.FC = () => {
     targetCharms: CharmsMap;
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
+    requestedBatchLetters?: LettersMap;
+    requestedBatchCharms?: CharmsMap;
     confirmedPlates: (DraftPlatePreview & { colorId?: string | null })[];
+    splitByColor?: boolean;
     preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
-  }) => {
+  }): Promise<boolean> => {
     const latestWs = latestWorkspaceRef.current;
     const project = latestWs.projects.find((p) => p.id === params.projectId);
-    if (!project) return;
+    if (!project) return false;
 
     const nowMs = getAuthoritativeNowMs();
 
@@ -787,7 +792,7 @@ export const App: React.FC = () => {
           `Plate ${plate.plateNumber} requires a valid physical Filament Color before saving to Print Queue.`,
           'Filament Color Required'
         );
-        return;
+        return false;
       }
       if (!platesByColor.has(cid)) platesByColor.set(cid, []);
       platesByColor.get(cid)!.push(plate);
@@ -799,7 +804,19 @@ export const App: React.FC = () => {
 
     if (platesByColor.size === 0) {
       showAlert('No plates or filament color selected to save.', 'Plate Generation Blocked');
-      return;
+      return false;
+    }
+
+    // Never silently split multi-color drafts into separate batches unless operator explicitly chose splitByColor
+    if (platesByColor.size > 1 && !params.splitByColor) {
+      const conflictNames = Array.from(platesByColor.keys())
+        .map((cid) => latestWs.colors.find((c) => c.id === cid)?.name || cid)
+        .join(', ');
+      showAlert(
+        `One Production Batch must use one physical Filament Color (currently mixed: ${conflictNames}). Apply one color to all plates in Preview, or explicitly choose "Split & Confirm as Separate Batches by Color".`,
+        'Batch Color Conflict'
+      );
+      return false;
     }
 
     let workingWs = latestWs;
@@ -809,7 +826,7 @@ export const App: React.FC = () => {
     let groupIndex = 0;
     for (const [cid, groupPlates] of platesByColor.entries()) {
       const color = workingWs.colors.find((c) => c.id === cid);
-      if (!color) return;
+      if (!color) return false;
       distinctColorNames.push(color.name);
 
       const stateForColor = computeColorPlanningState(workingWs.jobs, project, cid);
@@ -844,9 +861,13 @@ export const App: React.FC = () => {
         carryForwardCharms: useExplicitParams
           ? params.carryForwardCharms
           : stateForColor.carryForwardCharms,
+        requestedBatchLetters:
+          platesByColor.size === 1 ? params.requestedBatchLetters : undefined,
+        requestedBatchCharms:
+          platesByColor.size === 1 ? params.requestedBatchCharms : undefined,
         confirmedPlates: groupPlates,
         preserveQueuedPlates: params.preserveQueuedPlates,
-        nowMs: nowMs + groupIndex,
+        nowMs: nowMs + groupIndex * 100,
       });
 
       if (res.error || !res.nextWorkspace || !res.createdJobs) {
@@ -854,7 +875,7 @@ export const App: React.FC = () => {
           res.error || 'Could not generate plates for this project.',
           'Plate Generation Blocked'
         );
-        return;
+        return false;
       }
 
       workingWs = res.nextWorkspace;
@@ -870,12 +891,16 @@ export const App: React.FC = () => {
     if (saved) {
       params.onSuccess?.();
       showAlert(
-        `Saved ${allCreatedJobs.length} plate(s) for ${project.name} (${distinctColorNames.join(', ')}).${
+        `Saved ${allCreatedJobs.length} plate(s) across ${platesByColor.size} batch${
+          platesByColor.size === 1 ? '' : 'es'
+        } for ${project.name} (${distinctColorNames.join(', ')}).${
           carryCount > 0 ? `\nCarried forward ${carryCount} remainder keycaps.` : ''
         }`,
         'Plates Added to Queue'
       );
+      return true;
     }
+    return false;
   };
 
   const handleSendProductToPlanner = useCallback(
@@ -922,27 +947,41 @@ export const App: React.FC = () => {
       colorId?: string | null;
       category: ProductCategory;
       confirmedPlates: DraftCatalogPlatePreview[];
+      splitByColor?: boolean;
+      requestedQuantity?: number;
+      requestedVariations?: readonly ProductionBatchVariationSnapshot[];
       onSuccess?: () => void;
-    }) => {
+    }): Promise<boolean> => {
       const latestWs = latestWorkspaceRef.current;
       const project = latestWs.projects.find((p) => p.id === params.projectId);
-      if (!project) return;
+      if (!project) return false;
 
-      const result = commitCatalogPlatesToWorkspace(latestWs, {
-        projectId: params.projectId,
-        colorId: params.colorId ?? null,
-        category: params.category,
-        products: catalogSnapshot.products,
-        confirmedPlates: params.confirmedPlates,
-        nowMs: getAuthoritativeNowMs(),
-      });
+      const nowMs = getAuthoritativeNowMs();
+      const result = params.splitByColor
+        ? commitCatalogPlatesSplitByColor(latestWs, {
+            projectId: params.projectId,
+            category: params.category,
+            products: catalogSnapshot.products,
+            confirmedPlates: params.confirmedPlates,
+            nowMs,
+          })
+        : commitCatalogPlatesToWorkspace(latestWs, {
+            projectId: params.projectId,
+            colorId: params.colorId ?? null,
+            category: params.category,
+            products: catalogSnapshot.products,
+            confirmedPlates: params.confirmedPlates,
+            requestedQuantity: params.requestedQuantity,
+            requestedVariations: params.requestedVariations,
+            nowMs,
+          });
 
       if (result.error || !result.nextWorkspace || !result.createdJobs) {
         showAlert(
           result.error || 'Could not confirm Product Studio plates into Print Queue.',
           'Plate Generation Blocked'
         );
-        return;
+        return false;
       }
 
       const totalUnits = result.createdJobs.reduce(
@@ -953,11 +992,17 @@ export const App: React.FC = () => {
       const saved = await persistWorkspace(result.nextWorkspace);
       if (saved) {
         params.onSuccess?.();
+        const batchSummaryText =
+          params.splitByColor && 'batchRecords' in result
+            ? `${result.batchRecords?.length || 1} separate color batches`
+            : `Batch #${'batchRecord' in result ? result.batchRecord?.batchNumber || 1 : 1}`;
         showAlert(
-          `Saved ${result.createdJobs.length} plate(s) (${totalUnits} pcs) for ${project.name} · ${params.category.name}.`,
+          `Saved ${result.createdJobs.length} plate(s) (${totalUnits} pcs) as ${batchSummaryText} for ${project.name} · ${params.category.name}.`,
           'Plates Added to Queue'
         );
+        return true;
       }
+      return false;
     },
     [catalogSnapshot.products, getAuthoritativeNowMs, persistWorkspace, showAlert]
   );

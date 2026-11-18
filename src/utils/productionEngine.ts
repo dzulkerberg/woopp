@@ -29,6 +29,8 @@ import {
   PlanningSessionRecord,
   PlateGenerationMode,
   PrinterMachine,
+  ProductionBatchRecord,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -2741,6 +2743,8 @@ export function commitGeneratedPlatesToWorkspace(
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
     confirmedPlates: DraftPlatePreview[];
+    requestedBatchLetters?: LettersMap;
+    requestedBatchCharms?: CharmsMap;
     preserveQueuedPlates?: boolean;
     nowMs?: number;
   }
@@ -2748,6 +2752,8 @@ export function commitGeneratedPlatesToWorkspace(
   nextWorkspace?: ProductionWorkspaceV5;
   createdJobs?: ProductionJob[];
   sessionId?: string;
+  batchId?: string;
+  batchRecord?: ProductionBatchRecord;
   error?: string;
 } {
   const project = workspace.projects.find((p) => p.id === params.projectId);
@@ -2756,13 +2762,23 @@ export function commitGeneratedPlatesToWorkspace(
     return { error: 'Project or filament color not found.' };
   }
 
+  for (const draft of params.confirmedPlates) {
+    const draftColor = (draft as { colorId?: string | null }).colorId;
+    if (draftColor && draftColor.trim() && draftColor.trim() !== params.colorId) {
+      return {
+        error: `Batch color conflict: Plate ${draft.plateNumber} color (${draftColor}) does not match batch color (${color.name}).`,
+      };
+    }
+  }
+
   const nowMs = params.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const timezone = workspace.settings?.timezone || DEFAULT_TIMEZONE;
   const safeCap = Math.max(1, Math.floor(params.plateCapacity || 138));
   const preserveQueued = Boolean(params.preserveQueuedPlates);
 
-  const sessionId = `plan-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+  const batchId = `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+  const sessionId = batchId;
 
   const keptJobs = workspace.jobs.filter((j) => {
     if (j.projectId !== params.projectId || j.colorId !== params.colorId) {
@@ -2789,6 +2805,7 @@ export function commitGeneratedPlatesToWorkspace(
       plateCapacity: safeCap,
       letters: compactedLetters,
       plateMode: inferPlateMode(compactedLetters, compactedCharms),
+      batchId,
       planningSessionId: sessionId,
       stage: draft.slicerVerified ? 'Ready to Print' : 'Planned',
       machineId: null,
@@ -2937,6 +2954,101 @@ export function commitGeneratedPlatesToWorkspace(
     delete finalizedProject.planningSessions;
   }
 
+  let createdBatchRecord: ProductionBatchRecord | undefined;
+  if (createdJobs.length > 0) {
+    const assignedSet = new Set(finalizedProject.assignedColorIds || []);
+    assignedSet.add(params.colorId);
+    finalizedProject.assignedColorIds = Array.from(assignedSet);
+
+    const committedLetters = sumAlphabetMaps(createdJobs.map((j) => j.letters));
+    const committedCharms = sumCharmsMaps(createdJobs.map((j) => j.charms));
+    const committedQty =
+      countLetters(committedLetters) + countCharms(committedCharms);
+
+    const effectiveReqLetters = compactLettersMap(
+      params.requestedBatchLetters && countLetters(params.requestedBatchLetters) > 0
+        ? params.requestedBatchLetters
+        : committedLetters
+    );
+    const effectiveReqCharms = compactCharmsMap(
+      params.requestedBatchCharms && countCharms(params.requestedBatchCharms) > 0
+        ? params.requestedBatchCharms
+        : committedCharms
+    );
+
+    const reqVars: ProductionBatchVariationSnapshot[] = [];
+    for (const letter of ABC) {
+      const qty = Math.max(
+        Math.floor(Number(effectiveReqLetters[letter] || 0)),
+        Math.floor(Number(committedLetters[letter] || 0))
+      );
+      if (qty > 0) {
+        reqVars.push({
+          variationKey: `letter:${letter}`,
+          variantId: null,
+          label: letter,
+          requestedQuantity: qty,
+        });
+      }
+    }
+    for (const cid of CHARM_IDS) {
+      const qty = Math.max(
+        Math.floor(Number(effectiveReqCharms[cid] || 0)),
+        Math.floor(Number(committedCharms[cid] || 0))
+      );
+      if (qty > 0) {
+        const def = CHARM_BY_ID[cid];
+        reqVars.push({
+          variationKey: `charm:${cid}`,
+          variantId: null,
+          label: `${def.symbol} ${def.label}`,
+          requestedQuantity: qty,
+        });
+      }
+    }
+
+    const reqTotal = Math.max(
+      committedQty,
+      reqVars.reduce((sum, rv) => sum + rv.requestedQuantity, 0)
+    );
+    const existingBatches = project.productionBatches || [];
+    const maxBatchNumber = existingBatches.reduce(
+      (max, b) => (b.batchNumber > max ? b.batchNumber : max),
+      0
+    );
+
+    const builtinMeta =
+      params.mode === 'charm_only'
+        ? { productId: 'builtin:charm', productName: 'Charm Keycaps' }
+        : params.mode === 'mixed'
+        ? { productId: 'builtin:mixed', productName: 'Alphabet & Charm Keycaps' }
+        : { productId: 'builtin:alphabet', productName: 'Alphabet Keycaps (A–Z)' };
+
+    createdBatchRecord = {
+      id: batchId,
+      batchNumber: maxBatchNumber + 1,
+      projectId: project.id,
+      productId: builtinMeta.productId,
+      productName: builtinMeta.productName,
+      sku: null,
+      categoryId: null,
+      categoryName: 'Built-in Keycap Workflows',
+      colorId: color.id,
+      colorName: color.name,
+      mode: params.mode,
+      plateCapacity: safeCap,
+      requestedQuantity: reqTotal,
+      committedQuantity: committedQty,
+      generatedJobIds: createdJobs.map((j) => j.id),
+      plateNumbers: createdJobs.map((j) => j.plateNumber),
+      requestedVariations: reqVars,
+      createdIso: nowIso,
+      updatedIso: nowIso,
+    };
+
+    finalizedProject.productionBatches = [...existingBatches, createdBatchRecord];
+  }
+
   const nextProjects = workspace.projects.map((p) =>
     p.id === project.id ? finalizedProject : p
   );
@@ -2956,6 +3068,8 @@ export function commitGeneratedPlatesToWorkspace(
   return {
     createdJobs,
     sessionId,
+    batchId: createdBatchRecord ? batchId : undefined,
+    batchRecord: createdBatchRecord,
     nextWorkspace: {
       ...workspace,
       projects: nextProjects,

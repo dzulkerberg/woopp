@@ -175,12 +175,63 @@
   font-variant-numeric: tabular-nums;
 }
 
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
 @media print {
   .no-print {
     display: none !important;
   }
+
+  html,
   body {
     background: #ffffff !important;
     color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .woopp-packing-print-root {
+    display: block !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .woopp-packing-color-section {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .woopp-page-break-before {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  .woopp-packing-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .woopp-packing-table thead {
+    display: table-header-group;
+  }
+
+  .woopp-packing-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .woopp-packing-signoff {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

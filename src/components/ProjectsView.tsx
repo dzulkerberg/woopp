@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Printer } from 'lucide-react';
 import {
   computeProjectPlateProgress,
   countLetters,
@@ -17,6 +18,7 @@ import {
 } from '../types';
 import { formatDateDDMMYYYY } from '../utils/dateFormat';
 import { DateInputDDMMYYYY } from './DateInputDDMMYYYY';
+import { ProjectProductionSummaryModal } from './ProjectProductionSummaryModal';
 
 interface ProjectsViewProps {
   workspace: ProductionWorkspaceV5;
@@ -39,6 +41,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [editingProject, setEditingProject] = useState<ProductionProject | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [formError, setFormError] = useState('');
+  const [summaryProjectId, setSummaryProjectId] = useState<string | null>(null);
+
+  const summaryProject = summaryProjectId
+    ? workspace.projects.find((p) => p.id === summaryProjectId) || null
+    : null;
 
   const openNewProjectForm = () => {
     const now = new Date().toISOString();
@@ -140,6 +147,16 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const visibleProjects = workspace.projects.filter((p) =>
     statusFilter === 'ALL' ? true : p.status === statusFilter
   );
+
+  if (summaryProject) {
+    return (
+      <ProjectProductionSummaryModal
+        workspace={workspace}
+        project={summaryProject}
+        onClose={() => setSummaryProjectId(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -494,6 +511,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
                 <div className="mt-5 pt-4 border-t border-line flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectProject(project.id);
+                        setSummaryProjectId(project.id);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-brand-border bg-brand-soft hover:bg-brand hover:text-white text-brand-text transition-colors whitespace-nowrap"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Print Summary</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {

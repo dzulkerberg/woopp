@@ -94,6 +94,35 @@ export interface PlanningSessionRecord {
   updatedIso: string;
 }
 
+export interface ProductionBatchVariationSnapshot {
+  variationKey: string;
+  variantId: string | null;
+  label: string;
+  requestedQuantity: number;
+}
+
+export interface ProductionBatchRecord {
+  id: string;
+  batchNumber: number;
+  projectId: string;
+  productId: string;
+  productName: string;
+  sku: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  colorId: string;
+  colorName: string;
+  mode: PlateGenerationMode;
+  plateCapacity: number;
+  requestedQuantity: number;
+  committedQuantity: number;
+  generatedJobIds: string[];
+  plateNumbers: number[];
+  requestedVariations: ProductionBatchVariationSnapshot[];
+  createdIso: string;
+  updatedIso: string;
+}
+
 export interface ProductionProject {
   id: string;
   name: string;
@@ -116,6 +145,8 @@ export interface ProductionProject {
   charmCarryForwardByColor?: Record<string, CharmsMap>;
   // Active planner session lineage linking generated plates to temporary carry-forward
   planningSessions?: PlanningSessionRecord[];
+  // Authoritative Production Batch identity records (ONE BATCH = ONE PRODUCT + ONE FILAMENT COLOR + ONE REQUEST)
+  productionBatches?: ProductionBatchRecord[];
   status: ProjectStatus;
   notes: string;
   createdIso: string;
@@ -149,6 +180,7 @@ export interface ProductionJob {
   // Additive Charm Keycap quantities on this plate (missing treated as 0)
   charms?: CharmsMap;
   plateMode?: PlateGenerationMode;
+  batchId?: string | null; // Immutable Production Batch ID shared by all plates created in one batch request
   planningSessionId?: string | null; // Links plate to the Auto Plate Planner session that created it
   stage: KanbanStage;
   machineId: string | null;

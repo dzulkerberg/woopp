@@ -9,6 +9,7 @@ import {
   ProductionWorkspaceV5,
 } from '../../types';
 import {
+  commitCatalogPlatesSplitByColor,
   commitCatalogPlatesToWorkspace,
   generateAutomaticCatalogPlatePreviews,
   matchWorkspaceColorForVariant,
@@ -254,7 +255,7 @@ describe('WOOPP 6.0 — Print Queue Plate Color Mapping & Multi-Color Planning',
     expect(pinkPlate.colorId).not.toBe('color-mulberry');
   });
 
-  it('4. commitCatalogPlatesToWorkspace persists correct authoritative colorId on each ProductionJob into Firestore', () => {
+  it('4. Blocks unsplit multi-color batch commit and persists exact per-plate colorId on explicit split-by-color batches into Firestore', () => {
     const selections = [
       { productId: productBaseV1.id, variantId: 'var-pink', quantity: 20 },
       { productId: productBaseV1.id, variantId: 'var-mulberry', quantity: 20 },
@@ -274,16 +275,26 @@ describe('WOOPP 6.0 — Print Queue Plate Color Mapping & Multi-Color Planning',
       nowMs,
     });
 
-    const commitResult = commitCatalogPlatesToWorkspace(baseWorkspace, {
+    const blockedRes = commitCatalogPlatesToWorkspace(baseWorkspace, {
       projectId: project.id,
       colorId: workspaceColors[0].id,
       category,
       confirmedPlates: genResult.previews!,
       nowMs,
     });
+    expect(blockedRes.error).toMatch(/Batch color conflict/i);
+
+    const commitResult = commitCatalogPlatesSplitByColor(baseWorkspace, {
+      projectId: project.id,
+      category,
+      products: [productBaseV1],
+      confirmedPlates: genResult.previews!,
+      nowMs,
+    });
 
     expect(commitResult.error).toBeUndefined();
     expect(commitResult.createdJobs).toHaveLength(4);
+    expect(new Set(commitResult.createdJobs!.map((j) => j.batchId)).size).toBe(4);
 
     const createdJobs = commitResult.createdJobs!;
     const pinkJob = createdJobs.find((j) => j.colorId === 'color-pink')!;

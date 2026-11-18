@@ -14,6 +14,8 @@ import {
   PlanningSessionRecord,
   PlateGenerationMode,
   PrinterMachine,
+  ProductionBatchRecord,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -934,6 +936,131 @@ export function normalizeWorkspaceV5(
           } else {
             delete normalizedProj.planningSessions;
           }
+          if (Array.isArray(p.productionBatches)) {
+            const cleanedBatches: ProductionBatchRecord[] = [];
+            for (const b of p.productionBatches) {
+              if (
+                b &&
+                typeof b === 'object' &&
+                typeof b.id === 'string' &&
+                b.id.trim().length > 0 &&
+                typeof b.productId === 'string' &&
+                b.productId.trim().length > 0 &&
+                typeof b.colorId === 'string' &&
+                b.colorId.trim().length > 0
+              ) {
+                const modeVal: PlateGenerationMode = PLATE_GENERATION_MODES.includes(
+                  b.mode
+                )
+                  ? b.mode
+                  : 'catalog_category';
+                const cleanedVars: ProductionBatchVariationSnapshot[] = Array.isArray(
+                  b.requestedVariations
+                )
+                  ? b.requestedVariations
+                      .filter(
+                        (rv): rv is ProductionBatchVariationSnapshot =>
+                          Boolean(
+                            rv &&
+                              typeof rv === 'object' &&
+                              typeof rv.variationKey === 'string' &&
+                              rv.variationKey.trim().length > 0 &&
+                              typeof rv.label === 'string' &&
+                              rv.label.trim().length > 0
+                          )
+                      )
+                      .map((rv) => ({
+                        variationKey: rv.variationKey.trim(),
+                        variantId:
+                          typeof rv.variantId === 'string' && rv.variantId.trim().length > 0
+                            ? rv.variantId.trim()
+                            : null,
+                        label: rv.label.trim(),
+                        requestedQuantity: Math.max(
+                          0,
+                          Math.floor(Number(rv.requestedQuantity || 0))
+                        ),
+                      }))
+                  : [];
+                cleanedBatches.push({
+                  id: b.id.trim(),
+                  batchNumber:
+                    typeof b.batchNumber === 'number' && Number.isFinite(b.batchNumber) && b.batchNumber >= 1
+                      ? Math.floor(b.batchNumber)
+                      : cleanedBatches.length + 1,
+                  projectId:
+                    typeof b.projectId === 'string' && b.projectId.trim().length > 0
+                      ? b.projectId.trim()
+                      : p.id,
+                  productId: b.productId.trim(),
+                  productName:
+                    typeof b.productName === 'string' && b.productName.trim().length > 0
+                      ? b.productName.trim()
+                      : b.productId.trim(),
+                  sku:
+                    typeof b.sku === 'string' && b.sku.trim().length > 0
+                      ? b.sku.trim()
+                      : null,
+                  categoryId:
+                    typeof b.categoryId === 'string' && b.categoryId.trim().length > 0
+                      ? b.categoryId.trim()
+                      : null,
+                  categoryName:
+                    typeof b.categoryName === 'string' && b.categoryName.trim().length > 0
+                      ? b.categoryName.trim()
+                      : null,
+                  colorId: b.colorId.trim(),
+                  colorName:
+                    typeof b.colorName === 'string' && b.colorName.trim().length > 0
+                      ? b.colorName.trim()
+                      : b.colorId.trim(),
+                  mode: modeVal,
+                  plateCapacity:
+                    typeof b.plateCapacity === 'number' && b.plateCapacity >= 1
+                      ? Math.floor(b.plateCapacity)
+                      : p.plateCapacity || DEFAULT_PLATE_CAPACITY,
+                  requestedQuantity: Math.max(
+                    0,
+                    Math.floor(Number(b.requestedQuantity || 0))
+                  ),
+                  committedQuantity: Math.max(
+                    0,
+                    Math.floor(Number(b.committedQuantity || 0))
+                  ),
+                  generatedJobIds: Array.isArray(b.generatedJobIds)
+                    ? b.generatedJobIds.filter(
+                        (id): id is string =>
+                          typeof id === 'string' && id.trim().length > 0
+                      )
+                    : [],
+                  plateNumbers: Array.isArray(b.plateNumbers)
+                    ? b.plateNumbers
+                        .filter(
+                          (n): n is number =>
+                            typeof n === 'number' && Number.isFinite(n) && n >= 1
+                        )
+                        .map((n) => Math.floor(n))
+                    : [],
+                  requestedVariations: cleanedVars,
+                  createdIso:
+                    typeof b.createdIso === 'string' && b.createdIso.trim().length > 0
+                      ? b.createdIso
+                      : p.createdIso || new Date().toISOString(),
+                  updatedIso:
+                    typeof b.updatedIso === 'string' && b.updatedIso.trim().length > 0
+                      ? b.updatedIso
+                      : p.updatedIso || new Date().toISOString(),
+                });
+              }
+            }
+            if (cleanedBatches.length > 0) {
+              normalizedProj.productionBatches = cleanedBatches;
+            } else {
+              delete normalizedProj.productionBatches;
+            }
+          } else {
+            delete normalizedProj.productionBatches;
+          }
           return normalizedProj;
         })
       : [],
@@ -967,6 +1094,7 @@ export function normalizeWorkspaceV5(
             delete normalizedJob.archived;
           }
           const lifecycleStringKeys = [
+            'batchId',
             'planningSessionId',
             'archivedIso',
             'archivedBy',

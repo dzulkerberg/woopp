@@ -29,6 +29,7 @@ import {
   PlannerPreselection,
   PlateGenerationMode,
   ProductCategory,
+  ProductionBatchVariationSnapshot,
   ProductionWorkspaceV5,
 } from '../types';
 import {
@@ -66,10 +67,13 @@ export interface AutoPlannerViewProps {
     targetCharms: CharmsMap;
     carryForwardLetters: LettersMap;
     carryForwardCharms: CharmsMap;
+    requestedBatchLetters?: LettersMap;
+    requestedBatchCharms?: CharmsMap;
     confirmedPlates: BuiltInStagedPlate[];
+    splitByColor?: boolean;
     preserveQueuedPlates?: boolean;
     onSuccess?: () => void;
-  }) => Promise<void> | void;
+  }) => Promise<void | boolean> | void;
   onClearCarryForward?: (params: {
     projectId: string;
     colorId: string;
@@ -89,8 +93,11 @@ export interface AutoPlannerViewProps {
     colorId?: string | null;
     category: ProductCategory;
     confirmedPlates: DraftCatalogPlatePreview[];
+    splitByColor?: boolean;
+    requestedQuantity?: number;
+    requestedVariations?: ProductionBatchVariationSnapshot[];
     onSuccess?: () => void;
-  }) => Promise<void> | void;
+  }) => Promise<void | boolean> | void;
   onOpenProductStudio?: () => void;
   onAlert: (msg: string, title?: string) => void;
 }
@@ -639,13 +646,44 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     return errors;
   };
 
+  const [builtInBulkColorId, setBuiltInBulkColorId] = useState<string>('');
+  const builtInConfirmLockRef = useRef<boolean>(false);
+
+  const handleApplyBuiltInColorToAll = (colorIdRaw: string) => {
+    const cleanId = colorIdRaw.trim();
+    const matched = cleanId
+      ? workspace.colors.find((c) => c.id === cleanId) || null
+      : null;
+    if (!matched) return;
+    setBuiltInBulkColorId(matched.id);
+    setStagedPlates((prev) =>
+      prev ? prev.map((p) => ({ ...p, colorId: matched.id })) : null
+    );
+  };
+
   const invalidBuiltInPlateNumbers =
     stagedPlates
       ?.filter((p) => getBuiltInPlateErrors(p).length > 0)
       .map((p) => p.plateNumber) || [];
 
-  const handleConfirmAndSavePlates = async () => {
-    if (!stagedPlates || !batchPreview || isBuiltInConfirming) return;
+  const distinctBuiltInColorIds = Array.from(
+    new Set(
+      (stagedPlates || [])
+        .map((p) => (p.colorId || '').trim())
+        .filter((cid) => cid.length > 0 && workspace.colors.some((c) => c.id === cid))
+    )
+  );
+  const hasBuiltInColorConflict = distinctBuiltInColorIds.length > 1;
+
+  const handleConfirmAndSavePlates = async (splitByColor = false) => {
+    if (
+      !stagedPlates ||
+      !batchPreview ||
+      isBuiltInConfirming ||
+      builtInConfirmLockRef.current
+    ) {
+      return;
+    }
 
     setHasAttemptedBuiltInConfirm(true);
 
@@ -658,6 +696,10 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
     }
 
     if (invalidBuiltInPlateNumbers.length > 0) {
+      return;
+    }
+
+    if (hasBuiltInColorConflict && !splitByColor) {
       return;
     }
 
@@ -728,14 +770,15 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             ])
           );
 
+    builtInConfirmLockRef.current = true;
     setIsBuiltInConfirming(true);
     try {
       await Promise.resolve(
         onCommitGeneratedPlates({
           projectId: currentProject.id,
           colorId:
-            stagedPlates.length === 1 && stagedPlates[0].colorId
-              ? stagedPlates[0].colorId
+            !hasBuiltInColorConflict && distinctBuiltInColorIds.length === 1
+              ? distinctBuiltInColorIds[0]
               : undefined,
           plateCapacity,
           mode: builtInMode,
@@ -743,7 +786,12 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           targetCharms: committedTargetCharms,
           carryForwardLetters: carryForwardLettersToSave,
           carryForwardCharms: carryForwardCharmsToSave,
+          requestedBatchLetters:
+            builtInMode === 'alphabet_only' ? compactLettersMap(draftLetters) : undefined,
+          requestedBatchCharms:
+            builtInMode === 'charm_only' ? compactCharmsMap(draftCharms) : undefined,
           confirmedPlates: stagedPlates,
+          splitByColor,
           preserveQueuedPlates: true,
           onSuccess: () => {
             if (builtInMode === 'alphabet_only') {
@@ -753,11 +801,13 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
             }
             setCarryIncludedColorId(null);
             setStagedPlates(null);
+            setBuiltInBulkColorId('');
             setHasAttemptedBuiltInConfirm(false);
           },
         })
       );
     } finally {
+      builtInConfirmLockRef.current = false;
       setIsBuiltInConfirming(false);
     }
   };
@@ -1050,11 +1100,14 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           onSaveCategoryPlateSetting={
             onSaveCategoryPlateSetting || (async () => undefined)
           }
-          onConfirmCatalogPlates={(category, confirmedPlates, onSuccess) =>
+          onConfirmCatalogPlates={(category, confirmedPlates, onSuccess, options) =>
             onCommitCatalogPlates?.({
               projectId: currentProject.id,
               category,
               confirmedPlates,
+              splitByColor: options?.splitByColor,
+              requestedQuantity: options?.requestedQuantity,
+              requestedVariations: options?.requestedVariations,
               onSuccess: () => {
                 onSuccess();
                 // Clear planned quantities for this category after successful queue commit
@@ -1439,34 +1492,123 @@ export const AutoPlannerView: React.FC<AutoPlannerViewProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold text-ink">
-                Review &amp; Confirm Plates ({stagedPlates.length})
+                Review &amp; Confirm Batch ({stagedPlates.length}{' '}
+                {stagedPlates.length === 1 ? 'plate' : 'plates'})
               </h3>
               <p className="text-xs text-muted mt-0.5">
-                Select a physical <b className="text-ink">Filament Color</b> individually for each plate (never exceeding {plateCapacity} pcs/plate), and verify physical fit in Bambu Studio.
+                One batch requires <b className="text-ink">1 Product + 1 Filament Color</b> (max {plateCapacity} pcs/plate). Apply one Filament Color across all plates below or split mixed colors explicitly.
               </p>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 disabled={isBuiltInConfirming}
                 onClick={() => {
                   setStagedPlates(null);
+                  setBuiltInBulkColorId('');
                   setHasAttemptedBuiltInConfirm(false);
                 }}
-                className="px-3.5 py-2 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-40 transition-colors"
+                className="px-3.5 py-2 text-xs font-medium rounded-lg border border-line bg-elevated text-ink hover:bg-recessed disabled:opacity-40 whitespace-nowrap transition-colors"
               >
                 Discard Preview
               </button>
               <button
                 type="button"
-                disabled={isBuiltInConfirming}
-                onClick={() => void handleConfirmAndSavePlates()}
+                disabled={isBuiltInConfirming || hasBuiltInColorConflict}
+                onClick={() => void handleConfirmAndSavePlates(false)}
                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white whitespace-nowrap transition-colors"
               >
-                {isBuiltInConfirming ? 'Saving...' : 'Confirm & Save to Print Queue'}
+                {isBuiltInConfirming ? 'Saving...' : 'Confirm & Save Batch to Queue'}
               </button>
             </div>
           </div>
+
+          {stagedPlates.length > 1 && (
+            <div className="p-3 rounded-xl border border-line bg-recessed flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-ink-secondary">
+                <span className="font-semibold text-ink">Apply Color to All Plates:</span>{' '}
+                Assign one Filament Color to all {stagedPlates.length} plates in this batch.
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label="Select Filament Color for all staged plates"
+                  value={builtInBulkColorId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBuiltInBulkColorId(val);
+                    if (val) {
+                      handleApplyBuiltInColorToAll(val);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs font-semibold text-ink focus:border-brand focus:outline-none"
+                >
+                  <option value="">Select color for all plates...</option>
+                  {workspace.colors.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!builtInBulkColorId || isBuiltInConfirming}
+                  onClick={() => handleApplyBuiltInColorToAll(builtInBulkColorId)}
+                  className="px-3 py-1.5 rounded-lg border border-line bg-surface hover:bg-elevated text-xs font-semibold text-ink disabled:opacity-40 whitespace-nowrap transition-colors"
+                >
+                  Apply to All Plates
+                </button>
+              </div>
+            </div>
+          )}
+
+          {hasBuiltInColorConflict && (
+            <div
+              role="alert"
+              className="p-4 rounded-xl border border-warning-border bg-warning-soft text-xs text-warning-text space-y-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold">
+                    Batch Color Conflict: Multiple Filament Colors Selected
+                  </div>
+                  <div className="mt-0.5 opacity-95">
+                    One Production Batch must use one physical Filament Color. Apply one color to all plates, or explicitly Split &amp; Confirm as Separate Batches by Color.
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                {distinctBuiltInColorIds.map((cid) => {
+                  const col = workspace.colors.find((c) => c.id === cid);
+                  if (!col) return null;
+                  return (
+                    <button
+                      key={cid}
+                      type="button"
+                      disabled={isBuiltInConfirming}
+                      onClick={() => handleApplyBuiltInColorToAll(cid)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-warning-border bg-surface hover:bg-elevated text-ink font-semibold whitespace-nowrap transition-colors"
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full border border-line shrink-0"
+                        style={{ backgroundColor: col.hex }}
+                        aria-hidden="true"
+                      />
+                      <span>Apply {col.name} to All Plates</span>
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  disabled={isBuiltInConfirming || invalidBuiltInPlateNumbers.length > 0}
+                  onClick={() => void handleConfirmAndSavePlates(true)}
+                  className="px-3.5 py-1.5 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white font-semibold whitespace-nowrap transition-colors"
+                >
+                  Split &amp; Confirm as Separate Batches by Color ({distinctBuiltInColorIds.length})
+                </button>
+              </div>
+            </div>
+          )}
 
           {hasAttemptedBuiltInConfirm && invalidBuiltInPlateNumbers.length > 0 && (
             <div

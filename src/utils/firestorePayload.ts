@@ -29,6 +29,8 @@ import {
   PlanningSessionRecord,
   PlateGenerationMode,
   PrinterMachine,
+  ProductionBatchRecord,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -692,7 +694,146 @@ function validateProductionProject(
     }
   }
 
+  if (project.productionBatches !== undefined) {
+    if (!Array.isArray(project.productionBatches)) {
+      throw new FirestorePayloadValidationError(
+        joinPath(path, 'productionBatches'),
+        'Expected optional array of production batch records.'
+      );
+    }
+    const cleanedBatches: ProductionBatchRecord[] = project.productionBatches
+      .slice(0, 500)
+      .map((b, idx) =>
+        validateProductionBatchRecord(
+          b,
+          `${joinPath(path, 'productionBatches')}[${idx}]`
+        )
+      );
+    if (cleanedBatches.length > 0) {
+      normalized.productionBatches = cleanedBatches;
+    }
+  }
+
   return normalized;
+}
+
+function validateProductionBatchVariationSnapshot(
+  rv: ProductionBatchVariationSnapshot,
+  path: string
+): ProductionBatchVariationSnapshot {
+  if (!isPlainObject(rv)) {
+    throw new FirestorePayloadValidationError(
+      path,
+      'Expected production batch variation snapshot object.'
+    );
+  }
+  return {
+    variationKey: requireNonEmptyString(
+      rv.variationKey,
+      joinPath(path, 'variationKey')
+    ),
+    variantId: normalizeNullableString(rv.variantId, joinPath(path, 'variantId')),
+    label: requireNonEmptyString(rv.label, joinPath(path, 'label')),
+    requestedQuantity: Math.floor(
+      requireFiniteNumber(rv.requestedQuantity, joinPath(path, 'requestedQuantity'), {
+        min: 0,
+      })
+    ),
+  };
+}
+
+function validateProductionBatchRecord(
+  batch: ProductionBatchRecord,
+  path: string
+): ProductionBatchRecord {
+  if (!isPlainObject(batch)) {
+    throw new FirestorePayloadValidationError(
+      path,
+      'Expected production batch record object.'
+    );
+  }
+  if (!Array.isArray(batch.generatedJobIds)) {
+    throw new FirestorePayloadValidationError(
+      joinPath(path, 'generatedJobIds'),
+      'Expected array of generated job IDs.'
+    );
+  }
+  if (!Array.isArray(batch.plateNumbers)) {
+    throw new FirestorePayloadValidationError(
+      joinPath(path, 'plateNumbers'),
+      'Expected array of plate numbers.'
+    );
+  }
+  if (!Array.isArray(batch.requestedVariations)) {
+    throw new FirestorePayloadValidationError(
+      joinPath(path, 'requestedVariations'),
+      'Expected array of requested variations.'
+    );
+  }
+  return {
+    id: requireNonEmptyString(batch.id, joinPath(path, 'id')),
+    batchNumber: Math.floor(
+      requireFiniteNumber(batch.batchNumber, joinPath(path, 'batchNumber'), { min: 1 })
+    ),
+    projectId: requireNonEmptyString(batch.projectId, joinPath(path, 'projectId')),
+    productId: requireNonEmptyString(batch.productId, joinPath(path, 'productId')),
+    productName: requireNonEmptyString(
+      batch.productName,
+      joinPath(path, 'productName')
+    ),
+    sku: normalizeNullableString(batch.sku, joinPath(path, 'sku')),
+    categoryId: normalizeNullableString(batch.categoryId, joinPath(path, 'categoryId')),
+    categoryName: normalizeNullableString(
+      batch.categoryName,
+      joinPath(path, 'categoryName')
+    ),
+    colorId: requireNonEmptyString(batch.colorId, joinPath(path, 'colorId')),
+    colorName: requireNonEmptyString(batch.colorName, joinPath(path, 'colorName')),
+    mode: requireEnum<PlateGenerationMode>(
+      batch.mode,
+      PLATE_GENERATION_MODES,
+      joinPath(path, 'mode')
+    ),
+    plateCapacity: Math.floor(
+      requireFiniteNumber(batch.plateCapacity, joinPath(path, 'plateCapacity'), {
+        min: 1,
+      })
+    ),
+    requestedQuantity: Math.floor(
+      requireFiniteNumber(batch.requestedQuantity, joinPath(path, 'requestedQuantity'), {
+        min: 0,
+      })
+    ),
+    committedQuantity: Math.floor(
+      requireFiniteNumber(batch.committedQuantity, joinPath(path, 'committedQuantity'), {
+        min: 0,
+      })
+    ),
+    generatedJobIds: batch.generatedJobIds
+      .filter((id) => id !== undefined)
+      .map((id, idx) =>
+        requireNonEmptyString(id, `${joinPath(path, 'generatedJobIds')}[${idx}]`)
+      ),
+    plateNumbers: batch.plateNumbers
+      .filter((n) => n !== undefined)
+      .map((n, idx) =>
+        Math.floor(
+          requireFiniteNumber(n, `${joinPath(path, 'plateNumbers')}[${idx}]`, {
+            min: 1,
+          })
+        )
+      ),
+    requestedVariations: batch.requestedVariations
+      .filter((rv) => rv !== undefined)
+      .map((rv, idx) =>
+        validateProductionBatchVariationSnapshot(
+          rv,
+          `${joinPath(path, 'requestedVariations')}[${idx}]`
+        )
+      ),
+    createdIso: requireNonEmptyString(batch.createdIso, joinPath(path, 'createdIso')),
+    updatedIso: requireNonEmptyString(batch.updatedIso, joinPath(path, 'updatedIso')),
+  };
 }
 
 function validatePlanningSessionRecord(
@@ -934,6 +1075,7 @@ function validateProductionJob(job: ProductionJob, path: string): ProductionJob 
   }
 
   const nullableLifecycleStringKeys = [
+    'batchId',
     'planningSessionId',
     'archivedIso',
     'archivedBy',

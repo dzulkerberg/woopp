@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   RotateCcw,
@@ -11,10 +11,12 @@ import {
   CategoryPlateSetting,
   ColorOption,
   ProductCategory,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
 } from '../types';
 import {
+  applyColorToAllCatalogPlates,
   assignColorToDraftCatalogPlate,
   buildCatalogSelectionKey,
   buildPlannerProductInputModel,
@@ -50,8 +52,13 @@ export interface CatalogCategoryPlannerSectionProps {
   onConfirmCatalogPlates: (
     category: ProductCategory,
     confirmedPlates: DraftCatalogPlatePreview[],
-    onSuccess: () => void
-  ) => Promise<void> | void;
+    onSuccess: () => void,
+    options?: {
+      splitByColor?: boolean;
+      requestedQuantity?: number;
+      requestedVariations?: ProductionBatchVariationSnapshot[];
+    }
+  ) => Promise<void | boolean> | void;
   onOpenProductStudio: () => void;
   onAlert: (msg: string, title?: string) => void;
   resetSignal: number;
@@ -147,8 +154,14 @@ export const CatalogCategoryPlannerSection: React.FC<
   const [stagedCatalogPlates, setStagedCatalogPlates] = useState<
     DraftCatalogPlatePreview[] | null
   >(null);
+  const [stagedRequestMeta, setStagedRequestMeta] = useState<{
+    requestedQuantity: number;
+    requestedVariations: ProductionBatchVariationSnapshot[];
+  } | null>(null);
+  const [bulkColorId, setBulkColorId] = useState<string>('');
   const [hasAttemptedConfirm, setHasAttemptedConfirm] = useState<boolean>(false);
   const [isConfirming, setIsConfirming] = useState<boolean>(false);
+  const confirmLockRef = useRef<boolean>(false);
 
   // Sync saved rule when category updates
   useEffect(() => {
@@ -159,6 +172,8 @@ export const CatalogCategoryPlannerSection: React.FC<
     );
     setDefaultMinutes(plateSetting?.defaultEstimatedMinutes || 180);
     setStagedCatalogPlates(null);
+    setStagedRequestMeta(null);
+    setBulkColorId('');
     setHasAttemptedConfirm(false);
   }, [
     category.id,
@@ -170,6 +185,8 @@ export const CatalogCategoryPlannerSection: React.FC<
   useEffect(() => {
     if (resetSignal === 0) return;
     setStagedCatalogPlates(null);
+    setStagedRequestMeta(null);
+    setBulkColorId('');
     setHasAttemptedConfirm(false);
   }, [resetSignal]);
 
@@ -316,8 +333,59 @@ export const CatalogCategoryPlannerSection: React.FC<
       return;
     }
 
+    // Capture requested batch quantities at preview time (even if preview omits a remainder)
+    const reqVars: ProductionBatchVariationSnapshot[] = [];
+    let reqTotal = 0;
+    for (const item of inputModel.items) {
+      const key = buildCatalogSelectionKey(
+        selectedProduct.id,
+        item.id !== 'base' ? item.id : null
+      );
+      const qty = Math.floor(Number(quantitiesByKey[key] || 0));
+      if (qty > 0) {
+        reqTotal += qty;
+        const isBase = item.id === 'base' || item.id === '__color_agnostic_base__';
+        const isSyntheticCombo = item.id.startsWith('noncolor::');
+        const cleanVarId = isBase || isSyntheticCombo ? null : item.id;
+        const cleanLabel = isBase ? 'Standard / No Variation' : item.label;
+        const varKey = cleanVarId
+          ? `var:${cleanVarId}`
+          : `novar:${isBase ? 'standard' : cleanLabel}`;
+        reqVars.push({
+          variationKey: varKey,
+          variantId: cleanVarId,
+          label: cleanLabel,
+          requestedQuantity: qty,
+        });
+      }
+    }
+
     setStagedCatalogPlates(res.previews);
+    setStagedRequestMeta({
+      requestedQuantity: reqTotal,
+      requestedVariations: reqVars,
+    });
+    setBulkColorId('');
     setHasAttemptedConfirm(false);
+  };
+
+  const handleApplyColorToAllPlates = (colorIdRaw: string) => {
+    const cleanId = colorIdRaw.trim();
+    const matchedColor = cleanId
+      ? workspaceColors.find((c) => c.id === cleanId) || null
+      : null;
+    if (!matchedColor) return;
+    setBulkColorId(matchedColor.id);
+    setStagedCatalogPlates((prev) =>
+      prev
+        ? applyColorToAllCatalogPlates(
+            prev,
+            matchedColor,
+            selectedProduct,
+            workspaceColors
+          )
+        : null
+    );
   };
 
   const handleAssignPlateColor = (tempId: string, nextColorIdRaw: string) => {
@@ -364,8 +432,13 @@ export const CatalogCategoryPlannerSection: React.FC<
     );
   };
 
-  const handleConfirmClick = async () => {
-    if (!stagedCatalogPlates || stagedCatalogPlates.length === 0 || isConfirming) {
+  const handleConfirmClick = async (splitByColor = false) => {
+    if (
+      !stagedCatalogPlates ||
+      stagedCatalogPlates.length === 0 ||
+      isConfirming ||
+      confirmLockRef.current
+    ) {
       return;
     }
 
@@ -377,8 +450,9 @@ export const CatalogCategoryPlannerSection: React.FC<
       workspaceColors,
     });
 
-    if (!validation.allValid) {
-      // Block partial/silent confirmation; inline per-plate errors + banner explain exact fixes needed
+    const perPlateValid = validation.invalidPlateNumbers.length === 0;
+    if (!perPlateValid || (validation.hasColorConflict && !splitByColor)) {
+      // Block silent splitting or invalid plates; conflict banner offers explicit resolution actions
       return;
     }
 
@@ -387,22 +461,39 @@ export const CatalogCategoryPlannerSection: React.FC<
       items: p.items.filter((it) => Math.floor(Number(it.quantity || 0)) > 0),
     }));
 
+    confirmLockRef.current = true;
     setIsConfirming(true);
     try {
-      await onConfirmCatalogPlates(category, cleanedPlates, () => {
-        setStagedCatalogPlates(null);
-        setHasAttemptedConfirm(false);
-        if (selectedProduct && inputModel) {
-          for (const item of inputModel.items) {
-            const key = buildCatalogSelectionKey(
-              selectedProduct.id,
-              item.id !== 'base' ? item.id : null
-            );
-            onChangeQuantity(key, 0);
+      await onConfirmCatalogPlates(
+        category,
+        cleanedPlates,
+        () => {
+          setStagedCatalogPlates(null);
+          setStagedRequestMeta(null);
+          setBulkColorId('');
+          setHasAttemptedConfirm(false);
+          if (selectedProduct && inputModel) {
+            for (const item of inputModel.items) {
+              const key = buildCatalogSelectionKey(
+                selectedProduct.id,
+                item.id !== 'base' ? item.id : null
+              );
+              onChangeQuantity(key, 0);
+            }
           }
+        },
+        {
+          splitByColor,
+          requestedQuantity: splitByColor
+            ? undefined
+            : stagedRequestMeta?.requestedQuantity,
+          requestedVariations: splitByColor
+            ? undefined
+            : stagedRequestMeta?.requestedVariations,
         }
-      });
+      );
     } finally {
+      confirmLockRef.current = false;
       setIsConfirming(false);
     }
   };
@@ -852,44 +943,138 @@ export const CatalogCategoryPlannerSection: React.FC<
             </div>
           </section>
 
-          {/* Staged Plate Preview: Independent Per-Plate Filament Color + Bambu Studio Fit Verification */}
+          {/* Staged Plate Preview: Independent Per-Plate Filament Color + Apply-to-All + Single-Color Batch Enforcement */}
           {stagedCatalogPlates && stagedCatalogPlates.length > 0 && (
             <section className="bg-surface border-2 border-brand rounded-xl p-6 space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-ink">
-                    Review &amp; Confirm Plates ({stagedCatalogPlates.length})
+                    Review &amp; Confirm Batch ({stagedCatalogPlates.length}{' '}
+                    {stagedCatalogPlates.length === 1 ? 'plate' : 'plates'})
                   </h3>
                   <p className="text-xs text-muted mt-0.5">
-                    Select a physical <b className="text-ink">Filament Color</b> individually for each plate of <b className="text-ink">{selectedProduct.name}</b> and verify Bambu Studio fit before saving.
+                    One batch requires <b className="text-ink">1 Product + 1 Filament Color</b>. Apply one Filament Color across all plates below, or assign per plate and split into separate batches if mixed.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <button
                     type="button"
                     disabled={isConfirming}
                     onClick={() => {
                       setStagedCatalogPlates(null);
+                      setStagedRequestMeta(null);
+                      setBulkColorId('');
                       setHasAttemptedConfirm(false);
                     }}
-                    className="px-3.5 py-2 rounded-lg border border-line bg-elevated text-xs font-medium text-ink hover:bg-recessed disabled:opacity-40 transition-colors"
+                    className="px-3.5 py-2 rounded-lg border border-line bg-elevated text-xs font-medium text-ink hover:bg-recessed disabled:opacity-40 whitespace-nowrap transition-colors"
                   >
                     Discard Preview
                   </button>
                   <button
                     type="button"
-                    disabled={isConfirming}
-                    onClick={() => void handleConfirmClick()}
+                    disabled={isConfirming || Boolean(batchValidation?.hasColorConflict)}
+                    onClick={() => void handleConfirmClick(false)}
                     className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
-                    {isConfirming ? 'Saving...' : 'Confirm & Save to Print Queue'}
+                    {isConfirming ? 'Saving...' : 'Confirm & Save Batch to Queue'}
                   </button>
                 </div>
               </div>
 
+              {/* Apply Color to All Plates Toolbar */}
+              {stagedCatalogPlates.length > 1 && (
+                <div className="p-3 rounded-xl border border-line bg-recessed flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-ink-secondary">
+                    <span className="font-semibold text-ink">Apply Color to All Plates:</span>{' '}
+                    Assign a single filament color to all {stagedCatalogPlates.length} plates in this batch at once.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      aria-label="Select Filament Color for all staged plates"
+                      value={bulkColorId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setBulkColorId(val);
+                        if (val) {
+                          handleApplyColorToAllPlates(val);
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-line bg-input text-xs font-semibold text-ink focus:border-brand focus:outline-none"
+                    >
+                      <option value="">Select color for all plates...</option>
+                      {(workspaceColors || []).map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!bulkColorId || isConfirming}
+                      onClick={() => handleApplyColorToAllPlates(bulkColorId)}
+                      className="px-3 py-1.5 rounded-lg border border-line bg-surface hover:bg-elevated text-xs font-semibold text-ink disabled:opacity-40 whitespace-nowrap transition-colors"
+                    >
+                      Apply to All Plates
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Explicit Batch Color Conflict Notice & Resolution Options (Never silently splits) */}
+              {batchValidation?.hasColorConflict && (
+                <div
+                  role="alert"
+                  className="p-4 rounded-xl border border-warning-border bg-warning-soft text-xs text-warning-text space-y-3"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold">
+                        Batch Color Conflict: Multiple Filament Colors Selected
+                      </div>
+                      <div className="mt-0.5 opacity-95">
+                        {batchValidation.batchColorConflictError}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pl-6">
+                    {batchValidation.distinctColorIds.map((cid) => {
+                      const col = workspaceColors.find((c) => c.id === cid);
+                      if (!col) return null;
+                      return (
+                        <button
+                          key={cid}
+                          type="button"
+                          disabled={isConfirming}
+                          onClick={() => handleApplyColorToAllPlates(cid)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-warning-border bg-surface hover:bg-elevated text-ink font-semibold whitespace-nowrap transition-colors"
+                        >
+                          <span
+                            className="w-2.5 h-2.5 rounded-full border border-line shrink-0"
+                            style={{ backgroundColor: col.hex }}
+                            aria-hidden="true"
+                          />
+                          <span>Apply {col.name} to All Plates</span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      disabled={isConfirming || batchValidation.invalidPlateNumbers.length > 0}
+                      onClick={() => void handleConfirmClick(true)}
+                      className="px-3.5 py-1.5 rounded-lg bg-brand hover:bg-brand-hover disabled:opacity-50 text-white font-semibold whitespace-nowrap transition-colors"
+                    >
+                      Split &amp; Confirm as Separate Batches by Color ({batchValidation.distinctColorIds.length})
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Batch Validation Summary Banner */}
-              {hasAttemptedConfirm && batchValidation && !batchValidation.allValid && (
+              {hasAttemptedConfirm &&
+                batchValidation &&
+                batchValidation.invalidPlateNumbers.length > 0 && (
                 <div
                   role="alert"
                   className="p-3.5 rounded-xl border border-status-error bg-error-soft text-xs text-error-text flex items-start gap-2.5"

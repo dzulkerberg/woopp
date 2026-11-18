@@ -22,6 +22,8 @@ import {
   PlateGenerationMode,
   ProductCategory,
   ProductOptionDefinition,
+  ProductionBatchRecord,
+  ProductionBatchVariationSnapshot,
   ProductionJob,
   ProductionProject,
   ProductionWorkspaceV5,
@@ -1365,6 +1367,77 @@ export function assignColorToDraftCatalogPlate(
   };
 }
 
+/**
+ * Applies a single physical Filament Color to ALL staged draft plates cleanly,
+ * preserving each plate's existing quantities, duration, slicer verification, and product constraints.
+ */
+export function applyColorToAllCatalogPlates(
+  plates: readonly DraftCatalogPlatePreview[],
+  color: ColorOption | null,
+  product?: CatalogProduct | null,
+  workspaceColors: readonly ColorOption[] = []
+): DraftCatalogPlatePreview[] {
+  return plates.map((plate) =>
+    assignColorToDraftCatalogPlate(plate, color, product, workspaceColors)
+  );
+}
+
+export interface StagedPlatesColorConsistency {
+  distinctColorIds: string[];
+  distinctColors: ColorOption[];
+  unassignedPlateNumbers: number[];
+  unknownColorPlateNumbers: number[];
+  hasColorConflict: boolean;
+  isHomogeneousSingleColor: boolean;
+}
+
+/**
+ * Inspects whether a set of staged draft plates shares one valid physical Filament Color
+ * or has mixed/missing color assignments.
+ */
+export function inspectCatalogPlatesColorConsistency(
+  plates: readonly Pick<DraftCatalogPlatePreview, 'plateNumber' | 'colorId' | 'colorName'>[],
+  workspaceColors: readonly ColorOption[]
+): StagedPlatesColorConsistency {
+  const colorById = new Map(workspaceColors.map((c) => [c.id, c]));
+  const distinctColorIds: string[] = [];
+  const seenColorIds = new Set<string>();
+  const unassignedPlateNumbers: number[] = [];
+  const unknownColorPlateNumbers: number[] = [];
+
+  for (const plate of plates) {
+    const cid = (plate.colorId || '').trim();
+    if (!cid || cid === 'unassigned') {
+      unassignedPlateNumbers.push(plate.plateNumber);
+      continue;
+    }
+    if (!colorById.has(cid)) {
+      unknownColorPlateNumbers.push(plate.plateNumber);
+    }
+    if (!seenColorIds.has(cid)) {
+      seenColorIds.add(cid);
+      distinctColorIds.push(cid);
+    }
+  }
+
+  const distinctColors = distinctColorIds
+    .map((cid) => colorById.get(cid))
+    .filter((c): c is ColorOption => Boolean(c));
+
+  return {
+    distinctColorIds,
+    distinctColors,
+    unassignedPlateNumbers,
+    unknownColorPlateNumbers,
+    hasColorConflict: distinctColorIds.length > 1,
+    isHomogeneousSingleColor:
+      plates.length > 0 &&
+      distinctColorIds.length === 1 &&
+      unassignedPlateNumbers.length === 0 &&
+      unknownColorPlateNumbers.length === 0,
+  };
+}
+
 export interface StagedPlateValidationResult {
   valid: boolean;
   requiresColorSelection: boolean;
@@ -1492,7 +1565,7 @@ export function validateStagedCatalogPlate(
 
 /**
  * Validates an entire staged batch before Queue Confirmation.
- * Never approves partial batches when any single plate is invalid.
+ * Never approves partial batches when any single plate is invalid OR when a single batch mixes colors.
  */
 export function validateStagedCatalogPlatesBatch(
   plates: readonly DraftCatalogPlatePreview[],
@@ -1505,6 +1578,9 @@ export function validateStagedCatalogPlatesBatch(
   allValid: boolean;
   byTempId: Record<string, StagedPlateValidationResult>;
   invalidPlateNumbers: number[];
+  distinctColorIds: string[];
+  hasColorConflict: boolean;
+  batchColorConflictError: string | null;
 } {
   const byTempId: Record<string, StagedPlateValidationResult> = {};
   const invalidPlateNumbers: number[] = [];
@@ -1517,10 +1593,30 @@ export function validateStagedCatalogPlatesBatch(
     }
   }
 
+  const colorConsistency = inspectCatalogPlatesColorConsistency(
+    plates,
+    context.workspaceColors
+  );
+  const distinctColorNames = colorConsistency.distinctColorIds.map(
+    (cid) =>
+      context.workspaceColors.find((c) => c.id === cid)?.name ||
+      plates.find((p) => p.colorId === cid)?.colorName ||
+      cid
+  );
+  const batchColorConflictError = colorConsistency.hasColorConflict
+    ? `One Production Batch must use one physical Filament Color. These plates currently mix ${distinctColorNames.join(', ')}. Apply one color to all plates, or explicitly Split & Confirm as Separate Batches by Color.`
+    : null;
+
   return {
-    allValid: plates.length > 0 && invalidPlateNumbers.length === 0,
+    allValid:
+      plates.length > 0 &&
+      invalidPlateNumbers.length === 0 &&
+      !colorConsistency.hasColorConflict,
     byTempId,
     invalidPlateNumbers,
+    distinctColorIds: colorConsistency.distinctColorIds,
+    hasColorConflict: colorConsistency.hasColorConflict,
+    batchColorConflictError,
   };
 }
 
@@ -1661,13 +1757,45 @@ export function buildManualCatalogPlatePreviews(params: {
   };
 }
 
+function buildVariationKeyFromCatalogSnapshot(
+  item: Pick<JobCatalogItemSnapshot, 'productName' | 'variantId' | 'variantLabel'>
+): {
+  variationKey: string;
+  variantId: string | null;
+  label: string;
+} {
+  const cleanVarId =
+    typeof item.variantId === 'string' &&
+    item.variantId.trim().length > 0 &&
+    item.variantId !== COLOR_AGNOSTIC_BASE_ITEM_ID &&
+    !item.variantId.startsWith(NON_COLOR_COMBO_PREFIX)
+      ? item.variantId.trim()
+      : null;
+  const rawVarLabel =
+    typeof item.variantLabel === 'string' && item.variantLabel.trim().length > 0
+      ? item.variantLabel.trim()
+      : null;
+  const isVariationless = cleanVarId === null && rawVarLabel === null;
+  const label = isVariationless
+    ? 'Standard / No Variation'
+    : rawVarLabel || item.productName.trim();
+  const variationKey = cleanVarId
+    ? `var:${cleanVarId}`
+    : `novar:${isVariationless ? 'standard' : label}`;
+  return {
+    variationKey,
+    variantId: cleanVarId,
+    label,
+  };
+}
+
 /**
- * Confirms staged Product Studio category plates into `ProductionWorkspaceV5` (`workspace.jobs`):
- * - Re-validates category status (active) and strict single-`categoryId` homogeneity on every plate!
- * - Preserves each plate's explicit, authoritative `colorId` rather than blindly stamping a single global color!
- * - Stores immutable `JobCatalogItemSnapshot[]` on each `ProductionJob` so future product edits/renames/archives never corrupt Print Queue history.
- * - Never auto-assigns a machine (`machineId: null`) and never auto-starts printing (`Planned` or `Ready to Print` if slicerVerified).
- * - Preserves 100% of existing jobs, projects, machines, countdowns, and inventory.
+ * Confirms staged Product Studio category plates into ONE strict Production Batch in `ProductionWorkspaceV5`:
+ * - Enforces ONE BATCH = ONE PRODUCT ID + ONE PHYSICAL FILAMENT COLOR ID + ONE PRODUCTION REQUEST.
+ * - Blocks mixed products or mixed filament colors inside a single batch (use `commitCatalogPlatesSplitByColor` when operator explicitly chooses separate batches).
+ * - Creates an immutable `batchId` and persists a `ProductionBatchRecord` on `project.productionBatches` with sequential `batchNumber`.
+ * - Stamps every generated `ProductionJob` with `batchId` and `planningSessionId = batchId` plus immutable `JobCatalogItemSnapshot[]`.
+ * - Never auto-assigns a machine (`machineId: null`) and never merges separate confirmations.
  */
 export function commitCatalogPlatesToWorkspace(
   workspace: ProductionWorkspaceV5,
@@ -1677,11 +1805,15 @@ export function commitCatalogPlatesToWorkspace(
     category: ProductCategory;
     products?: readonly CatalogProduct[];
     confirmedPlates: readonly DraftCatalogPlatePreview[];
+    requestedQuantity?: number;
+    requestedVariations?: readonly ProductionBatchVariationSnapshot[];
     nowMs?: number;
   }
 ): {
   nextWorkspace?: ProductionWorkspaceV5;
   createdJobs?: ProductionJob[];
+  batchId?: string;
+  batchRecord?: ProductionBatchRecord;
   error?: string;
 } {
   const project = workspace.projects.find((p) => p.id === params.projectId);
@@ -1705,13 +1837,74 @@ export function commitCatalogPlatesToWorkspace(
     return { error: 'No confirmed plates to add to Print Queue.' };
   }
 
+  // Enforce strict ONE BATCH = ONE PRODUCT + ONE FILAMENT COLOR invariant across all plates
+  const batchColorIds = new Set<string>();
+  const batchProductIds = new Set<string>();
+
+  for (const draft of params.confirmedPlates) {
+    if (draft.categoryId !== params.category.id) {
+      return {
+        error: `Cross-category plate mixing blocked: Plate ${draft.plateNumber} belongs to category "${draft.categoryId}", expected "${params.category.id}".`,
+      };
+    }
+    const catIsolationCheck = validateSameCategoryPlateItems(draft.items, params.category.id);
+    if (!catIsolationCheck.valid && catIsolationCheck.error) {
+      return { error: catIsolationCheck.error };
+    }
+
+    const rawColorId = (draft.colorId || params.colorId || '').trim();
+    if (!rawColorId || rawColorId === 'unassigned') {
+      return {
+        error: `Plate ${draft.plateNumber} requires a physical Filament Color before saving to Print Queue.`,
+      };
+    }
+    const matchedC =
+      workspace.colors.find((c) => c.id === rawColorId) ||
+      (defaultColor && defaultColor.id === rawColorId ? defaultColor : null);
+    if (!matchedC) {
+      return {
+        error: `Plate ${draft.plateNumber}: Selected Filament Color "${rawColorId}" was not found in workspace colors.`,
+      };
+    }
+    batchColorIds.add(matchedC.id);
+
+    const plateProdId = (draft.productId || draft.items[0]?.productId || '').trim();
+    if (plateProdId) {
+      batchProductIds.add(plateProdId);
+    }
+    for (const it of draft.items) {
+      if (it.productId && it.productId.trim()) {
+        batchProductIds.add(it.productId.trim());
+      }
+    }
+  }
+
+  if (batchProductIds.size > 1) {
+    return {
+      error:
+        'Batch product conflict: One Production Batch must belong to one Product. Separate products cannot share one batch.',
+    };
+  }
+
+  if (batchColorIds.size > 1) {
+    const colorNames = Array.from(batchColorIds).map(
+      (cid) => workspace.colors.find((c) => c.id === cid)?.name || cid
+    );
+    return {
+      error: `Batch color conflict: One Production Batch must use a single physical Filament Color (${colorNames.join(', ')} are mixed). Apply one color to all plates, or explicitly confirm as separate batches by color.`,
+    };
+  }
+
+  const batchColorId = Array.from(batchColorIds)[0];
+  const batchColor = workspace.colors.find((c) => c.id === batchColorId)!;
+
   const nowMs = params.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const timezone = workspace.settings?.timezone || DEFAULT_TIMEZONE;
-  const sessionId = `catplan-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+  const batchId = `batch-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
 
   const createdJobs: ProductionJob[] = [];
-  const assignedColorIdsToAdd = new Set<string>();
+  const requestedVariationsMap = new Map<string, ProductionBatchVariationSnapshot>();
 
   for (let idx = 0; idx < params.confirmedPlates.length; idx += 1) {
     const draft = params.confirmedPlates[idx];
@@ -1721,29 +1914,13 @@ export function commitCatalogPlatesToWorkspace(
       };
     }
 
-    const rawColorId = (draft.colorId || params.colorId || '').trim();
-    if (!rawColorId || rawColorId === 'unassigned') {
-      return {
-        error: `Plate ${draft.plateNumber} requires a physical Filament Color before saving to Print Queue.`,
-      };
-    }
-
-    const plateColor =
-      workspace.colors.find((c) => c.id === rawColorId) ||
-      (defaultColor && defaultColor.id === rawColorId ? defaultColor : null);
-    if (!plateColor) {
-      return {
-        error: `Plate ${draft.plateNumber}: Selected Filament Color "${rawColorId}" was not found in workspace colors.`,
-      };
-    }
-
     const matchedProduct =
       params.products?.find((p) => p.id === (draft.productId || draft.items[0]?.productId)) ||
       null;
 
     // Validate all invariants on this plate individually (including color constraints)
     const stagedValidation = validateStagedCatalogPlate(
-      { ...draft, colorId: plateColor.id, colorName: plateColor.name },
+      { ...draft, colorId: batchColor.id, colorName: batchColor.name },
       {
         category: params.category,
         product: matchedProduct,
@@ -1759,13 +1936,10 @@ export function commitCatalogPlatesToWorkspace(
     }
 
     const unitTotal = countCatalogItems(draft.items);
-    const effectiveColorId = plateColor.id;
-    const effectiveColorName = plateColor.name;
-    assignedColorIdsToAdd.add(plateColor.id);
 
     // Ensure concrete variant resolution if placeholder was still present and matchedProduct is available
     const syncedDraft = matchedProduct
-      ? assignColorToDraftCatalogPlate(draft, plateColor, matchedProduct, workspace.colors)
+      ? assignColorToDraftCatalogPlate(draft, batchColor, matchedProduct, workspace.colors)
       : draft;
 
     // Snapshot immutable fields cleanly (zero undefined)
@@ -1786,11 +1960,26 @@ export function commitCatalogPlatesToWorkspace(
           categoryName: params.category.name.trim(),
           variantId: cleanVarId,
           variantLabel: item.variantLabel ? item.variantLabel.trim() : null,
-          colorId: effectiveColorId,
-          colorName: effectiveColorName,
+          colorId: batchColor.id,
+          colorName: batchColor.name,
           quantity: Math.floor(Number(item.quantity)),
         };
       });
+
+    for (const snap of immutableSnapshots) {
+      const keyMeta = buildVariationKeyFromCatalogSnapshot(snap);
+      const existingVar = requestedVariationsMap.get(keyMeta.variationKey);
+      if (existingVar) {
+        existingVar.requestedQuantity += snap.quantity;
+      } else {
+        requestedVariationsMap.set(keyMeta.variationKey, {
+          variationKey: keyMeta.variationKey,
+          variantId: keyMeta.variantId,
+          label: keyMeta.label,
+          requestedQuantity: snap.quantity,
+        });
+      }
+    }
 
     const effectivePlateCapacity =
       draft.capacity !== null && draft.capacity >= 1 ? Math.floor(draft.capacity) : unitTotal;
@@ -1805,14 +1994,15 @@ export function commitCatalogPlatesToWorkspace(
     }
 
     const job: ProductionJob = {
-      id: `job-${nowMs}-${idx}-${effectiveColorId}`,
+      id: `job-${nowMs}-${idx}-${batchColor.id}`,
       projectId: project.id,
-      colorId: effectiveColorId,
+      colorId: batchColor.id,
       plateNumber: draft.plateNumber,
       plateCapacity: effectivePlateCapacity,
       letters: companionLetters,
       plateMode: 'catalog_category',
-      planningSessionId: sessionId,
+      batchId,
+      planningSessionId: batchId,
       categoryId: params.category.id,
       categoryNameSnapshot: params.category.name.trim(),
       catalogItems: immutableSnapshots,
@@ -1841,33 +2031,86 @@ export function commitCatalogPlatesToWorkspace(
     0
   );
 
-  // Ensure all colors assigned to plates are recorded in project.assignedColorIds
+  const firstSnapshot = createdJobs[0]?.catalogItems?.[0];
+  const resolvedProductId =
+    firstSnapshot?.productId ||
+    params.confirmedPlates[0]?.productId ||
+    Array.from(batchProductIds)[0] ||
+    'unknown-product';
+  const resolvedProductName =
+    firstSnapshot?.productName ||
+    params.confirmedPlates[0]?.productName ||
+    resolvedProductId;
+  const resolvedSku = firstSnapshot?.sku || null;
+
+  const existingBatches = project.productionBatches || [];
+  const maxBatchNumber = existingBatches.reduce(
+    (max, b) => (b.batchNumber > max ? b.batchNumber : max),
+    0
+  );
+  const nextBatchNumber = maxBatchNumber + 1;
+
+  const finalRequestedVariations: ProductionBatchVariationSnapshot[] =
+    params.requestedVariations && params.requestedVariations.length > 0
+      ? params.requestedVariations
+          .filter((rv) => Math.floor(Number(rv.requestedQuantity || 0)) > 0)
+          .map((rv) => ({
+            variationKey: rv.variationKey.trim(),
+            variantId: rv.variantId ?? null,
+            label: rv.label.trim(),
+            requestedQuantity: Math.floor(Number(rv.requestedQuantity)),
+          }))
+      : Array.from(requestedVariationsMap.values());
+
+  const finalRequestedQuantity =
+    typeof params.requestedQuantity === 'number' &&
+    Number.isFinite(params.requestedQuantity) &&
+    params.requestedQuantity >= 0
+      ? Math.max(totalConfirmedUnits, Math.floor(params.requestedQuantity))
+      : totalConfirmedUnits;
+
+  const batchRecord: ProductionBatchRecord = {
+    id: batchId,
+    batchNumber: nextBatchNumber,
+    projectId: project.id,
+    productId: resolvedProductId,
+    productName: resolvedProductName,
+    sku: resolvedSku,
+    categoryId: params.category.id,
+    categoryName: params.category.name.trim(),
+    colorId: batchColor.id,
+    colorName: batchColor.name,
+    mode: 'catalog_category',
+    plateCapacity: Math.max(...createdJobs.map((j) => j.plateCapacity), 1),
+    requestedQuantity: finalRequestedQuantity,
+    committedQuantity: totalConfirmedUnits,
+    generatedJobIds: createdJobs.map((j) => j.id),
+    plateNumbers: createdJobs.map((j) => j.plateNumber),
+    requestedVariations: finalRequestedVariations,
+    createdIso: nowIso,
+    updatedIso: nowIso,
+  };
+
+  // Record color assignment and append immutable ProductionBatchRecord (never merging with prior batches)
   const nextProjects = workspace.projects.map((p) => {
     if (p.id !== project.id) return p;
     const currentAssigned = new Set(p.assignedColorIds || []);
-    let modified = false;
-    for (const cid of assignedColorIdsToAdd) {
-      if (!currentAssigned.has(cid)) {
-        currentAssigned.add(cid);
-        modified = true;
-      }
-    }
-    if (!modified) return p;
+    currentAssigned.add(batchColor.id);
     return {
       ...p,
       assignedColorIds: Array.from(currentAssigned),
+      productionBatches: [...(p.productionBatches || []), batchRecord],
       updatedIso: nowIso,
     };
   });
 
-  const distinctColorNames = Array.from(
-    new Set(createdJobs.map((j) => workspace.colors.find((c) => c.id === j.colorId)?.name || 'Unassigned Color'))
-  ).join(', ');
-
-  const logMsg = `${project.name} · ${distinctColorNames} (${params.category.name}): Added ${createdJobs.length} plate(s) (${totalConfirmedUnits} pcs) from Product Studio.`;
+  const batchLabel = `Batch ${String(nextBatchNumber).padStart(3, '0')}`;
+  const logMsg = `${project.name} · ${batchLabel} · ${resolvedProductName} (${batchColor.name}): Added ${createdJobs.length} plate(s) (${totalConfirmedUnits} pcs) from Product Studio.`;
 
   return {
     createdJobs,
+    batchId,
+    batchRecord,
     nextWorkspace: {
       ...workspace,
       projects: nextProjects,
@@ -1884,6 +2127,80 @@ export function commitCatalogPlatesToWorkspace(
       ].slice(0, 200),
       updatedIso: nowIso,
     },
+  };
+}
+
+/**
+ * Explicitly splits multi-color staged plates into separate, independent Production Batches
+ * (one distinct `batchId` and sequential `batchNumber` per distinct `colorId`).
+ * Must ONLY be invoked when the operator explicitly confirms splitting by color;
+ * atomic across all color groups (returns `{ error }` if any plate/color fails validation).
+ */
+export function commitCatalogPlatesSplitByColor(
+  workspace: ProductionWorkspaceV5,
+  params: {
+    projectId: string;
+    category: ProductCategory;
+    products?: readonly CatalogProduct[];
+    confirmedPlates: readonly DraftCatalogPlatePreview[];
+    nowMs?: number;
+  }
+): {
+  nextWorkspace?: ProductionWorkspaceV5;
+  createdJobs?: ProductionJob[];
+  batchIds?: string[];
+  batchRecords?: ProductionBatchRecord[];
+  error?: string;
+} {
+  if (!params.confirmedPlates.length) {
+    return { error: 'No confirmed plates to add to Print Queue.' };
+  }
+
+  const groupedByColor = new Map<string, DraftCatalogPlatePreview[]>();
+  for (const plate of params.confirmedPlates) {
+    const cid = (plate.colorId || '').trim();
+    if (!cid || cid === 'unassigned') {
+      return {
+        error: `Plate ${plate.plateNumber} requires a physical Filament Color before splitting into batches.`,
+      };
+    }
+    if (!groupedByColor.has(cid)) {
+      groupedByColor.set(cid, []);
+    }
+    groupedByColor.get(cid)!.push(plate);
+  }
+
+  const baseNowMs = params.nowMs ?? Date.now();
+  let workingWs = workspace;
+  const allCreatedJobs: ProductionJob[] = [];
+  const allBatchIds: string[] = [];
+  const allBatchRecords: ProductionBatchRecord[] = [];
+
+  let groupIdx = 0;
+  for (const [colorId, groupPlates] of groupedByColor.entries()) {
+    const res = commitCatalogPlatesToWorkspace(workingWs, {
+      projectId: params.projectId,
+      colorId,
+      category: params.category,
+      products: params.products,
+      confirmedPlates: groupPlates,
+      nowMs: baseNowMs + groupIdx * 100,
+    });
+    if (res.error || !res.nextWorkspace || !res.createdJobs || !res.batchId || !res.batchRecord) {
+      return { error: res.error || 'Failed to split plates into separate color batches.' };
+    }
+    workingWs = res.nextWorkspace;
+    allCreatedJobs.push(...res.createdJobs);
+    allBatchIds.push(res.batchId);
+    allBatchRecords.push(res.batchRecord);
+    groupIdx += 1;
+  }
+
+  return {
+    nextWorkspace: workingWs,
+    createdJobs: allCreatedJobs,
+    batchIds: allBatchIds,
+    batchRecords: allBatchRecords,
   };
 }
 
